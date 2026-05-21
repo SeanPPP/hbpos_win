@@ -3,153 +3,220 @@
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
              xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
              xmlns:loc="clr-namespace:Hbpos.Client.Wpf.Localization"
+             xmlns:materialDesign="http://materialdesigninxaml.net/winfx/xaml/themes"
              xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
              mc:Ignorable="d"
-             d:DesignHeight="734"
-             d:DesignWidth="1280">
-    <Grid Background="{DynamicResource PosScreenBackgroundBrush}" Margin="18">
+             d:DesignHeight="688"
+             d:DesignWidth="1366"
+             Background="{StaticResource PosSurfaceAltBrush}">
+    <UserControl.Resources>
+        <Style x:Key="HistoryFilterLabel" TargetType="TextBlock">
+            <Setter Property="FontSize" Value="10" />
+            <Setter Property="FontWeight" Value="Bold" />
+            <Setter Property="Foreground" Value="{StaticResource PosMutedForegroundBrush}" />
+            <Setter Property="Margin" Value="0,0,0,4" />
+        </Style>
+    </UserControl.Resources>
+
+    <Grid>
         <Grid.ColumnDefinitions>
-            <ColumnDefinition Width="1020" MinWidth="0" />
             <ColumnDefinition Width="*" MinWidth="0" />
+            <ColumnDefinition Width="380" MinWidth="320" />
         </Grid.ColumnDefinitions>
 
-        <Grid Grid.Column="0" Margin="0,0,16,0">
+        <Grid Grid.Column="0">
             <Grid.RowDefinitions>
-                <RowDefinition Height="Auto" />
                 <RowDefinition Height="Auto" />
                 <RowDefinition Height="*" />
                 <RowDefinition Height="Auto" />
             </Grid.RowDefinitions>
 
-            <DockPanel>
-                <TextBlock Text="{loc:Loc TransactionHistory}" FontSize="22" FontWeight="SemiBold" VerticalAlignment="Center" />
-                <Button Content="{loc:Loc history.exportCsv}"
-                        DockPanel.Dock="Right"
-                        Width="118"
-                        Height="36"
-                        Style="{StaticResource PosPrimaryButtonStyle}"
-                        IsEnabled="False" />
-                <Button Content="{loc:Loc history.advancedFilters}"
-                        DockPanel.Dock="Right"
-                        Width="148"
-                        Height="36"
-                        Margin="0,0,10,0"
-                        Style="{StaticResource PosSecondaryButtonStyle}"
-                        IsEnabled="False" />
-            </DockPanel>
+            <Border Grid.Row="0" Background="{StaticResource PosScreenBackgroundBrush}" Padding="24,20">
+                <StackPanel>
+                    <DockPanel Margin="0,0,0,16">
+                        <TextBlock Text="{loc:Loc TransactionHistory}" FontSize="22" FontWeight="Black" Foreground="{StaticResource PosTextBrush}" VerticalAlignment="Center" />
+                        <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" HorizontalAlignment="Right" VerticalAlignment="Center">
+                            <Button IsEnabled="False" Margin="0,0,8,0" Style="{StaticResource PosSecondaryButtonStyle}" MinHeight="36" Padding="14,6">
+                                <StackPanel Orientation="Horizontal">
+                                    <materialDesign:PackIcon Kind="Filter" Width="16" Height="16" Margin="0,0,6,0" />
+                                    <TextBlock Text="{loc:Loc history.advancedFilters}" />
+                                </StackPanel>
+                            </Button>
+                            <Button IsEnabled="False" Style="{StaticResource PosPrimaryButtonStyle}" MinHeight="36" Padding="14,6">
+                                <StackPanel Orientation="Horizontal">
+                                    <materialDesign:PackIcon Kind="Download" Width="16" Height="16" Foreground="White" Margin="0,0,6,0" />
+                                    <TextBlock Text="{loc:Loc history.exportCsv}" Foreground="White" />
+                                </StackPanel>
+                            </Button>
+                        </StackPanel>
+                    </DockPanel>
 
-            <Grid Grid.Row="1" Margin="0,18,0,18">
-                <Grid.ColumnDefinitions>
-                    <ColumnDefinition Width="1.05*" />
-                    <ColumnDefinition Width="1.1*" />
-                    <ColumnDefinition Width="1.05*" />
-                    <ColumnDefinition Width="1.4*" />
-                </Grid.ColumnDefinitions>
-                <TextBox Text="{loc:Loc history.dateRange}" IsReadOnly="True" Height="38" Style="{StaticResource PosSearchTextBoxStyle}" />
-                <TextBox Grid.Column="1" Text="{loc:Loc history.allStores}" IsReadOnly="True" Height="38" Margin="10,0,0,0" Style="{StaticResource PosSearchTextBoxStyle}" />
-                <TextBox Grid.Column="2" Text="{loc:Loc history.allTerminals}" IsReadOnly="True" Height="38" Margin="10,0,0,0" Style="{StaticResource PosSearchTextBoxStyle}" />
-                <TextBox Grid.Column="3" Text="{loc:Loc history.search}" Height="38" Margin="10,0,0,0" Style="{StaticResource PosSearchTextBoxStyle}" />
-            </Grid>
+                    <Grid>
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="1.4*" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
 
-            <DataGrid Grid.Row="2"
-                      ItemsSource="{Binding Orders}"
-                      SelectedItem="{Binding SelectedOrder, Mode=TwoWay}"
-                      IsReadOnly="True"
-                      RowHeight="54"
-                      GridLinesVisibility="None"
-                      Style="{DynamicResource PosCartDataGridStyle}">
-                <DataGrid.Columns>
-                    <DataGridTextColumn Header="#" Binding="{Binding ShortOrderId}" Width="92" />
-                    <DataGridTextColumn Header="{loc:Loc Store}" Binding="{Binding StoreCode}" Width="90" />
-                    <DataGridTextColumn Header="{loc:Loc Terminal}" Binding="{Binding DeviceCode}" Width="104" />
-                    <DataGridTextColumn Header="{loc:Loc Time}" Binding="{Binding SoldAtDisplay}" Width="150" />
-                    <DataGridTextColumn Header="{loc:Loc Items}" Binding="{Binding LineCount}" Width="70" />
-                    <DataGridTextColumn Header="{loc:Loc Amount}" Binding="{Binding ActualAmount, StringFormat={}{0:C2}}" Width="100" />
-                    <DataGridTextColumn Header="{loc:Loc Payment}" Binding="{Binding PaymentSummary}" Width="100" />
-                    <DataGridTextColumn Header="{loc:Loc common.status}" Binding="{Binding StatusLabel}" Width="*" />
-                </DataGrid.Columns>
-            </DataGrid>
+                        <StackPanel Grid.Column="0" Margin="0,0,12,0">
+                            <TextBlock Text="{loc:Loc history.dateRangeLabel}" Style="{StaticResource HistoryFilterLabel}" />
+                            <TextBox Text="{Binding DateFilterText}" IsReadOnly="True" Height="40" Style="{StaticResource PosSearchTextBoxStyle}" />
+                        </StackPanel>
 
-            <DockPanel Grid.Row="3" Margin="0,14,0,0">
-                <TextBlock Foreground="{DynamicResource PosMutedForegroundBrush}" VerticalAlignment="Center">
+                        <StackPanel Grid.Column="1" Margin="0,0,12,0">
+                            <TextBlock Text="{loc:Loc Store}" Style="{StaticResource HistoryFilterLabel}" />
+                            <TextBox Text="{Binding StoreFilterText}" IsReadOnly="True" Height="40" Style="{StaticResource PosSearchTextBoxStyle}" />
+                        </StackPanel>
+
+                        <StackPanel Grid.Column="2" Margin="0,0,12,0">
+                            <TextBlock Text="{loc:Loc Terminal}" Style="{StaticResource HistoryFilterLabel}" />
+                            <TextBox Text="{Binding TerminalFilterText}" IsReadOnly="True" Height="40" Style="{StaticResource PosSearchTextBoxStyle}" />
+                        </StackPanel>
+
+                        <StackPanel Grid.Column="3" Margin="0,0,12,0">
+                            <TextBlock Text="{loc:Loc history.searchLabel}" Style="{StaticResource HistoryFilterLabel}" />
+                            <TextBox Text="{Binding SearchText, UpdateSourceTrigger=PropertyChanged}"
+                                     materialDesign:HintAssist.Hint="{loc:Loc history.search}"
+                                     Height="40"
+                                     Style="{StaticResource PosSearchTextBoxStyle}" />
+                        </StackPanel>
+
+                        <Button Grid.Column="4"
+                                Command="{Binding LoadCommand}"
+                                MinWidth="96"
+                                Height="40"
+                                VerticalAlignment="Bottom"
+                                Style="{StaticResource PosPrimaryButtonStyle}">
+                            <StackPanel Orientation="Horizontal">
+                                <materialDesign:PackIcon Kind="Sync" Width="16" Height="16" Foreground="White" Margin="0,0,6,0" />
+                                <TextBlock Text="{loc:Loc common.load}" Foreground="White" />
+                            </StackPanel>
+                        </Button>
+                    </Grid>
+                </StackPanel>
+            </Border>
+
+            <Border Grid.Row="1" Background="White" CornerRadius="12" Margin="24,0,24,0" ClipToBounds="True">
+                <Border.Effect>
+                    <DropShadowEffect BlurRadius="8" ShadowDepth="2" Opacity="0.06" />
+                </Border.Effect>
+                <DataGrid ItemsSource="{Binding Orders}"
+                          SelectedItem="{Binding SelectedOrder, Mode=TwoWay}"
+                          IsReadOnly="True"
+                          AutoGenerateColumns="False"
+                          CanUserAddRows="False"
+                          RowBackground="White"
+                          AlternatingRowBackground="#FFFAFBFF"
+                          RowHeight="50"
+                          GridLinesVisibility="None"
+                          BorderThickness="0"
+                          HeadersVisibility="Column"
+                          Style="{StaticResource PosCartDataGridStyle}">
+                    <DataGrid.Columns>
+                        <DataGridTextColumn Header="#" Binding="{Binding ShortOrderId}" Width="94" />
+                        <DataGridTextColumn Header="{loc:Loc Store}" Binding="{Binding StoreCode}" Width="92" />
+                        <DataGridTextColumn Header="{loc:Loc Terminal}" Binding="{Binding DeviceCode}" Width="106" />
+                        <DataGridTextColumn Header="{loc:Loc Time}" Binding="{Binding SoldAtDisplay}" Width="154" />
+                        <DataGridTextColumn Header="{loc:Loc Items}" Binding="{Binding LineCount}" Width="72" />
+                        <DataGridTextColumn Header="{loc:Loc Amount}" Binding="{Binding ActualAmount, StringFormat={}{0:C2}}" Width="112" />
+                        <DataGridTextColumn Header="{loc:Loc Payment}" Binding="{Binding PaymentSummary}" Width="108" />
+                        <DataGridTextColumn Header="{loc:Loc common.status}" Binding="{Binding StatusLabel}" Width="*" />
+                    </DataGrid.Columns>
+                </DataGrid>
+            </Border>
+
+            <DockPanel Grid.Row="2" Margin="24,14,24,18">
+                <TextBlock Foreground="{StaticResource PosMutedForegroundBrush}" VerticalAlignment="Center">
                     <Run Text="{loc:Loc history.showingPrefix}" />
                     <Run Text="{Binding Orders.Count, Mode=OneWay}" />
                     <Run Text=" " />
                     <Run Text="{loc:Loc history.transactions}" />
                 </TextBlock>
-                <Button Content="{loc:Loc common.load}"
-                        Command="{Binding LoadCommand}"
-                        DockPanel.Dock="Right"
-                        Width="84"
-                        Height="34"
-                        Style="{StaticResource PosSecondaryButtonStyle}" />
             </DockPanel>
         </Grid>
 
-        <Border Grid.Column="1"
-                Background="White"
-                Padding="20"
-                CornerRadius="4"
-                BorderBrush="{StaticResource PosBorderBrush}"
-                BorderThickness="1">
+        <Border Grid.Column="1" Background="#FFE7E8EB" Padding="16">
             <Grid>
                 <Grid.RowDefinitions>
-                    <RowDefinition Height="Auto" />
-                    <RowDefinition Height="Auto" />
                     <RowDefinition Height="*" />
-                    <RowDefinition Height="Auto" />
                     <RowDefinition Height="Auto" />
                 </Grid.RowDefinitions>
 
-                <TextBlock Text="{loc:Loc success.receiptPreview}" FontSize="16" FontWeight="SemiBold" />
+                <Border Grid.Row="0" Background="White" CornerRadius="2,2,0,0" Padding="20">
+                    <ScrollViewer VerticalScrollBarVisibility="Auto">
+                        <StackPanel>
+                            <StackPanel Orientation="Horizontal" Margin="0,0,0,16">
+                                <materialDesign:PackIcon Kind="Receipt" Width="18" Height="18" Foreground="{StaticResource PosPrimaryBrush}" Margin="0,0,6,0" />
+                                <TextBlock Text="{loc:Loc success.receiptPreview}" FontSize="14" FontWeight="Black" Foreground="{StaticResource PosTextBrush}" />
+                            </StackPanel>
 
-                <StackPanel Grid.Row="1" Margin="0,20,0,18" HorizontalAlignment="Center">
-                    <TextBlock Text="{loc:Loc AppName}" Foreground="{StaticResource PosPrimaryDarkBrush}" FontWeight="Bold" FontSize="18" HorizontalAlignment="Center" />
-                    <TextBlock Text="{Binding PreviewOrderId}" Foreground="{DynamicResource PosMutedForegroundBrush}" HorizontalAlignment="Center" />
-                    <TextBlock Text="{Binding PreviewSoldAt}" Foreground="{DynamicResource PosMutedForegroundBrush}" HorizontalAlignment="Center" />
-                </StackPanel>
+                            <StackPanel HorizontalAlignment="Center" Margin="0,0,0,20">
+                                <TextBlock Text="{loc:Loc AppName}" FontSize="20" FontWeight="Black" Foreground="{StaticResource PosPrimaryBrush}" HorizontalAlignment="Center" />
+                                <TextBlock Text="{Binding PreviewOrderId}" FontSize="10" FontWeight="Bold" Foreground="{StaticResource PosMutedForegroundBrush}" HorizontalAlignment="Center" Margin="0,4,0,0" />
+                                <TextBlock Text="{Binding PreviewSoldAt}" FontSize="10" Foreground="{StaticResource PosMutedForegroundBrush}" HorizontalAlignment="Center" />
+                            </StackPanel>
 
-                <ItemsControl Grid.Row="2" ItemsSource="{Binding ReceiptLines}">
-                    <ItemsControl.ItemTemplate>
-                        <DataTemplate>
-                            <Grid Margin="0,0,0,12">
-                                <Grid.ColumnDefinitions>
-                                    <ColumnDefinition Width="*" />
-                                    <ColumnDefinition Width="Auto" />
-                                </Grid.ColumnDefinitions>
-                                <StackPanel>
-                                    <TextBlock Text="{Binding DisplayName}" FontWeight="SemiBold" TextWrapping="Wrap" />
-                                    <TextBlock Text="{Binding LookupCode}" Foreground="{DynamicResource PosMutedForegroundBrush}" FontSize="11" />
-                                </StackPanel>
-                                <TextBlock Grid.Column="1" Text="{Binding ActualAmount, StringFormat={}{0:C2}}" FontWeight="SemiBold" />
-                            </Grid>
-                        </DataTemplate>
-                    </ItemsControl.ItemTemplate>
-                </ItemsControl>
+                            <Rectangle Height="1" Fill="{StaticResource PosBorderBrush}" Margin="0,0,0,12" StrokeDashArray="4,3" Stroke="{StaticResource PosBorderBrush}" StrokeThickness="1" />
 
-                <StackPanel Grid.Row="3">
-                    <Border Height="1" Background="{StaticResource PosBorderBrush}" Margin="0,0,0,12" />
-                    <Grid Margin="0,0,0,7">
-                        <TextBlock Text="{loc:Loc Subtotal}" Foreground="{DynamicResource PosMutedForegroundBrush}" />
-                        <TextBlock Text="{Binding PreviewSubtotal, StringFormat={}{0:C2}}" HorizontalAlignment="Right" />
-                    </Grid>
-                    <Grid Margin="0,0,0,7">
-                        <TextBlock Text="{loc:Loc Discount}" Foreground="{DynamicResource PosMutedForegroundBrush}" />
-                        <TextBlock Text="{Binding PreviewDiscount, StringFormat={}{0:C2}}" HorizontalAlignment="Right" />
-                    </Grid>
-                    <Grid>
-                        <TextBlock Text="{loc:Loc Total}" FontWeight="SemiBold" />
-                        <TextBlock Text="{Binding PreviewTotal, StringFormat={}{0:C2}}" HorizontalAlignment="Right" Foreground="{StaticResource PosPrimaryDarkBrush}" FontWeight="Bold" FontSize="18" />
-                    </Grid>
-                </StackPanel>
+                            <ItemsControl ItemsSource="{Binding ReceiptLines}">
+                                <ItemsControl.ItemTemplate>
+                                    <DataTemplate>
+                                        <Grid Margin="0,0,0,8">
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="*" />
+                                                <ColumnDefinition Width="Auto" />
+                                            </Grid.ColumnDefinitions>
+                                            <StackPanel>
+                                                <TextBlock Text="{Binding DisplayName}" FontSize="11" FontWeight="Bold" TextWrapping="Wrap" />
+                                                <TextBlock FontSize="9" Foreground="{StaticResource PosMutedForegroundBrush}">
+                                                    <Run Text="{Binding QuantityDisplay, Mode=OneWay}" />
+                                                    <Run Text=" x " />
+                                                    <Run Text="{Binding UnitPrice, Mode=OneWay, StringFormat={}{0:C2}}" />
+                                                </TextBlock>
+                                            </StackPanel>
+                                            <TextBlock Grid.Column="1" Text="{Binding ActualAmount, StringFormat={}{0:C2}}" FontSize="11" FontWeight="Bold" VerticalAlignment="Center" />
+                                        </Grid>
+                                    </DataTemplate>
+                                </ItemsControl.ItemTemplate>
+                            </ItemsControl>
 
-                <Grid Grid.Row="4" Margin="0,18,0,0">
+                            <Rectangle Height="1" Fill="{StaticResource PosBorderBrush}" Margin="0,8" StrokeDashArray="4,3" Stroke="{StaticResource PosBorderBrush}" StrokeThickness="1" />
+
+                            <DockPanel Margin="0,0,0,4">
+                                <TextBlock Text="{loc:Loc Subtotal}" FontSize="10" FontWeight="Bold" Foreground="{StaticResource PosMutedForegroundBrush}" />
+                                <TextBlock Text="{Binding PreviewSubtotal, StringFormat={}{0:C2}}" DockPanel.Dock="Right" FontSize="11" FontWeight="Bold" />
+                            </DockPanel>
+                            <DockPanel Margin="0,0,0,8">
+                                <TextBlock Text="{loc:Loc Discount}" FontSize="10" FontWeight="Bold" Foreground="{StaticResource PosMutedForegroundBrush}" />
+                                <TextBlock Text="{Binding PreviewDiscount, StringFormat={}{0:C2}}" DockPanel.Dock="Right" FontSize="11" FontWeight="Bold" />
+                            </DockPanel>
+                            <DockPanel>
+                                <TextBlock Text="{loc:Loc Total}" FontSize="16" FontWeight="Black" />
+                                <TextBlock Text="{Binding PreviewTotal, StringFormat={}{0:C2}}" DockPanel.Dock="Right" FontSize="18" FontWeight="Black" Foreground="{StaticResource PosPrimaryBrush}" />
+                            </DockPanel>
+                        </StackPanel>
+                    </ScrollViewer>
+                </Border>
+
+                <Grid Grid.Row="1" Margin="0,12,0,0">
                     <Grid.ColumnDefinitions>
                         <ColumnDefinition Width="*" />
                         <ColumnDefinition Width="*" />
                     </Grid.ColumnDefinitions>
-                    <Button Content="{loc:Loc history.reprint}" Command="{Binding ReprintCommand}" Style="{StaticResource PosPrimaryButtonStyle}" />
-                    <Button Grid.Column="1" Content="{loc:Loc history.refund}" Command="{Binding RefundCommand}" Margin="10,0,0,0" Style="{StaticResource PosDangerButtonStyle}" />
+                    <Button Command="{Binding ReprintCommand}" Margin="0,0,6,0" Style="{StaticResource PosPrimaryButtonStyle}">
+                        <StackPanel Orientation="Horizontal">
+                            <materialDesign:PackIcon Kind="Printer" Width="16" Height="16" Foreground="White" Margin="0,0,6,0" />
+                            <TextBlock Text="{loc:Loc history.reprint}" Foreground="White" />
+                        </StackPanel>
+                    </Button>
+                    <Button Grid.Column="1" Command="{Binding RefundCommand}" Margin="6,0,0,0" Style="{StaticResource PosDangerButtonStyle}">
+                        <StackPanel Orientation="Horizontal">
+                            <materialDesign:PackIcon Kind="Undo" Width="16" Height="16" Foreground="White" Margin="0,0,6,0" />
+                            <TextBlock Text="{loc:Loc history.refund}" Foreground="White" />
+                        </StackPanel>
+                    </Button>
                 </Grid>
             </Grid>
         </Border>

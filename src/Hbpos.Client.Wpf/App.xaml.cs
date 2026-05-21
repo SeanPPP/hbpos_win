@@ -42,6 +42,7 @@ public partial class App : Application
                 });
                 services.AddSingleton<ILocalCatalogSyncService, LocalCatalogSyncService>();
                 services.AddSingleton<IRemoteLookupRefreshService, RemoteLookupRefreshService>();
+                services.AddSingleton<ICustomerDisplayWindowService, CustomerDisplayWindowService>();
                 services.AddSingleton<LocalSellableItemIndex>();
                 services.AddSingleton<PosCartService>();
                 services.AddSingleton<CashCheckoutService>();

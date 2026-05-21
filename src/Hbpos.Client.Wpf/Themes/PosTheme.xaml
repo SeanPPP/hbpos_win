@@ -1,18 +1,18 @@
 <ResourceDictionary xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
                     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
                     xmlns:sys="clr-namespace:System;assembly=mscorlib">
-    <Color x:Key="PosColorCanvas">#FFF3F5F9</Color>
+    <Color x:Key="PosColorCanvas">#FFF3F3F7</Color>
     <Color x:Key="PosColorSurface">#FFFFFFFF</Color>
-    <Color x:Key="PosColorSurfaceAlt">#FFF8FAFD</Color>
-    <Color x:Key="PosColorPrimary">#FF075CE5</Color>
-    <Color x:Key="PosColorPrimaryDark">#FF053A91</Color>
-    <Color x:Key="PosColorAccent">#FFFF7A00</Color>
-    <Color x:Key="PosColorSuccess">#FF12805C</Color>
-    <Color x:Key="PosColorWarning">#FFFFB020</Color>
-    <Color x:Key="PosColorDanger">#FFB42318</Color>
-    <Color x:Key="PosColorText">#FF111827</Color>
-    <Color x:Key="PosColorMutedText">#FF667085</Color>
-    <Color x:Key="PosColorBorder">#FFD0D5DD</Color>
+    <Color x:Key="PosColorSurfaceAlt">#FFF9F9FD</Color>
+    <Color x:Key="PosColorPrimary">#FF0056D2</Color>
+    <Color x:Key="PosColorPrimaryDark">#FF191C1E</Color>
+    <Color x:Key="PosColorAccent">#FFFF8F00</Color>
+    <Color x:Key="PosColorSuccess">#FF0F9D58</Color>
+    <Color x:Key="PosColorWarning">#FFFFB74D</Color>
+    <Color x:Key="PosColorDanger">#FF940010</Color>
+    <Color x:Key="PosColorText">#FF191C1E</Color>
+    <Color x:Key="PosColorMutedText">#FF737785</Color>
+    <Color x:Key="PosColorBorder">#FFC3C6D6</Color>
     <Color x:Key="PosColorHeader">#FFFFFFFF</Color>
     <Color x:Key="PosColorFooter">#FFFFFFFF</Color>
 
@@ -200,5 +200,112 @@
                 </Style>
             </Setter.Value>
         </Setter>
+    </Style>
+
+    <Style x:Key="TitleBarButtonStyle" TargetType="Button">
+        <Setter Property="Width" Value="36" />
+        <Setter Property="Height" Value="32" />
+        <Setter Property="Background" Value="Transparent" />
+        <Setter Property="Foreground" Value="{StaticResource PosTextBrush}" />
+        <Setter Property="Padding" Value="0" />
+        <Setter Property="Cursor" Value="Hand" />
+        <Setter Property="BorderThickness" Value="0" />
+        <Setter Property="Template">
+            <Setter.Value>
+                <ControlTemplate TargetType="{x:Type Button}">
+                    <Border x:Name="Root" Background="{TemplateBinding Background}" CornerRadius="4">
+                        <ContentPresenter HorizontalAlignment="Center"
+                                          VerticalAlignment="Center"
+                                          TextBlock.Foreground="{TemplateBinding Foreground}" />
+                    </Border>
+                    <ControlTemplate.Triggers>
+                        <Trigger Property="IsMouseOver" Value="True">
+                            <Setter TargetName="Root" Property="Background" Value="#FFF0F0F2" />
+                        </Trigger>
+                        <Trigger Property="IsPressed" Value="True">
+                            <Setter TargetName="Root" Property="Background" Value="#FFE2E2E6" />
+                        </Trigger>
+                    </ControlTemplate.Triggers>
+                </ControlTemplate>
+            </Setter.Value>
+        </Setter>
+    </Style>
+
+    <Style x:Key="TitleBarCloseButtonStyle" TargetType="Button" BasedOn="{StaticResource TitleBarButtonStyle}">
+        <Style.Triggers>
+            <Trigger Property="IsMouseOver" Value="True">
+                <Setter Property="Background" Value="#FFFFE0E0" />
+                <Setter Property="Foreground" Value="{StaticResource PosDangerBrush}" />
+            </Trigger>
+        </Style.Triggers>
+    </Style>
+
+    <Style x:Key="PosShellNavButtonStyle" TargetType="Button">
+        <Setter Property="Background" Value="Transparent" />
+        <Setter Property="BorderBrush" Value="Transparent" />
+        <Setter Property="Foreground" Value="{StaticResource PosTextBrush}" />
+        <Setter Property="FontSize" Value="12" />
+        <Setter Property="FontWeight" Value="SemiBold" />
+        <Setter Property="Padding" Value="16,6" />
+        <Setter Property="Cursor" Value="Hand" />
+        <Setter Property="Template">
+            <Setter.Value>
+                <ControlTemplate TargetType="{x:Type Button}">
+                    <Border x:Name="Root"
+                            Background="{TemplateBinding Background}"
+                            CornerRadius="6"
+                            Padding="{TemplateBinding Padding}">
+                        <ContentPresenter HorizontalAlignment="Center"
+                                          VerticalAlignment="Center"
+                                          RecognizesAccessKey="True"
+                                          TextBlock.Foreground="{TemplateBinding Foreground}" />
+                    </Border>
+                    <ControlTemplate.Triggers>
+                        <Trigger Property="IsMouseOver" Value="True">
+                            <Setter TargetName="Root" Property="Background" Value="#FFF0F0F2" />
+                        </Trigger>
+                        <Trigger Property="IsPressed" Value="True">
+                            <Setter TargetName="Root" Property="Background" Value="#FFE2E2E6" />
+                        </Trigger>
+                        <Trigger Property="IsEnabled" Value="False">
+                            <Setter TargetName="Root" Property="Opacity" Value="0.45" />
+                        </Trigger>
+                    </ControlTemplate.Triggers>
+                </ControlTemplate>
+            </Setter.Value>
+        </Setter>
+    </Style>
+
+    <Style x:Key="PosIconTileButtonStyle" TargetType="Button" BasedOn="{StaticResource PosButtonBaseStyle}">
+        <Setter Property="MinHeight" Value="78" />
+        <Setter Property="Margin" Value="6" />
+        <Setter Property="Background" Value="White" />
+        <Setter Property="BorderBrush" Value="Transparent" />
+        <Setter Property="Padding" Value="8" />
+        <Setter Property="FontSize" Value="12" />
+        <Setter Property="Effect">
+            <Setter.Value>
+                <DropShadowEffect BlurRadius="6" ShadowDepth="2" Opacity="0.14" />
+            </Setter.Value>
+        </Setter>
+    </Style>
+
+    <Style x:Key="PosQuickAmountButtonStyle" TargetType="Button" BasedOn="{StaticResource PosPrimaryButtonStyle}">
+        <Setter Property="Background" Value="{StaticResource PosAccentBrush}" />
+        <Setter Property="BorderBrush" Value="{StaticResource PosAccentBrush}" />
+        <Setter Property="Foreground" Value="White" />
+        <Setter Property="MinHeight" Value="48" />
+        <Setter Property="Margin" Value="4" />
+        <Setter Property="FontSize" Value="18" />
+        <Setter Property="FontWeight" Value="Black" />
+    </Style>
+
+    <Style x:Key="PosSyncBadgeStyle" TargetType="Border">
+        <Setter Property="Background" Value="#FFF3F3F7" />
+        <Setter Property="BorderBrush" Value="#FFD9DCE5" />
+        <Setter Property="BorderThickness" Value="1" />
+        <Setter Property="CornerRadius" Value="10" />
+        <Setter Property="Padding" Value="10,5" />
+        <Setter Property="VerticalAlignment" Value="Center" />
     </Style>
 </ResourceDictionary>

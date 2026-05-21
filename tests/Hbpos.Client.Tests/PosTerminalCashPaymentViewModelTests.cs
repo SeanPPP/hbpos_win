@@ -262,5 +262,15 @@ public sealed class PosTerminalCashPaymentViewModelTests
         {
             return Task.FromResult(1);
         }
+
+        public Task<SyncQueueOverview> GetOverviewAsync(CancellationToken cancellationToken = default)
+        {
+            return Task.FromResult(new SyncQueueOverview(1, 0, 0, null));
+        }
+
+        public Task<IReadOnlyList<SyncQueueListItem>> GetActiveItemsAsync(int take = 20, CancellationToken cancellationToken = default)
+        {
+            return Task.FromResult<IReadOnlyList<SyncQueueListItem>>([]);
+        }
     }
 }

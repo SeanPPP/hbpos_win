@@ -19,7 +19,7 @@
   <data name="Backspace" xml:space="preserve"><value>退格</value></data>
   <data name="Barcode" xml:space="preserve"><value>条码</value></data>
   <data name="Cancel" xml:space="preserve"><value>取消</value></data>
-  <data name="CardPayment" xml:space="preserve"><value>刷卡支付</value></data>
+  <data name="CardPayment" xml:space="preserve"><value>银行卡支付</value></data>
   <data name="CashPayment" xml:space="preserve"><value>现金支付</value></data>
   <data name="Cashier" xml:space="preserve"><value>收银员</value></data>
   <data name="Change" xml:space="preserve"><value>找零</value></data>
@@ -40,7 +40,7 @@
   <data name="Item" xml:space="preserve"><value>商品</value></data>
   <data name="ItemDescription" xml:space="preserve"><value>商品描述</value></data>
   <data name="ItemNumber" xml:space="preserve"><value>货号</value></data>
-  <data name="Items" xml:space="preserve"><value>件数</value></data>
+  <data name="Items" xml:space="preserve"><value>件</value></data>
   <data name="Language" xml:space="preserve"><value>语言</value></data>
   <data name="LanguageEnglish" xml:space="preserve"><value>英文</value></data>
   <data name="LanguageChineseSimplified" xml:space="preserve"><value>简体中文</value></data>
@@ -127,7 +127,7 @@
   <data name="payment.cash.paymentMethod" xml:space="preserve"><value>付款方式</value></data>
   <data name="payment.cash.confirm" xml:space="preserve"><value>立即付款</value></data>
   <data name="payment.cash.status.ready" xml:space="preserve"><value>请输入收到的现金金额。</value></data>
-  <data name="payment.cash.status.invalidTendered" xml:space="preserve"><value>请输入有效现金金额。</value></data>
+  <data name="payment.cash.status.invalidTendered" xml:space="preserve"><value>请输入有效的现金金额。</value></data>
   <data name="payment.cash.status.completed" xml:space="preserve"><value>现金支付已完成。</value></data>
   <data name="payment.method.cash" xml:space="preserve"><value>现金</value></data>
   <data name="payment.method.card" xml:space="preserve"><value>银行卡</value></data>
@@ -143,6 +143,7 @@
   <data name="success.printReceipt" xml:space="preserve"><value>打印小票</value></data>
   <data name="success.newTransaction" xml:space="preserve"><value>新交易</value></data>
   <data name="success.receiptPreview" xml:space="preserve"><value>小票预览</value></data>
+  <data name="success.syncQueued" xml:space="preserve"><value>订单已本地保存并加入上传队列。</value></data>
 
   <data name="history.advancedFilters" xml:space="preserve"><value>高级筛选</value></data>
   <data name="history.exportCsv" xml:space="preserve"><value>导出 CSV</value></data>
@@ -155,6 +156,8 @@
   <data name="history.transactions" xml:space="preserve"><value>笔交易</value></data>
   <data name="history.reprint" xml:space="preserve"><value>重印</value></data>
   <data name="history.refund" xml:space="preserve"><value>退款</value></data>
+  <data name="history.dateRangeLabel" xml:space="preserve"><value>日期范围</value></data>
+  <data name="history.searchLabel" xml:space="preserve"><value>订单查询</value></data>
 
   <data name="customer.totalToPay" xml:space="preserve"><value>应付合计</value></data>
   <data name="customer.readyForPayment" xml:space="preserve"><value>准备支付</value></data>
@@ -162,4 +165,29 @@
   <data name="customer.promotionTitle" xml:space="preserve"><value>本周特惠</value></data>
   <data name="customer.promotionSubtitle" xml:space="preserve"><value>有机生鲜最高 7 折</value></data>
   <data name="customer.promotionBody" xml:space="preserve"><value>本周末精选新鲜商品与会员专享优惠。</value></data>
+
+  <data name="shell.customerDisplayWindow" xml:space="preserve"><value>客显窗口</value></data>
+  <data name="shell.window.minimize" xml:space="preserve"><value>最小化</value></data>
+  <data name="shell.window.maximize" xml:space="preserve"><value>最大化</value></data>
+  <data name="shell.window.close" xml:space="preserve"><value>关闭</value></data>
+  <data name="shell.top.storeInfo" xml:space="preserve"><value>{0}（{1}）</value></data>
+  <data name="shell.top.cashierInfo" xml:space="preserve"><value>收银员：{0}</value></data>
+  <data name="shell.footer.terminalInfo" xml:space="preserve"><value>终端：{0}</value></data>
+  <data name="shell.footer.versionReady" xml:space="preserve"><value>离线 Shell 就绪</value></data>
+  <data name="shell.sync.title" xml:space="preserve"><value>同步中心</value></data>
+  <data name="shell.sync.orderStatus" xml:space="preserve"><value>订单 {0}/{1}/{2}</value></data>
+  <data name="shell.sync.detailTitle" xml:space="preserve"><value>{0} 个活跃上传任务</value></data>
+  <data name="shell.sync.noErrors" xml:space="preserve"><value>暂无同步错误。</value></data>
+  <data name="shell.sync.close" xml:space="preserve"><value>关闭同步中心</value></data>
+  <data name="shell.sync.retry" xml:space="preserve"><value>重试</value></data>
+  <data name="shell.sync.retryAll" xml:space="preserve"><value>全部重试</value></data>
+  <data name="shell.sync.caption" xml:space="preserve"><value>显示失败、待处理和同步中的订单上传任务。</value></data>
+  <data name="shell.sync.created" xml:space="preserve"><value>创建：</value></data>
+  <data name="shell.sync.lastAttempt" xml:space="preserve"><value>上次尝试：</value></data>
+  <data name="shell.sync.pending" xml:space="preserve"><value>待处理</value></data>
+  <data name="shell.sync.failed" xml:space="preserve"><value>失败</value></data>
+  <data name="shell.sync.syncing" xml:space="preserve"><value>同步中</value></data>
+  <data name="shell.numpad" xml:space="preserve"><value>数字键盘</value></data>
+  <data name="shell.member" xml:space="preserve"><value>会员</value></data>
+  <data name="shell.memberDefault" xml:space="preserve"><value>金卡会员</value></data>
 </root>

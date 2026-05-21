@@ -1,4 +1,6 @@
 using System.Collections.ObjectModel;
+using System.Windows;
+using System.Windows.Threading;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using Hbpos.Client.Wpf.Localization;
@@ -23,6 +25,8 @@ public sealed partial class MainViewModel : ObservableObject
     private readonly ILocalOrderRepository _orderRepository;
     private readonly ISyncQueueRepository _syncQueueRepository;
     private readonly ILocalizationService _localization;
+    private readonly ICustomerDisplayWindowService _customerDisplayWindowService;
+    private readonly DispatcherTimer _clockTimer = new() { Interval = TimeSpan.FromSeconds(1) };
 
     private bool _isApplyingCulture;
     private bool _schemaReady;
@@ -46,6 +50,45 @@ public sealed partial class MainViewModel : ObservableObject
     [ObservableProperty]
     private string _statusMessage = string.Empty;
 
+    [ObservableProperty]
+    private string _currentTime = string.Empty;
+
+    [ObservableProperty]
+    private string _terminalInfo = string.Empty;
+
+    [ObservableProperty]
+    private string _storeInfo = string.Empty;
+
+    [ObservableProperty]
+    private string _cashierInfo = string.Empty;
+
+    [ObservableProperty]
+    private string _versionStatusText = string.Empty;
+
+    [ObservableProperty]
+    private string _orderSyncStatusText = string.Empty;
+
+    [ObservableProperty]
+    private string _syncCenterDetailTitle = string.Empty;
+
+    [ObservableProperty]
+    private string _lastOrderSyncErrorText = string.Empty;
+
+    [ObservableProperty]
+    private bool _isSyncCenterExpanded;
+
+    [ObservableProperty]
+    private bool _isCustomerDisplayOpen;
+
+    [ObservableProperty]
+    private int _pendingUploadCount;
+
+    [ObservableProperty]
+    private int _failedUploadCount;
+
+    [ObservableProperty]
+    private int _syncingOrderCount;
+
     public MainViewModel(
         LocalSellableItemIndex priceIndex,
         PosCartService cart,
@@ -57,7 +100,8 @@ public sealed partial class MainViewModel : ObservableObject
         IRemoteLookupRefreshService remoteLookupRefresh,
         ILocalOrderRepository orderRepository,
         ISyncQueueRepository syncQueueRepository,
-        ILocalizationService localization)
+        ILocalizationService localization,
+        ICustomerDisplayWindowService customerDisplayWindowService)
     {
         _priceIndex = priceIndex;
         _cart = cart;
@@ -70,6 +114,7 @@ public sealed partial class MainViewModel : ObservableObject
         _orderRepository = orderRepository;
         _syncQueueRepository = syncQueueRepository;
         _localization = localization;
+        _customerDisplayWindowService = customerDisplayWindowService;
 
         PaymentSuccess = new PaymentSuccessViewModel(_orderRepository);
 
@@ -78,9 +123,13 @@ public sealed partial class MainViewModel : ObservableObject
         ShowPaymentSuccessCommand = new AsyncRelayCommand(ShowPaymentSuccessLatestAsync);
         ShowHistoryCommand = new AsyncRelayCommand(ShowHistoryAsync);
         ShowCustomerDisplayCommand = new RelayCommand(ShowCustomerDisplay);
+        ToggleSyncCenterCommand = new AsyncRelayCommand(ToggleSyncCenterAsync);
+        ToggleCustomerDisplayWindowCommand = new RelayCommand(ToggleCustomerDisplayWindow);
 
         _cart.CartChanged += OnCartChanged;
         _localization.CultureChanged += OnCultureChanged;
+        _customerDisplayWindowService.Closed += (_, _) => IsCustomerDisplayOpen = false;
+        _clockTimer.Tick += (_, _) => RefreshClock();
         RefreshLocalizedShell(resetStatus: true);
     }
 
@@ -94,6 +143,8 @@ public sealed partial class MainViewModel : ObservableObject
 
     public CustomerDisplayViewModel CustomerDisplay { get; } = new();
 
+    public ObservableCollection<SyncQueueListItem> SyncCenterOrders { get; } = [];
+
     public IRelayCommand ShowPosCommand { get; }
 
     public IRelayCommand ShowCashPaymentCommand { get; }
@@ -103,6 +154,10 @@ public sealed partial class MainViewModel : ObservableObject
     public IAsyncRelayCommand ShowHistoryCommand { get; }
 
     public IRelayCommand ShowCustomerDisplayCommand { get; }
+
+    public IAsyncRelayCommand ToggleSyncCenterCommand { get; }
+
+    public IRelayCommand ToggleCustomerDisplayWindowCommand { get; }
 
     public async Task InitializeAsync(AppStartupOptions startupOptions)
     {
@@ -144,6 +199,8 @@ public sealed partial class MainViewModel : ObservableObject
         }
 
         await RefreshPendingSyncAsync();
+        RefreshClock();
+        _clockTimer.Start();
         ApplySessionToScreens();
         NavigateFromStartup(startupOptions.InitialScreen);
 
@@ -218,6 +275,20 @@ public sealed partial class MainViewModel : ObservableObject
     {
         OnlineStateText = _localization.T(Session.IsOnline ? "Online" : "Offline");
         PendingSyncText = string.Format(_localization.CurrentCulture, _localization.T("pos.status.pendingSync"), Session.PendingSyncCount);
+        TerminalInfo = string.Format(_localization.CurrentCulture, _localization.T("shell.footer.terminalInfo"), Session.DeviceCode);
+        StoreInfo = string.Format(_localization.CurrentCulture, _localization.T("shell.top.storeInfo"), Session.StoreName, Session.StoreCode);
+        CashierInfo = string.Format(_localization.CurrentCulture, _localization.T("shell.top.cashierInfo"), Session.CashierName);
+        VersionStatusText = _localization.T("shell.footer.versionReady");
+        OrderSyncStatusText = string.Format(
+            _localization.CurrentCulture,
+            _localization.T("shell.sync.orderStatus"),
+            PendingUploadCount,
+            FailedUploadCount,
+            SyncingOrderCount);
+        SyncCenterDetailTitle = string.Format(
+            _localization.CurrentCulture,
+            _localization.T("shell.sync.detailTitle"),
+            SyncCenterOrders.Count);
         if (resetStatus || string.IsNullOrWhiteSpace(StatusMessage))
         {
             StatusMessage = _localization.T("StatusOfflineReady");
@@ -226,7 +297,22 @@ public sealed partial class MainViewModel : ObservableObject
 
     private async Task RefreshPendingSyncAsync()
     {
-        Session = Session with { PendingSyncCount = await _syncQueueRepository.CountPendingAsync() };
+        var overview = await _syncQueueRepository.GetOverviewAsync();
+        PendingUploadCount = overview.PendingCount;
+        FailedUploadCount = overview.FailedCount;
+        SyncingOrderCount = overview.SyncingCount;
+        LastOrderSyncErrorText = overview.LastError ?? _localization.T("shell.sync.noErrors");
+
+        var activeItems = await _syncQueueRepository.GetActiveItemsAsync();
+        SyncCenterOrders.ReplaceWith(activeItems);
+
+        Session = Session with { PendingSyncCount = overview.PendingCount };
+        RefreshLocalizedShell();
+    }
+
+    private void RefreshClock()
+    {
+        CurrentTime = DateTimeOffset.Now.ToString("yyyy-MM-dd HH:mm:ss");
     }
 
     private void ApplySessionToScreens()
@@ -292,6 +378,7 @@ public sealed partial class MainViewModel : ObservableObject
     {
         PosTerminal?.RefreshCart();
         CashPayment?.RefreshCart();
+        LoadCustomerDisplayFromCart();
         ShowCashPaymentCommand.NotifyCanExecuteChanged();
     }
 
@@ -364,14 +451,43 @@ public sealed partial class MainViewModel : ObservableObject
 
     private void ShowCustomerDisplay()
     {
+        LoadCustomerDisplayFromCart();
+        CurrentScreen = CustomerDisplay;
+    }
+
+    private void LoadCustomerDisplayFromCart()
+    {
         var lines = _cart.Lines.Select(line => new CustomerDisplayLine(
             line.DisplayName,
             line.LookupCode,
             line.Quantity,
             line.UnitPrice,
             line.ActualAmount));
+        CustomerDisplay.TerminalName = Session.DeviceCode;
         CustomerDisplay.LoadLines(lines, _cart.TotalAmount, 0m, _cart.DiscountAmount);
-        CurrentScreen = CustomerDisplay;
+    }
+
+    private async Task ToggleSyncCenterAsync()
+    {
+        if (!IsSyncCenterExpanded)
+        {
+            await RefreshPendingSyncAsync();
+        }
+
+        IsSyncCenterExpanded = !IsSyncCenterExpanded;
+    }
+
+    private void ToggleCustomerDisplayWindow()
+    {
+        LoadCustomerDisplayFromCart();
+        var owner = Application.Current.MainWindow;
+        if (owner is null)
+        {
+            return;
+        }
+
+        _customerDisplayWindowService.Toggle(CustomerDisplay, owner);
+        IsCustomerDisplayOpen = _customerDisplayWindowService.IsOpen;
     }
 
     private void ResetForNewTransaction()

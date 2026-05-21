@@ -162,4 +162,31 @@
   <data name="customer.promotionTitle" xml:space="preserve"><value>Deal of the Week</value></data>
   <data name="customer.promotionSubtitle" xml:space="preserve"><value>Organic Produce Up to 30% Off</value></data>
   <data name="customer.promotionBody" xml:space="preserve"><value>Fresh market selection this weekend and member-only savings.</value></data>
+  <data name="shell.customerDisplayWindow" xml:space="preserve"><value>Customer display window</value></data>
+  <data name="shell.window.minimize" xml:space="preserve"><value>Minimize</value></data>
+  <data name="shell.window.maximize" xml:space="preserve"><value>Maximize</value></data>
+  <data name="shell.window.close" xml:space="preserve"><value>Close</value></data>
+  <data name="shell.top.storeInfo" xml:space="preserve"><value>{0} ({1})</value></data>
+  <data name="shell.top.cashierInfo" xml:space="preserve"><value>Cashier: {0}</value></data>
+  <data name="shell.footer.terminalInfo" xml:space="preserve"><value>Terminal: {0}</value></data>
+  <data name="shell.footer.versionReady" xml:space="preserve"><value>Offline shell ready</value></data>
+  <data name="shell.sync.title" xml:space="preserve"><value>Sync Center</value></data>
+  <data name="shell.sync.orderStatus" xml:space="preserve"><value>Orders {0}/{1}/{2}</value></data>
+  <data name="shell.sync.detailTitle" xml:space="preserve"><value>{0} active upload tasks</value></data>
+  <data name="shell.sync.noErrors" xml:space="preserve"><value>No sync errors.</value></data>
+  <data name="shell.sync.close" xml:space="preserve"><value>Close sync center</value></data>
+  <data name="shell.sync.retry" xml:space="preserve"><value>Retry</value></data>
+  <data name="shell.sync.retryAll" xml:space="preserve"><value>Retry All</value></data>
+  <data name="shell.sync.caption" xml:space="preserve"><value>Shows failed, pending, and syncing order uploads.</value></data>
+  <data name="shell.sync.created" xml:space="preserve"><value>Created:</value></data>
+  <data name="shell.sync.lastAttempt" xml:space="preserve"><value>Last attempt:</value></data>
+  <data name="shell.sync.pending" xml:space="preserve"><value>Pending</value></data>
+  <data name="shell.sync.failed" xml:space="preserve"><value>Failed</value></data>
+  <data name="shell.sync.syncing" xml:space="preserve"><value>Syncing</value></data>
+  <data name="shell.numpad" xml:space="preserve"><value>NUMPAD</value></data>
+  <data name="shell.member" xml:space="preserve"><value>MEMBER</value></data>
+  <data name="shell.memberDefault" xml:space="preserve"><value>Gold Loyalty</value></data>
+  <data name="success.syncQueued" xml:space="preserve"><value>Order saved locally and queued for upload.</value></data>
+  <data name="history.dateRangeLabel" xml:space="preserve"><value>DATE RANGE</value></data>
+  <data name="history.searchLabel" xml:space="preserve"><value>ORDER LOOKUP</value></data>
 </root>

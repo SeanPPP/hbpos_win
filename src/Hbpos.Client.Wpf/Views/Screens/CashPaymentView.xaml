@@ -3,156 +3,214 @@
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
              xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
              xmlns:loc="clr-namespace:Hbpos.Client.Wpf.Localization"
+             xmlns:materialDesign="http://materialdesigninxaml.net/winfx/xaml/themes"
              xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
              mc:Ignorable="d"
-             d:DesignHeight="734"
-             d:DesignWidth="1280">
-    <Grid Background="{DynamicResource PosScreenBackgroundBrush}" Margin="18">
+             d:DesignHeight="688"
+             d:DesignWidth="1366"
+             Background="{StaticResource PosSurfaceAltBrush}">
+    <Grid>
         <Grid.ColumnDefinitions>
-            <ColumnDefinition Width="560" MinWidth="0" />
-            <ColumnDefinition Width="480" MinWidth="0" />
-            <ColumnDefinition Width="*" MinWidth="0" />
+            <ColumnDefinition Width="30*" MinWidth="0" />
+            <ColumnDefinition Width="42*" MinWidth="0" />
+            <ColumnDefinition Width="28*" MinWidth="0" />
         </Grid.ColumnDefinitions>
 
-        <Grid Grid.Column="0" Margin="0,0,16,0">
+        <Grid Grid.Column="0" Background="{StaticResource PosScreenBackgroundBrush}">
             <Grid.RowDefinitions>
                 <RowDefinition Height="Auto" />
                 <RowDefinition Height="*" />
                 <RowDefinition Height="Auto" />
             </Grid.RowDefinitions>
 
-            <StackPanel Margin="0,0,0,14">
-                <TextBlock Text="{Binding ScreenTitleText}" FontSize="26" FontWeight="SemiBold" />
-                <TextBlock Text="{Binding OrderSummaryText}" Foreground="{DynamicResource PosMutedForegroundBrush}" Margin="0,6,0,0" />
-            </StackPanel>
+            <Border Grid.Row="0" Padding="20,16" Background="{StaticResource PosScreenBackgroundBrush}">
+                <StackPanel>
+                    <TextBlock Text="{Binding ScreenTitleText}" FontSize="11" FontWeight="Black" Foreground="{StaticResource PosMutedForegroundBrush}" />
+                    <StackPanel Orientation="Horizontal" Margin="0,6,0,0">
+                        <Border Padding="8,3" Background="#1A0056D2" CornerRadius="4">
+                            <TextBlock FontSize="10" FontWeight="Bold" Foreground="{StaticResource PosPrimaryBrush}">
+                                <Run Text="{Binding CartLines.Count, Mode=OneWay}" />
+                                <Run Text=" " />
+                                <Run Text="{loc:Loc Items}" />
+                            </TextBlock>
+                        </Border>
+                        <TextBlock Text="{Binding OrderSummaryText}" Margin="8,0,0,0" VerticalAlignment="Center" FontSize="10" Foreground="{StaticResource PosMutedForegroundBrush}" />
+                    </StackPanel>
+                </StackPanel>
+            </Border>
 
             <DataGrid Grid.Row="1"
                       ItemsSource="{Binding CartLines}"
                       IsReadOnly="True"
-                      Style="{DynamicResource PosCartDataGridStyle}">
+                      RowBackground="White"
+                      AlternatingRowBackground="{StaticResource PosSurfaceAltBrush}"
+                      RowHeight="54"
+                      GridLinesVisibility="None"
+                      BorderThickness="0"
+                      Style="{StaticResource PosCartDataGridStyle}">
                 <DataGrid.Columns>
                     <DataGridTextColumn Header="{loc:Loc Item}" Binding="{Binding DisplayName}" Width="*" />
-                    <DataGridTextColumn Header="{loc:Loc Quantity}" Binding="{Binding Quantity, StringFormat={}{0:0.##}}" Width="76" />
-                    <DataGridTextColumn Header="{loc:Loc Total}" Binding="{Binding ActualAmount, StringFormat={}{0:C2}}" Width="116" />
+                    <DataGridTextColumn Header="{loc:Loc Quantity}" Binding="{Binding Quantity, StringFormat={}{0:0.##}}" Width="70" />
+                    <DataGridTextColumn Header="{loc:Loc Total}" Binding="{Binding ActualAmount, StringFormat={}{0:C2}}" Width="104" />
                 </DataGrid.Columns>
             </DataGrid>
 
-            <Border Grid.Row="2" Style="{DynamicResource PosCardStyle}" Padding="18" Margin="0,14,0,0">
-                <Grid>
-                    <Grid.RowDefinitions>
-                        <RowDefinition Height="Auto" />
-                        <RowDefinition Height="Auto" />
-                        <RowDefinition Height="Auto" />
-                    </Grid.RowDefinitions>
-                    <Grid.ColumnDefinitions>
-                        <ColumnDefinition Width="*" />
-                        <ColumnDefinition Width="Auto" />
-                    </Grid.ColumnDefinitions>
-                    <TextBlock Text="{loc:Loc Subtotal}" Foreground="{DynamicResource PosMutedForegroundBrush}" />
-                    <TextBlock Grid.Column="1" Text="{Binding TotalAmount, StringFormat={}{0:C2}}" />
-                    <TextBlock Grid.Row="1" Text="{loc:Loc Discount}" Foreground="{DynamicResource PosMutedForegroundBrush}" Margin="0,8,0,0" />
-                    <TextBlock Grid.Row="1" Grid.Column="1" Text="{Binding DiscountAmount, StringFormat={}{0:C2}}" Margin="0,8,0,0" />
-                    <TextBlock Grid.Row="2" Text="{loc:Loc AmountDue}" FontSize="20" FontWeight="SemiBold" Margin="0,14,0,0" />
-                    <TextBlock Grid.Row="2" Grid.Column="1" Text="{Binding ActualAmount, StringFormat={}{0:C2}}" FontSize="30" FontWeight="Bold" Foreground="{StaticResource PosPrimaryBrush}" Margin="0,10,0,0" />
-                </Grid>
+            <Border Grid.Row="2" Padding="20,16" Background="#E8FFFFFF" BorderBrush="#FFE2E2E6" BorderThickness="0,1,0,0">
+                <StackPanel>
+                    <DockPanel Margin="0,0,0,4">
+                        <TextBlock Text="{loc:Loc Subtotal}" FontSize="11" Foreground="{StaticResource PosMutedForegroundBrush}" />
+                        <TextBlock Text="{Binding TotalAmount, StringFormat={}{0:C2}}" DockPanel.Dock="Right" FontSize="14" FontWeight="SemiBold" />
+                    </DockPanel>
+                    <DockPanel Margin="0,0,0,8">
+                        <TextBlock Text="{loc:Loc Discount}" FontSize="11" Foreground="{StaticResource PosMutedForegroundBrush}" />
+                        <TextBlock Text="{Binding DiscountAmount, StringFormat={}{0:C2}}" DockPanel.Dock="Right" FontSize="14" FontWeight="SemiBold" />
+                    </DockPanel>
+                    <Border Height="1" Background="{StaticResource PosBorderBrush}" Margin="0,0,0,8" />
+                    <DockPanel>
+                        <TextBlock Text="{loc:Loc AmountDue}" VerticalAlignment="Center" FontSize="14" FontWeight="Black" Foreground="{StaticResource PosPrimaryBrush}" />
+                        <TextBlock Text="{Binding ActualAmount, StringFormat={}{0:C2}}" DockPanel.Dock="Right" FontSize="28" FontWeight="Black" Foreground="{StaticResource PosPrimaryBrush}" />
+                    </DockPanel>
+                </StackPanel>
             </Border>
         </Grid>
 
-        <Grid Grid.Column="1" Margin="0,0,16,0">
+        <Grid Grid.Column="1" Background="{StaticResource PosSurfaceAltBrush}">
             <Grid.RowDefinitions>
+                <RowDefinition Height="Auto" />
                 <RowDefinition Height="Auto" />
                 <RowDefinition Height="Auto" />
                 <RowDefinition Height="*" />
                 <RowDefinition Height="Auto" />
             </Grid.RowDefinitions>
 
-            <Grid>
+            <Grid Grid.Row="0" Margin="16,16,16,8">
                 <Grid.ColumnDefinitions>
                     <ColumnDefinition Width="*" />
                     <ColumnDefinition Width="*" />
                 </Grid.ColumnDefinitions>
-                <Border Style="{DynamicResource PosCardStyle}" Padding="16" Margin="0,0,8,0" Background="#FFFFF1D6">
+                <Border Margin="0,0,4,0" Padding="16" Background="#FFE2E2E6" BorderBrush="{StaticResource PosAccentBrush}" BorderThickness="0,0,0,4" CornerRadius="12">
                     <StackPanel>
-                        <TextBlock Text="{Binding AmountTenderedTextLabel}" Foreground="#8A4B00" FontSize="11" FontWeight="SemiBold" />
-                        <TextBlock Text="{Binding AmountTenderedText, StringFormat={}{0:C2}}" FontSize="28" FontWeight="Bold" />
+                        <TextBlock Text="{Binding AmountTenderedTextLabel}" FontSize="9" FontWeight="Black" Foreground="{StaticResource PosMutedForegroundBrush}" />
+                        <TextBlock Text="{Binding AmountTenderedText, StringFormat={}{0:C2}}" FontSize="30" FontWeight="Black" HorizontalAlignment="Right" Margin="0,4,0,0" />
                     </StackPanel>
                 </Border>
-                <Border Grid.Column="1" Style="{DynamicResource PosCardStyle}" Padding="16" Margin="8,0,0,0" Background="#FFFFE2D6">
+                <Border Grid.Column="1" Margin="4,0,0,0" Padding="16" Background="#FFFFDCC2" CornerRadius="12">
                     <StackPanel>
-                        <TextBlock Text="{Binding ChangeDueText}" Foreground="#8A2D00" FontSize="11" FontWeight="SemiBold" />
-                        <TextBlock Text="{Binding ChangeDue, StringFormat={}{0:C2}}" FontSize="28" FontWeight="Bold" />
+                        <TextBlock Text="{Binding ChangeDueText}" FontSize="9" FontWeight="Black" Foreground="#8F4E00" />
+                        <TextBlock Text="{Binding ChangeDue, StringFormat={}{0:C2}}" FontSize="30" FontWeight="Black" Foreground="#623400" HorizontalAlignment="Right" Margin="0,4,0,0" />
                     </StackPanel>
                 </Border>
             </Grid>
 
-            <ItemsControl Grid.Row="1" ItemsSource="{Binding QuickCashAmounts}" Margin="0,14,0,0">
-                <ItemsControl.ItemsPanel>
-                    <ItemsPanelTemplate>
-                        <UniformGrid Columns="3" />
-                    </ItemsPanelTemplate>
-                </ItemsControl.ItemsPanel>
-                <ItemsControl.ItemTemplate>
-                    <DataTemplate>
-                        <Button Content="{Binding StringFormat={}{0:C0}}"
-                                Command="{Binding DataContext.QuickCashCommand, RelativeSource={RelativeSource AncestorType=ItemsControl}}"
-                                CommandParameter="{Binding}"
-                                Style="{DynamicResource PosSecondaryButtonStyle}"
-                                Margin="4"
-                                Height="42" />
-                    </DataTemplate>
-                </ItemsControl.ItemTemplate>
-            </ItemsControl>
+            <StackPanel Grid.Row="1" Margin="16,4">
+                <TextBlock Text="{Binding QuickCashText}" FontSize="9" FontWeight="Black" Foreground="{StaticResource PosMutedForegroundBrush}" Margin="0,0,0,6" />
+                <ItemsControl ItemsSource="{Binding QuickCashAmounts}">
+                    <ItemsControl.ItemsPanel>
+                        <ItemsPanelTemplate>
+                            <UniformGrid Columns="5" />
+                        </ItemsPanelTemplate>
+                    </ItemsControl.ItemsPanel>
+                    <ItemsControl.ItemTemplate>
+                        <DataTemplate>
+                            <Button Content="{Binding StringFormat={}{0:C0}}"
+                                    Command="{Binding DataContext.QuickCashCommand, RelativeSource={RelativeSource AncestorType=ItemsControl}}"
+                                    CommandParameter="{Binding}"
+                                    Style="{StaticResource PosQuickAmountButtonStyle}" />
+                        </DataTemplate>
+                    </ItemsControl.ItemTemplate>
+                </ItemsControl>
+            </StackPanel>
 
-            <UniformGrid Grid.Row="2" Columns="3" Height="340" Margin="0,14,0,0" VerticalAlignment="Top">
-                <Button Content="1" Command="{Binding NumberInputCommand}" CommandParameter="1" Style="{DynamicResource PosNumberButtonStyle}" />
-                <Button Content="2" Command="{Binding NumberInputCommand}" CommandParameter="2" Style="{DynamicResource PosNumberButtonStyle}" />
-                <Button Content="3" Command="{Binding NumberInputCommand}" CommandParameter="3" Style="{DynamicResource PosNumberButtonStyle}" />
-                <Button Content="4" Command="{Binding NumberInputCommand}" CommandParameter="4" Style="{DynamicResource PosNumberButtonStyle}" />
-                <Button Content="5" Command="{Binding NumberInputCommand}" CommandParameter="5" Style="{DynamicResource PosNumberButtonStyle}" />
-                <Button Content="6" Command="{Binding NumberInputCommand}" CommandParameter="6" Style="{DynamicResource PosNumberButtonStyle}" />
-                <Button Content="7" Command="{Binding NumberInputCommand}" CommandParameter="7" Style="{DynamicResource PosNumberButtonStyle}" />
-                <Button Content="8" Command="{Binding NumberInputCommand}" CommandParameter="8" Style="{DynamicResource PosNumberButtonStyle}" />
-                <Button Content="9" Command="{Binding NumberInputCommand}" CommandParameter="9" Style="{DynamicResource PosNumberButtonStyle}" />
-                <Button Content="." Command="{Binding NumberInputCommand}" CommandParameter="." Style="{DynamicResource PosNumberButtonStyle}" />
-                <Button Content="0" Command="{Binding NumberInputCommand}" CommandParameter="0" Style="{DynamicResource PosNumberButtonStyle}" />
-                <Button Content="{loc:Loc Clear}" Command="{Binding NumberInputCommand}" CommandParameter="Clear" Style="{DynamicResource PosNumberButtonStyle}" Background="#FFFFDAD6" />
-                <Button Content="{loc:Loc Backspace}" Command="{Binding NumberInputCommand}" CommandParameter="Back" Style="{DynamicResource PosNumberButtonStyle}" />
+            <TextBlock Grid.Row="2" Text="{loc:Loc shell.numpad}" Margin="16,8,16,6" FontSize="9" FontWeight="Black" Foreground="{StaticResource PosMutedForegroundBrush}" />
+
+            <UniformGrid Grid.Row="3" Columns="3" Margin="16,0,16,16">
+                <Button Content="1" Command="{Binding NumberInputCommand}" CommandParameter="1" Style="{StaticResource PosNumberButtonStyle}" />
+                <Button Content="2" Command="{Binding NumberInputCommand}" CommandParameter="2" Style="{StaticResource PosNumberButtonStyle}" />
+                <Button Content="3" Command="{Binding NumberInputCommand}" CommandParameter="3" Style="{StaticResource PosNumberButtonStyle}" />
+                <Button Content="4" Command="{Binding NumberInputCommand}" CommandParameter="4" Style="{StaticResource PosNumberButtonStyle}" />
+                <Button Content="5" Command="{Binding NumberInputCommand}" CommandParameter="5" Style="{StaticResource PosNumberButtonStyle}" />
+                <Button Content="6" Command="{Binding NumberInputCommand}" CommandParameter="6" Style="{StaticResource PosNumberButtonStyle}" />
+                <Button Content="7" Command="{Binding NumberInputCommand}" CommandParameter="7" Style="{StaticResource PosNumberButtonStyle}" />
+                <Button Content="8" Command="{Binding NumberInputCommand}" CommandParameter="8" Style="{StaticResource PosNumberButtonStyle}" />
+                <Button Content="9" Command="{Binding NumberInputCommand}" CommandParameter="9" Style="{StaticResource PosNumberButtonStyle}" />
+                <Button Content="." Command="{Binding NumberInputCommand}" CommandParameter="." Style="{StaticResource PosNumberButtonStyle}" />
+                <Button Content="0" Command="{Binding NumberInputCommand}" CommandParameter="0" Style="{StaticResource PosNumberButtonStyle}" />
+                <Button Content="{loc:Loc Clear}" Command="{Binding NumberInputCommand}" CommandParameter="Clear" Style="{StaticResource PosNumberButtonStyle}" Background="#FFE7E8EB" />
+                <Button Content="{loc:Loc Backspace}" Command="{Binding NumberInputCommand}" CommandParameter="Back" Style="{StaticResource PosNumberButtonStyle}" />
             </UniformGrid>
 
-            <StackPanel Grid.Row="3" Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,14,0,0">
-                <Button Content="{Binding CancelText}"
-                        Command="{Binding CancelCommand}"
-                        Width="118"
-                        Height="50"
-                        Margin="0,0,10,0"
-                        Style="{DynamicResource PosSecondaryButtonStyle}" />
-                <Button Content="{Binding ConfirmPaymentText}"
-                        Command="{Binding ConfirmPaymentCommand}"
-                        Width="184"
-                        Height="50"
-                        Style="{DynamicResource PosPrimaryButtonStyle}" />
-            </StackPanel>
+            <Grid Grid.Row="4" Margin="16,0,16,18">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="1.4*" />
+                </Grid.ColumnDefinitions>
+                <Button Command="{Binding CancelCommand}" Height="50" Style="{StaticResource PosSecondaryButtonStyle}" Margin="0,0,8,0">
+                    <StackPanel Orientation="Horizontal">
+                        <materialDesign:PackIcon Kind="ArrowLeft" Width="18" Height="18" Margin="0,0,8,0" />
+                        <TextBlock Text="{Binding CancelText}" FontWeight="Bold" />
+                    </StackPanel>
+                </Button>
+                <Button Grid.Column="1" Command="{Binding ConfirmPaymentCommand}" Height="50" Style="{StaticResource PosPrimaryButtonStyle}" Margin="8,0,0,0">
+                    <StackPanel Orientation="Horizontal">
+                        <materialDesign:PackIcon Kind="CheckCircle" Width="22" Height="22" Foreground="White" Margin="0,0,10,0" />
+                        <TextBlock Text="{Binding ConfirmPaymentText}" Foreground="White" FontSize="16" FontWeight="Black" />
+                    </StackPanel>
+                </Button>
+            </Grid>
         </Grid>
 
-        <Border Grid.Column="2" Style="{DynamicResource PosCardStyle}" Padding="18">
-            <StackPanel>
-                <TextBlock Text="{Binding PaymentMethodText}" FontSize="20" FontWeight="SemiBold" Margin="0,0,0,14" />
-                <Button Style="{DynamicResource PosPaymentMethodButtonStyle}" Background="{StaticResource PosAccentBrush}" Foreground="White">
-                    <TextBlock Text="{loc:Loc payment.method.cash}" Foreground="White" FontWeight="SemiBold" />
+        <Grid Grid.Column="2" Background="#FFE7E8EB">
+            <Grid.RowDefinitions>
+                <RowDefinition Height="Auto" />
+                <RowDefinition Height="Auto" />
+                <RowDefinition Height="*" />
+            </Grid.RowDefinitions>
+
+            <TextBlock Grid.Row="0" Text="{Binding PaymentMethodText}" Margin="24,24,24,8" FontSize="11" FontWeight="Black" Foreground="{StaticResource PosMutedForegroundBrush}" />
+
+            <StackPanel Grid.Row="1" Margin="24,0,24,8">
+                <Button Style="{StaticResource PosPaymentMethodButtonStyle}" Background="{StaticResource PosAccentBrush}" BorderBrush="{StaticResource PosAccentBrush}">
+                    <StackPanel Orientation="Horizontal">
+                        <Border Width="32" Height="32" Margin="0,0,12,0" Background="#33FFFFFF" CornerRadius="8">
+                            <materialDesign:PackIcon Kind="Cash" Width="18" Height="18" Foreground="White" HorizontalAlignment="Center" VerticalAlignment="Center" />
+                        </Border>
+                        <TextBlock Text="{loc:Loc payment.method.cash}" VerticalAlignment="Center" FontWeight="Bold" Foreground="White" />
+                    </StackPanel>
                 </Button>
-                <Button Style="{DynamicResource PosPaymentMethodButtonStyle}" IsEnabled="False">
-                    <TextBlock Text="{loc:Loc payment.method.card}" />
+                <Button Style="{StaticResource PosPaymentMethodButtonStyle}" IsEnabled="False">
+                    <StackPanel Orientation="Horizontal">
+                        <Border Width="32" Height="32" Margin="0,0,12,0" Background="#FFE2E2E6" CornerRadius="8">
+                            <materialDesign:PackIcon Kind="CreditCard" Width="18" Height="18" Foreground="#424654" HorizontalAlignment="Center" VerticalAlignment="Center" />
+                        </Border>
+                        <TextBlock Text="{loc:Loc payment.method.card}" VerticalAlignment="Center" FontWeight="SemiBold" />
+                    </StackPanel>
                 </Button>
-                <Button Style="{DynamicResource PosPaymentMethodButtonStyle}" IsEnabled="False">
-                    <TextBlock Text="{loc:Loc payment.method.account}" />
+                <Button Style="{StaticResource PosPaymentMethodButtonStyle}" IsEnabled="False">
+                    <StackPanel Orientation="Horizontal">
+                        <Border Width="32" Height="32" Margin="0,0,12,0" Background="#FFE2E2E6" CornerRadius="8">
+                            <materialDesign:PackIcon Kind="AccountBalanceWallet" Width="18" Height="18" Foreground="#424654" HorizontalAlignment="Center" VerticalAlignment="Center" />
+                        </Border>
+                        <TextBlock Text="{loc:Loc payment.method.account}" VerticalAlignment="Center" FontWeight="SemiBold" />
+                    </StackPanel>
                 </Button>
-                <Button Style="{DynamicResource PosPaymentMethodButtonStyle}" IsEnabled="False">
-                    <TextBlock Text="{loc:Loc payment.method.installment}" />
+                <Button Style="{StaticResource PosPaymentMethodButtonStyle}" IsEnabled="False">
+                    <StackPanel Orientation="Horizontal">
+                        <Border Width="32" Height="32" Margin="0,0,12,0" Background="#FFE2E2E6" CornerRadius="8">
+                            <materialDesign:PackIcon Kind="CalendarMonth" Width="18" Height="18" Foreground="#424654" HorizontalAlignment="Center" VerticalAlignment="Center" />
+                        </Border>
+                        <TextBlock Text="{loc:Loc payment.method.installment}" VerticalAlignment="Center" FontWeight="SemiBold" />
+                    </StackPanel>
                 </Button>
-                <Border Style="{DynamicResource PosWarningPillStyle}" Margin="0,16,0,0">
-                    <TextBlock Text="{Binding StatusMessage}" TextWrapping="Wrap" Foreground="#8A4B00" />
-                </Border>
             </StackPanel>
-        </Border>
+
+            <Border Grid.Row="2" Margin="24,8,24,24" Padding="14" Background="White" BorderBrush="#FFFFD59B" BorderThickness="1" CornerRadius="12" VerticalAlignment="Top">
+                <StackPanel Orientation="Horizontal">
+                    <Border Width="32" Height="32" Margin="0,0,10,0" Background="{StaticResource PosAccentBrush}" CornerRadius="16">
+                        <materialDesign:PackIcon Kind="Information" Width="18" Height="18" Foreground="White" HorizontalAlignment="Center" VerticalAlignment="Center" />
+                    </Border>
+                    <TextBlock Text="{Binding StatusMessage}" TextWrapping="Wrap" FontWeight="SemiBold" Foreground="#8F4E00" VerticalAlignment="Center" />
+                </StackPanel>
+            </Border>
+        </Grid>
     </Grid>
 </UserControl>
