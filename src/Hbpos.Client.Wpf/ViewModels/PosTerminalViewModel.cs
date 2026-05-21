@@ -30,6 +30,12 @@ public sealed partial class PosTerminalViewModel : ObservableObject
     [ObservableProperty]
     private SellableItemDto? _selectedItem;
 
+    [ObservableProperty]
+    private bool _isMatchesPopupOpen;
+
+    [ObservableProperty]
+    private bool _isTouchKeyboardOpen;
+
     public PosTerminalViewModel(
         LocalSellableItemIndex priceIndex,
         PosCartService cart,
@@ -55,7 +61,9 @@ public sealed partial class PosTerminalViewModel : ObservableObject
 
         ScanCommand = new RelayCommand(SearchAndAdd);
         NumberInputCommand = new RelayCommand<string>(AppendScanText);
+        ToggleTouchKeyboardCommand = new RelayCommand(ToggleTouchKeyboard);
         AddSelectedCommand = new RelayCommand(AddSelected, () => SelectedItem is not null);
+        SelectMatchCommand = new RelayCommand<SellableItemDto>(SelectMatch);
         ClearCartCommand = new RelayCommand(ClearCart, () => !_cart.IsEmpty);
         OpenPaymentCommand = new RelayCommand(OpenPayment, () => !_cart.IsEmpty);
         SyncCommand = new AsyncRelayCommand(SyncAsync);
@@ -69,7 +77,11 @@ public sealed partial class PosTerminalViewModel : ObservableObject
 
     public IRelayCommand<string> NumberInputCommand { get; }
 
+    public IRelayCommand ToggleTouchKeyboardCommand { get; }
+
     public IRelayCommand AddSelectedCommand { get; }
+
+    public IRelayCommand<SellableItemDto> SelectMatchCommand { get; }
 
     public IRelayCommand ClearCartCommand { get; }
 
@@ -143,6 +155,12 @@ public sealed partial class PosTerminalViewModel : ObservableObject
 
     private void AppendScanText(string? value)
     {
+        if (value == "Enter")
+        {
+            SearchAndAdd();
+            return;
+        }
+
         if (value == "Back")
         {
             ScanText = ScanText.Length > 0 ? ScanText[..^1] : string.Empty;
@@ -152,10 +170,20 @@ public sealed partial class PosTerminalViewModel : ObservableObject
         if (value == "Clear")
         {
             ScanText = string.Empty;
+            IsMatchesPopupOpen = false;
             return;
         }
 
         ScanText += value;
+    }
+
+    private void ToggleTouchKeyboard()
+    {
+        IsTouchKeyboardOpen = !IsTouchKeyboardOpen;
+        if (IsTouchKeyboardOpen)
+        {
+            IsMatchesPopupOpen = false;
+        }
     }
 
     private void SearchAndAdd()
@@ -166,17 +194,20 @@ public sealed partial class PosTerminalViewModel : ObservableObject
 
         if (SelectedItem is null)
         {
+            IsMatchesPopupOpen = false;
             SetStatus("pos.status.noLocalMatch");
             return;
         }
 
         if (matches.Count == 1 || IsExactLookup(SelectedItem, ScanText))
         {
+            IsMatchesPopupOpen = false;
             AddItem(SelectedItem);
             ScanText = string.Empty;
         }
         else
         {
+            IsMatchesPopupOpen = true;
             SetStatus("pos.status.multipleMatches", matches.Count);
         }
     }
@@ -189,6 +220,19 @@ public sealed partial class PosTerminalViewModel : ObservableObject
         }
 
         AddItem(SelectedItem);
+    }
+
+    private void SelectMatch(SellableItemDto? item)
+    {
+        if (item is null)
+        {
+            return;
+        }
+
+        SelectedItem = item;
+        AddItem(item);
+        ScanText = string.Empty;
+        IsMatchesPopupOpen = false;
     }
 
     private void AddItem(SellableItemDto item)

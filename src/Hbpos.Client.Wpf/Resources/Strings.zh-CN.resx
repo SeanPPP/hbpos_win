@@ -110,6 +110,15 @@
   <data name="pos.terminal.actions.sync" xml:space="preserve"><value>同步</value></data>
   <data name="pos.terminal.actions.discount" xml:space="preserve"><value>折扣</value></data>
   <data name="pos.terminal.actions.noBarcode" xml:space="preserve"><value>无码商品</value></data>
+  <data name="pos.terminal.actions.qtyPlus" xml:space="preserve"><value>数量 +</value></data>
+  <data name="pos.terminal.actions.qtyMinus" xml:space="preserve"><value>数量 -</value></data>
+  <data name="pos.terminal.actions.modifyQty" xml:space="preserve"><value>修改数量</value></data>
+  <data name="pos.terminal.actions.entireOrder" xml:space="preserve"><value>整单结算</value></data>
+  <data name="pos.terminal.actions.specialItems" xml:space="preserve"><value>特殊商品</value></data>
+  <data name="pos.terminal.actions.switchUser" xml:space="preserve"><value>切换用户</value></data>
+  <data name="pos.terminal.inputBuffer" xml:space="preserve"><value>输入缓冲</value></data>
+  <data name="pos.terminal.quickHalf" xml:space="preserve"><value>0.5</value></data>
+  <data name="pos.terminal.quickNinetyNine" xml:space="preserve"><value>0.99 快捷</value></data>
   <data name="pos.status.ready" xml:space="preserve"><value>离线收银已就绪。</value></data>
   <data name="pos.status.online" xml:space="preserve"><value>在线</value></data>
   <data name="pos.status.offline" xml:space="preserve"><value>离线</value></data>

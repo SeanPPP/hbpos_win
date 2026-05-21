@@ -110,6 +110,15 @@
   <data name="pos.terminal.actions.sync" xml:space="preserve"><value>Sync</value></data>
   <data name="pos.terminal.actions.discount" xml:space="preserve"><value>Discount</value></data>
   <data name="pos.terminal.actions.noBarcode" xml:space="preserve"><value>No Barcode</value></data>
+  <data name="pos.terminal.actions.qtyPlus" xml:space="preserve"><value>Qty +</value></data>
+  <data name="pos.terminal.actions.qtyMinus" xml:space="preserve"><value>Qty -</value></data>
+  <data name="pos.terminal.actions.modifyQty" xml:space="preserve"><value>Modify Qty</value></data>
+  <data name="pos.terminal.actions.entireOrder" xml:space="preserve"><value>Entire Order</value></data>
+  <data name="pos.terminal.actions.specialItems" xml:space="preserve"><value>Special Items</value></data>
+  <data name="pos.terminal.actions.switchUser" xml:space="preserve"><value>Switch User</value></data>
+  <data name="pos.terminal.inputBuffer" xml:space="preserve"><value>Input Buffer</value></data>
+  <data name="pos.terminal.quickHalf" xml:space="preserve"><value>0.5</value></data>
+  <data name="pos.terminal.quickNinetyNine" xml:space="preserve"><value>0.99 Quick</value></data>
   <data name="pos.status.ready" xml:space="preserve"><value>Ready for offline checkout.</value></data>
   <data name="pos.status.online" xml:space="preserve"><value>Online</value></data>
   <data name="pos.status.offline" xml:space="preserve"><value>Offline</value></data>

@@ -28,7 +28,25 @@ public sealed class CartLine
 
     public decimal DiscountAmount { get; private set; }
 
+    public decimal GrossAmount => decimal.Round(Quantity * UnitPrice, 2, MidpointRounding.AwayFromZero);
+
     public decimal ActualAmount => decimal.Round((Quantity * UnitPrice) - DiscountAmount, 2, MidpointRounding.AwayFromZero);
+
+    public bool HasDiscount => DiscountAmount > 0m && GrossAmount > 0m;
+
+    public string DiscountRateText
+    {
+        get
+        {
+            if (!HasDiscount)
+            {
+                return string.Empty;
+            }
+
+            var rate = DiscountAmount / GrossAmount;
+            return $"-{rate:P0}";
+        }
+    }
 
     public PriceSourceKind PriceSource { get; private set; }
 
