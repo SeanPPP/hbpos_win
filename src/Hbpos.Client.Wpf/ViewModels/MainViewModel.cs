@@ -13,6 +13,7 @@ namespace Hbpos.Client.Wpf.ViewModels;
 public sealed partial class MainViewModel : ObservableObject
 {
     private const string LanguageSettingKey = "Language";
+    private const string DefaultTestStoreCode = "1002";
 
     private readonly LocalSellableItemIndex _priceIndex;
     private readonly PosCartService _cart;
@@ -33,7 +34,7 @@ public sealed partial class MainViewModel : ObservableObject
     private LocalOrder? _lastCompletedOrder;
 
     [ObservableProperty]
-    private PosSessionState _session = new("HB POS", "S001", "Main Branch", "Terminal 04", "C001", "Alice", false, 0);
+    private PosSessionState _session = new("HB POS", DefaultTestStoreCode, "Main Branch", "Terminal 04", "C001", "Alice", false, 0);
 
     [ObservableProperty]
     private object? _currentScreen;
@@ -125,6 +126,7 @@ public sealed partial class MainViewModel : ObservableObject
         ShowCustomerDisplayCommand = new RelayCommand(ShowCustomerDisplay);
         ToggleSyncCenterCommand = new AsyncRelayCommand(ToggleSyncCenterAsync);
         ToggleCustomerDisplayWindowCommand = new RelayCommand(ToggleCustomerDisplayWindow);
+        ToggleCultureCommand = new AsyncRelayCommand(ToggleCultureAsync);
 
         _cart.CartChanged += OnCartChanged;
         _localization.CultureChanged += OnCultureChanged;
@@ -158,6 +160,8 @@ public sealed partial class MainViewModel : ObservableObject
     public IAsyncRelayCommand ToggleSyncCenterCommand { get; }
 
     public IRelayCommand ToggleCustomerDisplayWindowCommand { get; }
+
+    public IAsyncRelayCommand ToggleCultureCommand { get; }
 
     public async Task InitializeAsync(AppStartupOptions startupOptions)
     {
@@ -269,6 +273,18 @@ public sealed partial class MainViewModel : ObservableObject
         {
             await _settingsRepository.SetValueAsync(LanguageSettingKey, _localization.CurrentCulture.Name);
         }
+    }
+
+    private Task ToggleCultureAsync()
+    {
+        var nextCultureName = string.Equals(
+            _localization.CurrentCulture.Name,
+            LocalizationService.ChineseCultureName,
+            StringComparison.OrdinalIgnoreCase)
+            ? LocalizationService.DefaultCultureName
+            : LocalizationService.ChineseCultureName;
+
+        return ApplyLanguageAsync(nextCultureName, persist: true);
     }
 
     private void RefreshLocalizedShell(bool resetStatus = false)
@@ -567,10 +583,10 @@ public sealed partial class MainViewModel : ObservableObject
         var now = DateTimeOffset.UtcNow;
         return
         [
-            new("S001", "SKU-001", null, "Organic Fuji Apple", "690001", "SKU-001", "690001", 4.50m, PriceSourceKind.StoreRetailPrice, "Store Price", 1m, now),
-            new("S001", "SKU-002", null, "Whole Milk 1L", "690002", "SKU-002", "690002", 3.20m, PriceSourceKind.ProductBase, "Base Price", 1m, now),
-            new("S001", "SKU-003", "SET-003", "Greek Yogurt Blueberry", "690003", "SKU-003", "690003", 3.75m, PriceSourceKind.StoreMultiCodeProduct, "Multi-code Store Price", 1m, now),
-            new("S001", "SKU-004", "CLR-004", "Cold Brew Concentrate", "690004", "SKU-004", "690004", 12.90m, PriceSourceKind.StoreClearancePrice, "Clearance Price", 1m, now)
+            new(DefaultTestStoreCode, "SKU-001", null, "Organic Fuji Apple", "690001", "SKU-001", "690001", 4.50m, PriceSourceKind.StoreRetailPrice, "Store Price", 1m, now),
+            new(DefaultTestStoreCode, "SKU-002", null, "Whole Milk 1L", "690002", "SKU-002", "690002", 3.20m, PriceSourceKind.ProductBase, "Base Price", 1m, now),
+            new(DefaultTestStoreCode, "SKU-003", "SET-003", "Greek Yogurt Blueberry", "690003", "SKU-003", "690003", 3.75m, PriceSourceKind.StoreMultiCodeProduct, "Multi-code Store Price", 1m, now),
+            new(DefaultTestStoreCode, "SKU-004", "CLR-004", "Cold Brew Concentrate", "690004", "SKU-004", "690004", 12.90m, PriceSourceKind.StoreClearancePrice, "Clearance Price", 1m, now)
         ];
     }
 }

@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Globalization;
 using System.Net;
 using System.Net.Http;
@@ -42,21 +43,50 @@ public sealed class CatalogApiClient(HttpClient httpClient) : ICatalogApiClient
             ("cursor", cursor),
             ("pageSize", pageSize.ToString(CultureInfo.InvariantCulture)));
 
-        using var response = await httpClient.GetAsync(requestUri, cancellationToken);
-        return await ReadApiResultAsync<CatalogSyncPageResponse>(response, cancellationToken);
+        var stopwatch = Stopwatch.StartNew();
+        Log($"GET {requestUri} start base={httpClient.BaseAddress}");
+        try
+        {
+            using var response = await httpClient.GetAsync(requestUri, cancellationToken);
+            var result = await ReadApiResultAsync<CatalogSyncPageResponse>(response, cancellationToken);
+            stopwatch.Stop();
+            Log($"GET {requestUri} completed status={(int)response.StatusCode} items={result.Items.Count} deletedLookups={result.DeletedLookups.Count} elapsedMs={stopwatch.ElapsedMilliseconds}");
+            return result;
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            Log($"GET {requestUri} failed elapsedMs={stopwatch.ElapsedMilliseconds} error={ex.Message}");
+            throw;
+        }
     }
 
     public async Task<CatalogCompareResponse> CompareSellableItemsAsync(
         CatalogCompareRequest request,
         CancellationToken cancellationToken = default)
     {
-        using var response = await httpClient.PostAsJsonAsync(
-            "api/v1/catalog/sellable-items/compare",
-            request,
-            JsonOptions,
-            cancellationToken);
+        const string requestUri = "api/v1/catalog/sellable-items/compare";
+        var stopwatch = Stopwatch.StartNew();
+        Log($"POST {requestUri} start base={httpClient.BaseAddress} store={request.StoreCode} localLookups={request.LocalLookups.Count}");
+        try
+        {
+            using var response = await httpClient.PostAsJsonAsync(
+                requestUri,
+                request,
+                JsonOptions,
+                cancellationToken);
 
-        return await ReadApiResultAsync<CatalogCompareResponse>(response, cancellationToken);
+            var result = await ReadApiResultAsync<CatalogCompareResponse>(response, cancellationToken);
+            stopwatch.Stop();
+            Log($"POST {requestUri} completed status={(int)response.StatusCode} upsertedLookups={result.UpsertedLookups.Count} deletedLookups={result.DeletedLookups.Count} elapsedMs={stopwatch.ElapsedMilliseconds}");
+            return result;
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            Log($"POST {requestUri} failed elapsedMs={stopwatch.ElapsedMilliseconds} error={ex.Message}");
+            throw;
+        }
     }
 
     public async Task<CatalogLookupResponse?> LookupSellableItemAsync(
@@ -69,13 +99,31 @@ public sealed class CatalogApiClient(HttpClient httpClient) : ICatalogApiClient
             ("storeCode", storeCode),
             ("lookupCode", lookupCode));
 
-        using var response = await httpClient.GetAsync(requestUri, cancellationToken);
-        if (response.StatusCode == HttpStatusCode.NotFound)
+        var stopwatch = Stopwatch.StartNew();
+        Log($"GET {requestUri} start base={httpClient.BaseAddress}");
+        try
         {
-            return await ReadLookupNotFoundAsync(response, cancellationToken);
-        }
+            using var response = await httpClient.GetAsync(requestUri, cancellationToken);
+            CatalogLookupResponse? result;
+            if (response.StatusCode == HttpStatusCode.NotFound)
+            {
+                result = await ReadLookupNotFoundAsync(response, cancellationToken);
+            }
+            else
+            {
+                result = await ReadApiResultAsync<CatalogLookupResponse>(response, cancellationToken);
+            }
 
-        return await ReadApiResultAsync<CatalogLookupResponse>(response, cancellationToken);
+            stopwatch.Stop();
+            Log($"GET {requestUri} completed status={(int)response.StatusCode} found={result?.Found.ToString() ?? "<null>"} elapsedMs={stopwatch.ElapsedMilliseconds}");
+            return result;
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            Log($"GET {requestUri} failed elapsedMs={stopwatch.ElapsedMilliseconds} error={ex.Message}");
+            throw;
+        }
     }
 
     private static async Task<CatalogLookupResponse?> ReadLookupNotFoundAsync(
@@ -183,6 +231,11 @@ public sealed class CatalogApiClient(HttpClient httpClient) : ICatalogApiClient
         return string.IsNullOrEmpty(queryString)
             ? path
             : $"{path}?{queryString}";
+    }
+
+    private static void Log(string message)
+    {
+        ConsoleLog.Write("CatalogApi", message);
     }
 }
 

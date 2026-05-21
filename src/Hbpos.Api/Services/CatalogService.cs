@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Globalization;
 using System.Security.Cryptography;
 using System.Text;
@@ -94,18 +95,29 @@ public sealed class CatalogService(
         DateTimeOffset? since,
         CancellationToken cancellationToken)
     {
+        var totalStopwatch = Stopwatch.StartNew();
         var normalizedStoreCode = NormalizeStoreCode(storeCode);
+        Log($"build index start store={normalizedStoreCode} since={since?.ToString("O") ?? "<null>"}");
+
+        var stepStopwatch = Stopwatch.StartNew();
         var store = await dbContext.MainDb.Queryable<Store>()
             .FirstAsync(x => x.StoreCode == normalizedStoreCode && x.IsActive && !x.IsDeleted, cancellationToken);
+        stepStopwatch.Stop();
+        Log($"store query store={normalizedStoreCode} found={store is not null} elapsedMs={stepStopwatch.ElapsedMilliseconds}");
 
         if (store is null)
         {
+            totalStopwatch.Stop();
+            Log($"build index store not found store={normalizedStoreCode} elapsedMs={totalStopwatch.ElapsedMilliseconds}");
             return null;
         }
 
+        stepStopwatch.Restart();
         var productEntities = await dbContext.MainDb.Queryable<Product>()
             .Where(x => x.IsActive && !x.IsDeleted)
             .ToListAsync(cancellationToken);
+        stepStopwatch.Stop();
+        Log($"products query store={normalizedStoreCode} count={productEntities.Count} elapsedMs={stepStopwatch.ElapsedMilliseconds}");
         var products = productEntities
             .Select(x => new ProductPriceRecord(
                 x.ProductCode,
@@ -117,9 +129,12 @@ public sealed class CatalogService(
                 x.ProductImage))
             .ToList();
 
+        stepStopwatch.Restart();
         var storeRetailPriceEntities = await dbContext.MainDb.Queryable<StoreRetailPrice>()
             .Where(x => x.StoreCode == normalizedStoreCode && x.IsActive && !x.IsDeleted)
             .ToListAsync(cancellationToken);
+        stepStopwatch.Stop();
+        Log($"store retail prices query store={normalizedStoreCode} count={storeRetailPriceEntities.Count} elapsedMs={stepStopwatch.ElapsedMilliseconds}");
         var storeRetailPrices = storeRetailPriceEntities
             .Select(x => new StoreRetailPriceRecord(
                 x.ProductCode,
@@ -127,9 +142,12 @@ public sealed class CatalogService(
                 ToOffset(x.UpdatedAt ?? x.CreatedAt)))
             .ToList();
 
+        stepStopwatch.Restart();
         var multiCodeProductEntities = await dbContext.MainDb.Queryable<StoreMultiCodeProduct>()
             .Where(x => x.StoreCode == normalizedStoreCode && x.IsActive && !x.IsDeleted)
             .ToListAsync(cancellationToken);
+        stepStopwatch.Stop();
+        Log($"multi code products query store={normalizedStoreCode} count={multiCodeProductEntities.Count} elapsedMs={stepStopwatch.ElapsedMilliseconds}");
         var multiCodeProducts = multiCodeProductEntities
             .Select(x => new StoreMultiCodeProductRecord(
                 x.ProductCode,
@@ -139,9 +157,12 @@ public sealed class CatalogService(
                 ToOffset(x.UpdatedAt ?? x.CreatedAt)))
             .ToList();
 
+        stepStopwatch.Restart();
         var clearancePriceEntities = await dbContext.MainDb.Queryable<StoreClearancePrice>()
             .Where(x => x.StoreCode == normalizedStoreCode && !x.IsDeleted)
             .ToListAsync(cancellationToken);
+        stepStopwatch.Stop();
+        Log($"clearance prices query store={normalizedStoreCode} count={clearancePriceEntities.Count} elapsedMs={stepStopwatch.ElapsedMilliseconds}");
         var clearancePrices = clearancePriceEntities
             .Select(x => new StoreClearancePriceRecord(
                 x.ProductCode,
@@ -150,9 +171,12 @@ public sealed class CatalogService(
                 ToOffset(x.UpdatedAt ?? x.CreatedAt)))
             .ToList();
 
+        stepStopwatch.Restart();
         var setCodeEntities = await dbContext.MainDb.Queryable<ProductSetCode>()
             .Where(x => x.IsActive && !x.IsDeleted)
             .ToListAsync(cancellationToken);
+        stepStopwatch.Stop();
+        Log($"set codes query store={normalizedStoreCode} count={setCodeEntities.Count} elapsedMs={stepStopwatch.ElapsedMilliseconds}");
         var setCodes = setCodeEntities
             .Select(x => new ProductSetCodeRecord(
                 x.ProductCode,
@@ -171,7 +195,11 @@ public sealed class CatalogService(
             setCodes);
 
         var generatedAt = DateTimeOffset.UtcNow;
+        stepStopwatch.Restart();
         var items = priceIndexBuilder.Build(store.StoreCode, input);
+        stepStopwatch.Stop();
+        totalStopwatch.Stop();
+        Log($"build index completed store={store.StoreCode} items={items.Count} buildElapsedMs={stepStopwatch.ElapsedMilliseconds} totalElapsedMs={totalStopwatch.ElapsedMilliseconds}");
         return new SellableIndexBuildResult(
             store.StoreCode,
             generatedAt,
@@ -189,6 +217,11 @@ public sealed class CatalogService(
     private static string NormalizeStoreCode(string? value)
     {
         return (value ?? string.Empty).Trim();
+    }
+
+    private static void Log(string message)
+    {
+        Console.WriteLine($"[HBPOS][Api][CatalogService] {DateTimeOffset.Now:O} {message}");
     }
 
     private sealed record SellableIndexBuildResult(

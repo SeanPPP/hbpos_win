@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using Hbpos.Api.Services;
 using Hbpos.Contracts.Catalog;
 using Hbpos.Contracts.Common;
@@ -54,12 +55,18 @@ public sealed class CatalogController(ICatalogService catalogService) : Controll
             return BadRequest(ApiResult<CatalogSyncPageResponse>.Fail("PAGE_SIZE_INVALID", $"pageSize must be between 1 and {MaxPageSize}"));
         }
 
+        var stopwatch = Stopwatch.StartNew();
+        Log($"page request store={storeCode} cursor={cursor ?? "<start>"} pageSize={pageSize}");
         var response = await catalogService.GetSellableItemsPageAsync(
             storeCode,
             since,
             cursor,
             pageSize,
             cancellationToken);
+        stopwatch.Stop();
+        Log(response is null
+            ? $"page response store={storeCode} status=404 elapsedMs={stopwatch.ElapsedMilliseconds}"
+            : $"page response store={response.StoreCode} status=200 items={response.Items.Count} deletedLookups={response.DeletedLookups.Count} hasMore={response.HasMore} next={response.NextCursor ?? "<end>"} elapsedMs={stopwatch.ElapsedMilliseconds}");
 
         return response is null
             ? NotFound(ApiResult<CatalogSyncPageResponse>.Fail("STORE_NOT_FOUND", "store was not found or inactive"))
@@ -81,7 +88,13 @@ public sealed class CatalogController(ICatalogService catalogService) : Controll
             return BadRequest(ApiResult<CatalogCompareResponse>.Fail("STORE_CODE_REQUIRED", "storeCode is required"));
         }
 
+        var stopwatch = Stopwatch.StartNew();
+        Log($"compare request store={request.StoreCode} localLookups={request.LocalLookups.Count}");
         var response = await catalogService.CompareSellableItemsAsync(request, cancellationToken);
+        stopwatch.Stop();
+        Log(response is null
+            ? $"compare response store={request.StoreCode} status=404 elapsedMs={stopwatch.ElapsedMilliseconds}"
+            : $"compare response store={response.StoreCode} status=200 upsertedLookups={response.UpsertedLookups.Count} deletedLookups={response.DeletedLookups.Count} hasMore={response.HasMore} elapsedMs={stopwatch.ElapsedMilliseconds}");
         return response is null
             ? NotFound(ApiResult<CatalogCompareResponse>.Fail("STORE_NOT_FOUND", "store was not found or inactive"))
             : Ok(ApiResult<CatalogCompareResponse>.Ok(response));
@@ -104,14 +117,25 @@ public sealed class CatalogController(ICatalogService catalogService) : Controll
             return BadRequest(ApiResult<CatalogLookupResponse>.Fail("LOOKUP_CODE_REQUIRED", "lookupCode or lookupCodeNormalized is required"));
         }
 
+        var stopwatch = Stopwatch.StartNew();
+        Log($"lookup request store={storeCode} lookupCode={lookupCode ?? "<null>"} lookupCodeNormalized={lookupCodeNormalized ?? "<null>"}");
         var response = await catalogService.LookupSellableItemAsync(
             storeCode,
             lookupCode,
             lookupCodeNormalized,
             cancellationToken);
+        stopwatch.Stop();
+        Log(response is null
+            ? $"lookup response store={storeCode} status=404 elapsedMs={stopwatch.ElapsedMilliseconds}"
+            : $"lookup response store={response.StoreCode} status=200 found={response.Found} elapsedMs={stopwatch.ElapsedMilliseconds}");
 
         return response is null
             ? NotFound(ApiResult<CatalogLookupResponse>.Fail("STORE_NOT_FOUND", "store was not found or inactive"))
             : Ok(ApiResult<CatalogLookupResponse>.Ok(response));
+    }
+
+    private static void Log(string message)
+    {
+        Console.WriteLine($"[HBPOS][Api][Catalog] {DateTimeOffset.Now:O} {message}");
     }
 }

@@ -119,15 +119,17 @@
                 <StackPanel Grid.Column="2" Orientation="Horizontal" VerticalAlignment="Center">
                     <TextBlock Text="{Binding StoreInfo}" Foreground="{StaticResource PosMutedForegroundBrush}" FontSize="11" VerticalAlignment="Center" Margin="0,0,12,0" />
                     <TextBlock Text="{Binding CashierInfo}" Foreground="{StaticResource PosMutedForegroundBrush}" FontSize="11" VerticalAlignment="Center" Margin="0,0,12,0" />
-                    <ComboBox SelectedValue="{Binding SelectedCultureName, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
-                              SelectedValuePath="Tag"
-                              Width="128"
-                              Height="30"
-                              VerticalContentAlignment="Center"
-                              Margin="0,0,8,0">
-                        <ComboBoxItem Tag="en-US" Content="{loc:Loc LanguageEnglish}" />
-                        <ComboBoxItem Tag="zh-CN" Content="{loc:Loc LanguageChineseSimplified}" />
-                    </ComboBox>
+                    <Button Content="中 / EN"
+                            Command="{Binding ToggleCultureCommand}"
+                            Width="68"
+                            Height="30"
+                            Padding="0"
+                            FontWeight="Black"
+                            Background="#FFE8F0FE"
+                            Foreground="{StaticResource PosPrimaryBrush}"
+                            Style="{StaticResource PosShellNavButtonStyle}"
+                            ToolTip="{loc:Loc Language}"
+                            Margin="0,0,8,0" />
                     <Button Click="MinimizeButton_Click"
                             Style="{StaticResource TitleBarButtonStyle}"
                             ToolTip="{loc:Loc shell.window.minimize}">

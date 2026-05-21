@@ -75,7 +75,7 @@ public partial class App : Application
     {
         var configuredBaseUrl = Environment.GetEnvironmentVariable("HBPOS_API_BASE_URL");
         var baseUrl = string.IsNullOrWhiteSpace(configuredBaseUrl)
-            ? "http://localhost:5000/"
+            ? "http://localhost:5159/"
             : configuredBaseUrl.Trim();
 
         if (!baseUrl.EndsWith('/'))
