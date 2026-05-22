@@ -101,6 +101,8 @@
   <data name="pos.terminal.addSelected" xml:space="preserve"><value>Add Selected</value></data>
   <data name="pos.terminal.currentItem" xml:space="preserve"><value>Current Item</value></data>
   <data name="pos.terminal.cart.title" xml:space="preserve"><value>Current Order</value></data>
+  <data name="pos.terminal.cart.itemQuantity" xml:space="preserve"><value>Items</value></data>
+  <data name="pos.terminal.cart.skuCount" xml:space="preserve"><value>SKU</value></data>
   <data name="pos.terminal.totals.total" xml:space="preserve"><value>Final Total</value></data>
   <data name="pos.terminal.payNow" xml:space="preserve"><value>Pay Now</value></data>
   <data name="pos.terminal.actions.clearCart" xml:space="preserve"><value>Clear Cart</value></data>
@@ -170,6 +172,8 @@
   <data name="history.refund" xml:space="preserve"><value>Refund</value></data>
 
   <data name="customer.totalToPay" xml:space="preserve"><value>Total To Pay</value></data>
+  <data name="customer.itemQuantity" xml:space="preserve"><value>Item Quantity</value></data>
+  <data name="customer.skuCount" xml:space="preserve"><value>SKU Count</value></data>
   <data name="customer.readyForPayment" xml:space="preserve"><value>Ready for Payment</value></data>
   <data name="customer.insertOrTap" xml:space="preserve"><value>Insert or tap card</value></data>
   <data name="customer.promotionTitle" xml:space="preserve"><value>Deal of the Week</value></data>

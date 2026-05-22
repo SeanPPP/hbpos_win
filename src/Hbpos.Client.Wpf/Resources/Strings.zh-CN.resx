@@ -101,6 +101,8 @@
   <data name="pos.terminal.addSelected" xml:space="preserve"><value>加入所选</value></data>
   <data name="pos.terminal.currentItem" xml:space="preserve"><value>当前商品</value></data>
   <data name="pos.terminal.cart.title" xml:space="preserve"><value>当前订单</value></data>
+  <data name="pos.terminal.cart.itemQuantity" xml:space="preserve"><value>商品数量</value></data>
+  <data name="pos.terminal.cart.skuCount" xml:space="preserve"><value>SKU</value></data>
   <data name="pos.terminal.totals.total" xml:space="preserve"><value>最终合计</value></data>
   <data name="pos.terminal.payNow" xml:space="preserve"><value>立即付款</value></data>
   <data name="pos.terminal.actions.clearCart" xml:space="preserve"><value>清空购物车</value></data>
@@ -173,6 +175,8 @@
   <data name="history.searchLabel" xml:space="preserve"><value>订单查询</value></data>
 
   <data name="customer.totalToPay" xml:space="preserve"><value>应付合计</value></data>
+  <data name="customer.itemQuantity" xml:space="preserve"><value>&#x5546;&#x54C1;&#x6570;&#x91CF;</value></data>
+  <data name="customer.skuCount" xml:space="preserve"><value>SKU &#x6570;&#x91CF;</value></data>
   <data name="customer.readyForPayment" xml:space="preserve"><value>准备支付</value></data>
   <data name="customer.insertOrTap" xml:space="preserve"><value>插卡或轻触刷卡</value></data>
   <data name="customer.promotionTitle" xml:space="preserve"><value>本周特惠</value></data>

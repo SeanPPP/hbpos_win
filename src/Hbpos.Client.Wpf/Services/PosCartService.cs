@@ -88,6 +88,34 @@ public sealed class PosCartService
         return true;
     }
 
+    public bool IncreaseLine(CartLine? line)
+    {
+        if (line is null || !_lines.Contains(line))
+        {
+            return false;
+        }
+
+        line.Increase(1m);
+        OnCartChanged();
+        return true;
+    }
+
+    public bool DecreaseLine(CartLine? line)
+    {
+        if (line is null || !_lines.Contains(line))
+        {
+            return false;
+        }
+
+        if (!line.Decrease(1m))
+        {
+            _lines.Remove(line);
+        }
+
+        OnCartChanged();
+        return true;
+    }
+
     public void Clear()
     {
         if (_lines.Count == 0)

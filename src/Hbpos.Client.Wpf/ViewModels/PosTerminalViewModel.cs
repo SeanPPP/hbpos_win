@@ -84,6 +84,9 @@ public sealed partial class PosTerminalViewModel : ObservableObject, IDisposable
         AddSelectedCommand = new RelayCommand(AddSelected, () => SelectedItem is not null);
         SelectMatchCommand = new RelayCommand<SellableItemDto>(SelectMatch);
         RemoveLineCommand = new RelayCommand<CartLine>(RemoveLine);
+        IncreaseLineCommand = new RelayCommand<CartLine>(IncreaseLine, line => line is not null && _cart.Lines.Contains(line));
+        DecreaseLineCommand = new RelayCommand<CartLine>(DecreaseLine, line => line is not null && _cart.Lines.Contains(line));
+        ClearSearchCommand = new RelayCommand(ClearSearch, () => !string.IsNullOrWhiteSpace(ScanText));
         ClearCartCommand = new RelayCommand(ClearCart, () => !_cart.IsEmpty);
         OpenPaymentCommand = new RelayCommand(OpenPayment, () => !_cart.IsEmpty);
         SyncCommand = new AsyncRelayCommand(SyncAsync);
@@ -106,6 +109,12 @@ public sealed partial class PosTerminalViewModel : ObservableObject, IDisposable
     public IRelayCommand<SellableItemDto> SelectMatchCommand { get; }
 
     public IRelayCommand<CartLine> RemoveLineCommand { get; }
+
+    public IRelayCommand<CartLine> IncreaseLineCommand { get; }
+
+    public IRelayCommand<CartLine> DecreaseLineCommand { get; }
+
+    public IRelayCommand ClearSearchCommand { get; }
 
     public IRelayCommand ClearCartCommand { get; }
 
@@ -151,6 +160,10 @@ public sealed partial class PosTerminalViewModel : ObservableObject, IDisposable
 
     public decimal ActualAmount => _cart.ActualAmount;
 
+    public decimal CartItemQuantity => _cart.Lines.Sum(line => line.Quantity);
+
+    public int CartSkuCount => _cart.Lines.Count;
+
     public void Dispose()
     {
         _cart.CartChanged -= OnCartChanged;
@@ -160,6 +173,11 @@ public sealed partial class PosTerminalViewModel : ObservableObject, IDisposable
     partial void OnSelectedItemChanged(SellableItemDto? value)
     {
         AddSelectedCommand.NotifyCanExecuteChanged();
+    }
+
+    partial void OnScanTextChanged(string value)
+    {
+        ClearSearchCommand.NotifyCanExecuteChanged();
     }
 
     partial void OnSessionChanged(PosSessionState value)
@@ -184,6 +202,10 @@ public sealed partial class PosTerminalViewModel : ObservableObject, IDisposable
         OnPropertyChanged(nameof(TotalAmount));
         OnPropertyChanged(nameof(DiscountAmount));
         OnPropertyChanged(nameof(ActualAmount));
+        OnPropertyChanged(nameof(CartItemQuantity));
+        OnPropertyChanged(nameof(CartSkuCount));
+        IncreaseLineCommand.NotifyCanExecuteChanged();
+        DecreaseLineCommand.NotifyCanExecuteChanged();
         ClearCartCommand.NotifyCanExecuteChanged();
         OpenPaymentCommand.NotifyCanExecuteChanged();
     }
@@ -474,6 +496,32 @@ public sealed partial class PosTerminalViewModel : ObservableObject, IDisposable
         SetStatus("pos.status.ready");
     }
 
+    private void IncreaseLine(CartLine? line)
+    {
+        if (line is null || !_cart.IncreaseLine(line))
+        {
+            return;
+        }
+
+        SelectCartLine(line);
+        SetStatus("pos.status.ready");
+    }
+
+    private void DecreaseLine(CartLine? line)
+    {
+        if (line is null || !_cart.DecreaseLine(line))
+        {
+            return;
+        }
+
+        if (_cart.Lines.Contains(line))
+        {
+            SelectCartLine(line);
+        }
+
+        SetStatus("pos.status.ready");
+    }
+
     private void AddItem(SellableItemDto item)
     {
         var line = _cart.AddItem(item);
@@ -498,6 +546,13 @@ public sealed partial class PosTerminalViewModel : ObservableObject, IDisposable
         ScanText = e.Barcode;
         IsTouchKeyboardOpen = false;
         ProcessScan(e.Barcode, preferExactLookup: true, source: "raw");
+    }
+
+    private void ClearSearch()
+    {
+        ScanText = string.Empty;
+        IsMatchesPopupOpen = false;
+        IsTouchKeyboardOpen = false;
     }
 
     private void ClearCart()

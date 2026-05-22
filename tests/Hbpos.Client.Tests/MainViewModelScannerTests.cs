@@ -1,4 +1,5 @@
 using System.Windows;
+using Hbpos.Client.Wpf;
 using Hbpos.Client.Wpf.Localization;
 using Hbpos.Client.Wpf.Models;
 using Hbpos.Client.Wpf.Services;
@@ -38,6 +39,38 @@ public sealed class MainViewModelScannerTests
 
         Assert.Equal(1, scanner.ResetCount);
         Assert.Equal("扫码枪绑定已清除，请在收银页扫描一次重新学习。", viewModel.StatusMessage);
+    }
+
+    [Fact]
+    public async Task InitializeAsync_ShowsDeviceRegistrationWithoutWaitingForStores()
+    {
+        var deviceApi = new FakeDeviceApiClient();
+        var viewModel = new MainViewModel(
+            new LocalSellableItemIndex(),
+            new PosCartService(),
+            new CashCheckoutService(),
+            new FakeLocalSchemaService(),
+            new FakeSettingsRepository(),
+            new FakeCatalogRepository(),
+            new FakeCatalogSyncService(),
+            new FakeRemoteLookupRefreshService(),
+            new FakeConnectivityApiClient(),
+            new FakeLocalDeviceRepository(),
+            deviceApi,
+            new FakeDeviceFingerprintService(),
+            new DeviceAuthorizationState(),
+            new FakeLocalOrderRepository(),
+            new FakeSyncQueueRepository(),
+            new LocalizationService(),
+            new FakeCustomerDisplayWindowService(),
+            new FakeRawScannerService());
+
+        await viewModel.InitializeAsync(new AppStartupOptions([], false, null, null));
+
+        Assert.NotNull(viewModel.DeviceRegistration);
+        Assert.Same(viewModel.DeviceRegistration, viewModel.CurrentScreen);
+        Assert.Equal("Loading stores...", viewModel.DeviceRegistration.StatusMessage);
+        Assert.Equal(0, deviceApi.GetStoresCallCount);
     }
 
     private sealed class FakeRawScannerService : IRawScannerService
@@ -202,8 +235,11 @@ public sealed class MainViewModelScannerTests
 
     private sealed class FakeDeviceApiClient : IDeviceApiClient
     {
+        public int GetStoresCallCount { get; private set; }
+
         public Task<IReadOnlyList<StoreSelectionItem>> GetStoresAsync(CancellationToken cancellationToken = default)
         {
+            GetStoresCallCount++;
             return Task.FromResult<IReadOnlyList<StoreSelectionItem>>([]);
         }
 

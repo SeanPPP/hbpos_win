@@ -13,6 +13,7 @@
         Height="768"
         MinWidth="1080"
         MinHeight="720"
+        Icon="pack://application:,,,/Resources/AppIcon.ico"
         WindowStyle="None"
         ResizeMode="CanResize"
         FontFamily="{StaticResource PosFontFamily}"

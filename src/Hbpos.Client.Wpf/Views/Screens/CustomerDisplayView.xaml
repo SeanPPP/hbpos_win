@@ -6,9 +6,41 @@
              xmlns:materialDesign="http://materialdesigninxaml.net/winfx/xaml/themes"
              xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
              mc:Ignorable="d"
-             d:DesignHeight="688"
-             d:DesignWidth="1366"
-             Background="{StaticResource PosScreenBackgroundBrush}">
+              d:DesignHeight="688"
+              d:DesignWidth="1366"
+              Background="{StaticResource PosScreenBackgroundBrush}">
+    <UserControl.Resources>
+        <Style x:Key="CustomerDisplayHeaderBaseStyle" TargetType="DataGridColumnHeader">
+            <Setter Property="Background" Value="#FFF8FAFD" />
+            <Setter Property="Foreground" Value="{StaticResource PosMutedForegroundBrush}" />
+            <Setter Property="FontSize" Value="12" />
+            <Setter Property="FontWeight" Value="Bold" />
+            <Setter Property="Padding" Value="12,10" />
+            <Setter Property="BorderThickness" Value="0,0,0,1" />
+            <Setter Property="BorderBrush" Value="#FFE4E7EC" />
+            <Setter Property="VerticalContentAlignment" Value="Center" />
+        </Style>
+
+        <Style x:Key="CustomerDisplayHeaderLeftStyle" TargetType="DataGridColumnHeader" BasedOn="{StaticResource CustomerDisplayHeaderBaseStyle}">
+            <Setter Property="HorizontalContentAlignment" Value="Left" />
+        </Style>
+
+        <Style x:Key="CustomerDisplayHeaderCenterStyle" TargetType="DataGridColumnHeader" BasedOn="{StaticResource CustomerDisplayHeaderBaseStyle}">
+            <Setter Property="HorizontalContentAlignment" Value="Center" />
+        </Style>
+
+        <Style x:Key="CustomerDisplayHeaderRightStyle" TargetType="DataGridColumnHeader" BasedOn="{StaticResource CustomerDisplayHeaderBaseStyle}">
+            <Setter Property="HorizontalContentAlignment" Value="Right" />
+        </Style>
+
+        <Style x:Key="CustomerDisplayCellStyle" TargetType="DataGridCell">
+            <Setter Property="BorderThickness" Value="0" />
+            <Setter Property="Padding" Value="0" />
+            <Setter Property="FocusVisualStyle" Value="{x:Null}" />
+            <Setter Property="VerticalContentAlignment" Value="Stretch" />
+        </Style>
+    </UserControl.Resources>
+
     <Grid Margin="18">
         <Grid.RowDefinitions>
             <RowDefinition Height="*" />
@@ -22,53 +54,71 @@
             </Grid.ColumnDefinitions>
 
             <Border Background="White" CornerRadius="12" Padding="20">
-                <Grid>
-                    <Grid.RowDefinitions>
-                        <RowDefinition Height="Auto" />
-                        <RowDefinition Height="*" />
-                    </Grid.RowDefinitions>
-
-                    <Grid Margin="0,0,0,12">
-                        <Grid.ColumnDefinitions>
-                            <ColumnDefinition Width="*" />
-                            <ColumnDefinition Width="96" />
-                            <ColumnDefinition Width="116" />
-                            <ColumnDefinition Width="126" />
-                        </Grid.ColumnDefinitions>
-                        <TextBlock Text="{loc:Loc ItemDescription}" Foreground="{StaticResource PosMutedForegroundBrush}" FontSize="12" FontWeight="Bold" />
-                        <TextBlock Grid.Column="1" Text="{loc:Loc Quantity}" Foreground="{StaticResource PosMutedForegroundBrush}" FontSize="12" FontWeight="Bold" HorizontalAlignment="Center" />
-                        <TextBlock Grid.Column="2" Text="{loc:Loc Price}" Foreground="{StaticResource PosMutedForegroundBrush}" FontSize="12" FontWeight="Bold" HorizontalAlignment="Right" />
-                        <TextBlock Grid.Column="3" Text="{loc:Loc Total}" Foreground="{StaticResource PosMutedForegroundBrush}" FontSize="12" FontWeight="Bold" HorizontalAlignment="Right" />
-                    </Grid>
-
-                    <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto">
-                        <ItemsControl ItemsSource="{Binding Lines}">
-                            <ItemsControl.ItemTemplate>
+                <DataGrid x:Name="LineDataGrid"
+                          ItemsSource="{Binding Lines}"
+                          AutoGenerateColumns="False"
+                          CanUserAddRows="False"
+                          CanUserDeleteRows="False"
+                          CanUserReorderColumns="False"
+                          CanUserResizeRows="False"
+                          CanUserSortColumns="False"
+                          IsReadOnly="True"
+                          HeadersVisibility="Column"
+                          SelectionMode="Single"
+                          SelectionUnit="FullRow"
+                          RowBackground="White"
+                          AlternatingRowBackground="{StaticResource PosSurfaceAltBrush}"
+                          RowHeight="64"
+                          GridLinesVisibility="None"
+                          BorderThickness="0"
+                          CellStyle="{StaticResource CustomerDisplayCellStyle}"
+                          EnableRowVirtualization="True"
+                          EnableColumnVirtualization="True"
+                          VirtualizingPanel.IsVirtualizing="True"
+                          VirtualizingPanel.VirtualizationMode="Recycling"
+                          ScrollViewer.CanContentScroll="True"
+                          ScrollViewer.VerticalScrollBarVisibility="Hidden"
+                          ScrollViewer.HorizontalScrollBarVisibility="Disabled"
+                          Style="{StaticResource PosCartDataGridStyle}">
+                    <DataGrid.Columns>
+                        <DataGridTemplateColumn Header="{loc:Loc ItemDescription}" Width="*" HeaderStyle="{StaticResource CustomerDisplayHeaderLeftStyle}">
+                            <DataGridTemplateColumn.CellTemplate>
                                 <DataTemplate>
-                                    <Border Padding="14" Margin="0,0,0,8" Background="{StaticResource PosSurfaceAltBrush}" BorderBrush="#FFE4E7EC" BorderThickness="1" CornerRadius="10">
-                                        <Grid>
-                                            <Grid.ColumnDefinitions>
-                                                <ColumnDefinition Width="*" />
-                                                <ColumnDefinition Width="96" />
-                                                <ColumnDefinition Width="116" />
-                                                <ColumnDefinition Width="126" />
-                                            </Grid.ColumnDefinitions>
-                                            <StackPanel>
-                                                <TextBlock Text="{Binding DisplayName}" FontSize="16" FontWeight="SemiBold" />
-                                                <TextBlock Text="{Binding LookupCode}" Foreground="{StaticResource PosMutedForegroundBrush}" FontSize="12" Margin="0,4,0,0" />
-                                            </StackPanel>
-                                            <Border Grid.Column="1" HorizontalAlignment="Center" VerticalAlignment="Center" Padding="10,4" Background="#1A0056D2" CornerRadius="12">
-                                                <TextBlock Text="{Binding QuantityDisplay, Mode=OneWay}" Foreground="{StaticResource PosPrimaryBrush}" FontWeight="Black" />
-                                            </Border>
-                                            <TextBlock Grid.Column="2" Text="{Binding UnitPrice, StringFormat={}{0:C2}}" FontSize="15" HorizontalAlignment="Right" VerticalAlignment="Center" />
-                                            <TextBlock Grid.Column="3" Text="{Binding ActualAmount, StringFormat={}{0:C2}}" FontSize="16" HorizontalAlignment="Right" VerticalAlignment="Center" FontWeight="Black" />
-                                        </Grid>
+                                    <StackPanel Margin="12,6,8,6" VerticalAlignment="Center">
+                                        <TextBlock Text="{Binding DisplayName}" FontSize="16" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" />
+                                        <TextBlock Text="{Binding LookupCode}" Foreground="{StaticResource PosMutedForegroundBrush}" FontSize="12" Margin="0,4,0,0" TextTrimming="CharacterEllipsis" />
+                                    </StackPanel>
+                                </DataTemplate>
+                            </DataGridTemplateColumn.CellTemplate>
+                        </DataGridTemplateColumn>
+
+                        <DataGridTemplateColumn Header="{loc:Loc Quantity}" Width="96" HeaderStyle="{StaticResource CustomerDisplayHeaderCenterStyle}">
+                            <DataGridTemplateColumn.CellTemplate>
+                                <DataTemplate>
+                                    <Border HorizontalAlignment="Center" VerticalAlignment="Center" Padding="10,4" Background="#1A0056D2" CornerRadius="12">
+                                        <TextBlock Text="{Binding QuantityDisplay, Mode=OneWay}" Foreground="{StaticResource PosPrimaryBrush}" FontWeight="Black" />
                                     </Border>
                                 </DataTemplate>
-                            </ItemsControl.ItemTemplate>
-                        </ItemsControl>
-                    </ScrollViewer>
-                </Grid>
+                            </DataGridTemplateColumn.CellTemplate>
+                        </DataGridTemplateColumn>
+
+                        <DataGridTemplateColumn Header="{loc:Loc Price}" Width="116" HeaderStyle="{StaticResource CustomerDisplayHeaderRightStyle}">
+                            <DataGridTemplateColumn.CellTemplate>
+                                <DataTemplate>
+                                    <TextBlock Text="{Binding UnitPrice, StringFormat={}{0:C2}}" Margin="0,0,12,0" FontSize="15" HorizontalAlignment="Stretch" VerticalAlignment="Center" TextAlignment="Right" />
+                                </DataTemplate>
+                            </DataGridTemplateColumn.CellTemplate>
+                        </DataGridTemplateColumn>
+
+                        <DataGridTemplateColumn Header="{loc:Loc Total}" Width="126" HeaderStyle="{StaticResource CustomerDisplayHeaderRightStyle}">
+                            <DataGridTemplateColumn.CellTemplate>
+                                <DataTemplate>
+                                    <TextBlock Text="{Binding ActualAmount, StringFormat={}{0:C2}}" Margin="0,0,12,0" FontSize="16" HorizontalAlignment="Stretch" VerticalAlignment="Center" TextAlignment="Right" FontWeight="Black" />
+                                </DataTemplate>
+                            </DataGridTemplateColumn.CellTemplate>
+                        </DataGridTemplateColumn>
+                    </DataGrid.Columns>
+                </DataGrid>
             </Border>
 
             <Border Grid.Column="1" Margin="18,0,0,0" CornerRadius="18" Background="#243B2E" ClipToBounds="True">
@@ -106,18 +156,31 @@
                 <ColumnDefinition Width="240" />
             </Grid.ColumnDefinitions>
 
-            <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
-                <StackPanel Margin="0,0,40,0">
-                    <TextBlock Text="{loc:Loc Subtotal}" Foreground="{StaticResource PosMutedForegroundBrush}" FontSize="12" FontWeight="Bold" />
-                    <TextBlock Text="{Binding Subtotal, StringFormat={}{0:C2}}" FontSize="24" FontWeight="Black" />
+            <StackPanel VerticalAlignment="Center">
+                <StackPanel Orientation="Horizontal" Margin="0,0,0,8">
+                    <StackPanel Orientation="Horizontal" Margin="0,0,24,0">
+                        <TextBlock Text="{loc:Loc customer.itemQuantity}" Foreground="{StaticResource PosMutedForegroundBrush}" FontSize="12" />
+                        <TextBlock Text="{Binding TotalItemQuantity, StringFormat={}{0:0.##}}" Foreground="{StaticResource PosMutedForegroundBrush}" FontSize="12" Margin="8,0,0,0" />
+                    </StackPanel>
+                    <StackPanel Orientation="Horizontal">
+                        <TextBlock Text="{loc:Loc customer.skuCount}" Foreground="{StaticResource PosMutedForegroundBrush}" FontSize="12" />
+                        <TextBlock Text="{Binding SkuCount}" Foreground="{StaticResource PosMutedForegroundBrush}" FontSize="12" Margin="8,0,0,0" />
+                    </StackPanel>
                 </StackPanel>
-                <StackPanel Margin="0,0,40,0">
-                    <TextBlock Text="{loc:Loc Tax}" Foreground="{StaticResource PosMutedForegroundBrush}" FontSize="12" FontWeight="Bold" />
-                    <TextBlock Text="{Binding TaxAmount, StringFormat={}{0:C2}}" FontSize="24" FontWeight="Black" />
-                </StackPanel>
-                <StackPanel>
-                    <TextBlock Text="{loc:Loc Savings}" Foreground="{StaticResource PosMutedForegroundBrush}" FontSize="12" FontWeight="Bold" />
-                    <TextBlock Text="{Binding SavingsAmount, StringFormat=-{0:C2}}" FontSize="24" FontWeight="Black" Foreground="{StaticResource PosDangerBrush}" />
+
+                <StackPanel Orientation="Horizontal">
+                    <StackPanel Margin="0,0,32,0">
+                        <TextBlock Text="{loc:Loc Subtotal}" Foreground="{StaticResource PosMutedForegroundBrush}" FontSize="12" FontWeight="Bold" />
+                        <TextBlock Text="{Binding Subtotal, StringFormat={}{0:C2}}" FontSize="24" FontWeight="Black" />
+                    </StackPanel>
+                    <StackPanel Margin="0,0,32,0">
+                        <TextBlock Text="{loc:Loc Tax}" Foreground="{StaticResource PosMutedForegroundBrush}" FontSize="12" FontWeight="Bold" />
+                        <TextBlock Text="{Binding TaxAmount, StringFormat={}{0:C2}}" FontSize="24" FontWeight="Black" />
+                    </StackPanel>
+                    <StackPanel>
+                        <TextBlock Text="{loc:Loc Savings}" Foreground="{StaticResource PosMutedForegroundBrush}" FontSize="12" FontWeight="Bold" />
+                        <TextBlock Text="{Binding SavingsAmount, StringFormat=-{0:C2}}" FontSize="24" FontWeight="Black" Foreground="{StaticResource PosDangerBrush}" />
+                    </StackPanel>
                 </StackPanel>
             </StackPanel>
 

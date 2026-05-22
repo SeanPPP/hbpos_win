@@ -54,7 +54,34 @@ public sealed partial class DeviceRegistrationViewModel : ObservableObject
 
     public async Task InitializeAsync(LocalDeviceCache? cachedDevice, CancellationToken cancellationToken = default)
     {
+        Prepare(cachedDevice);
+        await LoadStoresAsync(cachedDevice, cancellationToken);
+    }
+
+    public void Prepare(LocalDeviceCache? cachedDevice)
+    {
         HardwareId = _fingerprintService.GetHardwareId();
+        Stores.Clear();
+        SelectedStore = null;
+
+        if (cachedDevice is not null)
+        {
+            DeviceCode = cachedDevice.DeviceCode;
+            HasPendingRegistration = !cachedDevice.IsAllowed;
+        }
+        else
+        {
+            DeviceCode = string.Empty;
+            HasPendingRegistration = false;
+        }
+
+        StatusMessage = "Loading stores...";
+        NotifyCommandState();
+    }
+
+    public async Task LoadStoresAsync(LocalDeviceCache? cachedDevice, CancellationToken cancellationToken = default)
+    {
+        IsBusy = true;
         StatusMessage = "Loading stores...";
 
         try
@@ -85,6 +112,10 @@ public sealed partial class DeviceRegistrationViewModel : ObservableObject
         catch (Exception ex)
         {
             StatusMessage = ex.Message;
+        }
+        finally
+        {
+            IsBusy = false;
         }
 
         NotifyCommandState();

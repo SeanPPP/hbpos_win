@@ -258,6 +258,7 @@ public sealed class PosTerminalCashPaymentViewModelTests
 
         var line = Assert.Single(viewModel.CartLines);
         Assert.Equal("Scanner Apple Large", line.DisplayName);
+        Assert.Same(line, viewModel.SelectedCartLine);
         Assert.Empty(viewModel.ScanText);
         Assert.False(viewModel.IsMatchesPopupOpen);
         Assert.False(viewModel.IsTouchKeyboardOpen);
@@ -365,6 +366,100 @@ public sealed class PosTerminalCashPaymentViewModelTests
         var remaining = Assert.Single(viewModel.CartLines);
         Assert.Equal("Bananas", remaining.DisplayName);
         Assert.Equal(3m, viewModel.ActualAmount);
+    }
+
+    [Fact]
+    public void Pos_terminal_line_quantity_commands_update_totals_selection_and_counts()
+    {
+        var cart = new PosCartService();
+        var index = new LocalSellableItemIndex();
+        index.ReplaceAll([CreateItem("SKU-123", "Touch Apples", "930123", PriceSourceKind.StoreRetailPrice, 2m)]);
+        var viewModel = new PosTerminalViewModel(
+            index,
+            cart,
+            Session,
+            onOpenPayment: null);
+
+        viewModel.ScanText = "930123";
+        viewModel.ScanCommand.Execute(null);
+        var line = Assert.Single(viewModel.CartLines);
+
+        Assert.Equal(1m, viewModel.CartItemQuantity);
+        Assert.Equal(1, viewModel.CartSkuCount);
+
+        viewModel.IncreaseLineCommand.Execute(line);
+
+        Assert.Same(line, viewModel.SelectedCartLine);
+        Assert.Equal(2m, line.Quantity);
+        Assert.Equal(2m, viewModel.CartItemQuantity);
+        Assert.Equal(1, viewModel.CartSkuCount);
+        Assert.Equal(4m, viewModel.ActualAmount);
+
+        viewModel.DecreaseLineCommand.Execute(line);
+
+        Assert.Same(line, viewModel.SelectedCartLine);
+        Assert.Equal(1m, line.Quantity);
+        Assert.Equal(1m, viewModel.CartItemQuantity);
+        Assert.Equal(1, viewModel.CartSkuCount);
+        Assert.Equal(2m, viewModel.ActualAmount);
+
+        viewModel.DecreaseLineCommand.Execute(line);
+
+        Assert.Empty(viewModel.CartLines);
+        Assert.Null(viewModel.SelectedCartLine);
+        Assert.Equal(0m, viewModel.CartItemQuantity);
+        Assert.Equal(0, viewModel.CartSkuCount);
+        Assert.Equal(0m, viewModel.ActualAmount);
+    }
+
+    [Fact]
+    public void Pos_terminal_counts_quantity_and_sku_lines_separately()
+    {
+        var cart = new PosCartService();
+        var index = new LocalSellableItemIndex();
+        index.ReplaceAll(
+        [
+            CreateItem("SKU-124", "Repeated Item", "930124", PriceSourceKind.StoreRetailPrice, 2m),
+            CreateItem("SKU-125", "Second Item", "930125", PriceSourceKind.StoreRetailPrice, 3m)
+        ]);
+        var viewModel = new PosTerminalViewModel(
+            index,
+            cart,
+            Session,
+            onOpenPayment: null);
+
+        viewModel.ScanText = "930124";
+        viewModel.ScanCommand.Execute(null);
+        viewModel.ScanText = "930124";
+        viewModel.ScanCommand.Execute(null);
+        viewModel.ScanText = "930125";
+        viewModel.ScanCommand.Execute(null);
+
+        Assert.Equal(3m, viewModel.CartItemQuantity);
+        Assert.Equal(2, viewModel.CartSkuCount);
+    }
+
+    [Fact]
+    public void Pos_terminal_clear_search_command_clears_input_and_closes_popups()
+    {
+        var cart = new PosCartService();
+        var index = new LocalSellableItemIndex();
+        var viewModel = new PosTerminalViewModel(
+            index,
+            cart,
+            Session,
+            onOpenPayment: null)
+        {
+            ScanText = "apple",
+            IsMatchesPopupOpen = true,
+            IsTouchKeyboardOpen = true
+        };
+
+        viewModel.ClearSearchCommand.Execute(null);
+
+        Assert.Empty(viewModel.ScanText);
+        Assert.False(viewModel.IsMatchesPopupOpen);
+        Assert.False(viewModel.IsTouchKeyboardOpen);
     }
 
     [Fact]

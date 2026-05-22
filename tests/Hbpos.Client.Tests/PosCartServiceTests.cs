@@ -116,6 +116,47 @@ public sealed class PosCartServiceTests
         Assert.Contains(cart.Lines, line => line.LookupCodeNormalized == "690002");
     }
 
+    [Fact]
+    public void IncreaseLine_adds_one_unit_and_recalculates_totals()
+    {
+        var cart = new PosCartService();
+        var line = cart.AddItem(CreateItem(price: 10m));
+
+        Assert.True(cart.IncreaseLine(line));
+
+        Assert.Equal(2m, line.Quantity);
+        Assert.Equal(20m, cart.TotalAmount);
+        Assert.Equal(20m, cart.ActualAmount);
+    }
+
+    [Fact]
+    public void DecreaseLine_removes_one_unit_and_recalculates_totals()
+    {
+        var cart = new PosCartService();
+        var line = cart.AddItem(CreateItem(price: 10m));
+        cart.IncreaseLine(line);
+
+        Assert.True(cart.DecreaseLine(line));
+
+        line = Assert.Single(cart.Lines);
+        Assert.Equal(1m, line.Quantity);
+        Assert.Equal(10m, cart.TotalAmount);
+        Assert.Equal(10m, cart.ActualAmount);
+    }
+
+    [Fact]
+    public void DecreaseLine_removes_the_line_when_quantity_reaches_zero()
+    {
+        var cart = new PosCartService();
+        var line = cart.AddItem(CreateItem(price: 10m));
+
+        Assert.True(cart.DecreaseLine(line));
+
+        Assert.Empty(cart.Lines);
+        Assert.Equal(0m, cart.TotalAmount);
+        Assert.Equal(0m, cart.ActualAmount);
+    }
+
     private static SellableItemDto CreateItem(
         string storeCode = "S001",
         string productCode = "SKU-001",

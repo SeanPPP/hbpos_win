@@ -41,6 +41,9 @@ public sealed partial class MainViewModel : ObservableObject
     private bool _isRefreshingConnectivity;
     private bool _schemaReady;
     private LocalOrder? _lastCompletedOrder;
+    private LocalDeviceCache? _pendingDeviceRegistrationCache;
+    private Task? _deviceRegistrationStoreLoadTask;
+    private Task? _posPostShowStartupTask;
 
     [ObservableProperty]
     private PosSessionState _session = new("HB POS", DefaultTestStoreCode, "Main Branch", "Terminal 04", "C001", "Alice", false, 0);
@@ -232,8 +235,9 @@ public sealed partial class MainViewModel : ObservableObject
                     _deviceRepository,
                     _fingerprintService);
                 DeviceRegistration.DeviceActivated += async (_, args) => await ActivateDeviceAsync(args, startupOptions);
+                _pendingDeviceRegistrationCache = cachedDevice;
+                DeviceRegistration.Prepare(cachedDevice);
                 CurrentScreen = DeviceRegistration;
-                await DeviceRegistration.InitializeAsync(cachedDevice);
                 RefreshClock();
                 _clockTimer.Start();
                 return;
@@ -255,6 +259,22 @@ public sealed partial class MainViewModel : ObservableObject
         await InitializePosExperienceAsync(startupOptions);
     }
 
+    public Task ContinueStartupAfterShownAsync(AppStartupOptions startupOptions)
+    {
+        if (startupOptions.PreviewMode)
+        {
+            return Task.CompletedTask;
+        }
+
+        if (DeviceRegistration is not null && CurrentScreen == DeviceRegistration)
+        {
+            _deviceRegistrationStoreLoadTask ??= DeviceRegistration.LoadStoresAsync(_pendingDeviceRegistrationCache);
+            return _deviceRegistrationStoreLoadTask;
+        }
+
+        return ContinuePosStartupAfterShownAsync(startupOptions);
+    }
+
     private async Task ActivateDeviceAsync(DeviceActivatedEventArgs args, AppStartupOptions startupOptions)
     {
         Session = Session with
@@ -273,20 +293,17 @@ public sealed partial class MainViewModel : ObservableObject
         }
 
         await InitializePosExperienceAsync(startupOptions);
+        _ = ContinuePosStartupAfterShownAsync(startupOptions);
     }
 
     private async Task InitializePosExperienceAsync(AppStartupOptions startupOptions)
     {
-        IReadOnlyList<SellableItemDto> cachedItems;
+        IReadOnlyList<SellableItemDto> cachedItems = [];
         if (startupOptions.PreviewMode)
         {
             cachedItems = CreateStarterItems();
             await _catalogRepository.ReplaceSellableItemsAsync(cachedItems);
             _priceIndex.ReplaceAll(cachedItems);
-        }
-        else
-        {
-            cachedItems = await ReloadCatalogIndexAsync();
         }
 
         PosTerminal = new PosTerminalViewModel(
@@ -300,7 +317,10 @@ public sealed partial class MainViewModel : ObservableObject
             SyncCatalogAndReloadAsync,
             RefreshOnlineStateAsync,
             _rawScannerService);
-        PosTerminal.LoadMatches(cachedItems);
+        if (cachedItems.Count > 0)
+        {
+            PosTerminal.LoadMatches(cachedItems);
+        }
 
         TransactionHistory = new TransactionHistoryViewModel(_orderRepository);
         PaymentSuccess.NewTransactionRequested += (_, _) => ResetForNewTransaction();
@@ -317,11 +337,39 @@ public sealed partial class MainViewModel : ObservableObject
         ApplySessionToScreens();
         NavigateFromStartup(startupOptions.InitialScreen);
 
-        if (!startupOptions.PreviewMode)
+    }
+
+    private Task ContinuePosStartupAfterShownAsync(AppStartupOptions startupOptions)
+    {
+        if (startupOptions.PreviewMode)
         {
-            await RefreshOnlineStateAsync(CancellationToken.None);
-            _connectivityTimer.Start();
-            BeginInitialCatalogSync();
+            return Task.CompletedTask;
+        }
+
+        _posPostShowStartupTask ??= ContinuePosStartupAfterShownCoreAsync();
+        return _posPostShowStartupTask;
+    }
+
+    private async Task ContinuePosStartupAfterShownCoreAsync()
+    {
+        await LoadStartupCatalogIndexAsync();
+        await RefreshOnlineStateAsync(CancellationToken.None);
+        _connectivityTimer.Start();
+        BeginInitialCatalogSync();
+    }
+
+    private async Task LoadStartupCatalogIndexAsync()
+    {
+        try
+        {
+            var cachedItems = await Task.Run(() => ReloadCatalogIndexAsync(CancellationToken.None));
+            PosTerminal?.LoadMatches(cachedItems);
+            PosTerminal?.RefreshCart();
+            CashPayment?.RefreshCart();
+        }
+        catch (Exception ex)
+        {
+            StatusMessage = ex.Message;
         }
     }
 

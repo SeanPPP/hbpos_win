@@ -4,24 +4,53 @@ namespace Hbpos.Client.Wpf.Services;
 
 public sealed class LocalSellableItemIndex
 {
+    private readonly object _gate = new();
     private readonly List<SellableItemDto> _items = [];
     private readonly Dictionary<ExactLookupKey, List<SellableItemDto>> _exactLookupIndex = [];
     private readonly Dictionary<ExactLookupKey, List<SellableItemDto>> _metadataLookupIndex = [];
 
-    public IReadOnlyList<SellableItemDto> Items => _items;
+    public IReadOnlyList<SellableItemDto> Items
+    {
+        get
+        {
+            lock (_gate)
+            {
+                return _items.ToArray();
+            }
+        }
+    }
 
     public void ReplaceAll(IEnumerable<SellableItemDto> items)
     {
-        _items.Clear();
-        _exactLookupIndex.Clear();
-        _metadataLookupIndex.Clear();
-        _items.AddRange(items.OrderBy(item => item.DisplayName, StringComparer.CurrentCultureIgnoreCase));
-        foreach (var item in _items)
+        var orderedItems = items
+            .OrderBy(item => item.DisplayName, StringComparer.CurrentCultureIgnoreCase)
+            .ToList();
+        var exactLookupIndex = new Dictionary<ExactLookupKey, List<SellableItemDto>>();
+        var metadataLookupIndex = new Dictionary<ExactLookupKey, List<SellableItemDto>>();
+
+        foreach (var item in orderedItems)
         {
-            AddExactLookup(item, item.LookupCode);
-            AddMetadataLookup(item, item.Barcode);
-            AddMetadataLookup(item, item.ItemNumber);
-            AddMetadataLookup(item, item.ProductCode);
+            AddLookup(exactLookupIndex, item, item.LookupCode);
+            AddLookup(metadataLookupIndex, item, item.Barcode);
+            AddLookup(metadataLookupIndex, item, item.ItemNumber);
+            AddLookup(metadataLookupIndex, item, item.ProductCode);
+        }
+
+        lock (_gate)
+        {
+            _items.Clear();
+            _items.AddRange(orderedItems);
+            _exactLookupIndex.Clear();
+            foreach (var pair in exactLookupIndex)
+            {
+                _exactLookupIndex[pair.Key] = pair.Value;
+            }
+
+            _metadataLookupIndex.Clear();
+            foreach (var pair in metadataLookupIndex)
+            {
+                _metadataLookupIndex[pair.Key] = pair.Value;
+            }
         }
     }
 
@@ -33,7 +62,13 @@ public sealed class LocalSellableItemIndex
         }
 
         var normalized = Normalize(query);
-        return _items
+        SellableItemDto[] snapshot;
+        lock (_gate)
+        {
+            snapshot = _items.ToArray();
+        }
+
+        return snapshot
             .Select(item => new { Item = item, Rank = Rank(item, normalized) })
             .Where(match => match.Rank < int.MaxValue)
             .OrderBy(match => match.Rank)
@@ -52,9 +87,12 @@ public sealed class LocalSellableItemIndex
             return [];
         }
 
-        return _exactLookupIndex.TryGetValue(new ExactLookupKey(normalizedStoreCode, normalizedQuery), out var matches)
-            ? matches
-            : [];
+        lock (_gate)
+        {
+            return _exactLookupIndex.TryGetValue(new ExactLookupKey(normalizedStoreCode, normalizedQuery), out var matches)
+                ? matches.ToArray()
+                : [];
+        }
     }
 
     internal IReadOnlyList<SellableItemDto> FindMetadataExactMatches(string storeCode, string query)
@@ -66,19 +104,12 @@ public sealed class LocalSellableItemIndex
             return [];
         }
 
-        return _metadataLookupIndex.TryGetValue(new ExactLookupKey(normalizedStoreCode, normalizedQuery), out var matches)
-            ? matches
-            : [];
-    }
-
-    private void AddExactLookup(SellableItemDto item, string? lookupCode)
-    {
-        AddLookup(_exactLookupIndex, item, lookupCode);
-    }
-
-    private void AddMetadataLookup(SellableItemDto item, string? lookupCode)
-    {
-        AddLookup(_metadataLookupIndex, item, lookupCode);
+        lock (_gate)
+        {
+            return _metadataLookupIndex.TryGetValue(new ExactLookupKey(normalizedStoreCode, normalizedQuery), out var matches)
+                ? matches.ToArray()
+                : [];
+        }
     }
 
     private static void AddLookup(

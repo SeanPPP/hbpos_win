@@ -146,6 +146,18 @@ public sealed class CartLine : ObservableObject
         Quantity += Math.Max(1m, quantity);
     }
 
+    public bool Decrease(decimal quantity)
+    {
+        var decreaseBy = Math.Max(1m, quantity);
+        if (Quantity <= decreaseBy)
+        {
+            return false;
+        }
+
+        Quantity -= decreaseBy;
+        return true;
+    }
+
     public void UpdateFrom(SellableItemDto item)
     {
         StoreCode = item.StoreCode;

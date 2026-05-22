@@ -1,13 +1,59 @@
 <Window x:Class="Hbpos.Client.Wpf.Views.Windows.CustomerDisplayWindow"
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:loc="clr-namespace:Hbpos.Client.Wpf.Localization"
+        xmlns:materialDesign="http://materialdesigninxaml.net/winfx/xaml/themes"
+        xmlns:shell="clr-namespace:System.Windows.Shell;assembly=PresentationFramework"
         xmlns:views="clr-namespace:Hbpos.Client.Wpf.Views.Screens"
         Title="Customer Display"
         Width="1024"
         Height="640"
         MinWidth="800"
         MinHeight="520"
+        WindowStyle="None"
+        ResizeMode="CanResize"
         FontFamily="{StaticResource PosFontFamily}"
         Background="{StaticResource PosScreenBackgroundBrush}">
-    <views:CustomerDisplayView />
+    <shell:WindowChrome.WindowChrome>
+        <shell:WindowChrome CaptionHeight="0"
+                            ResizeBorderThickness="6"
+                            CornerRadius="0"
+                            GlassFrameThickness="0" />
+    </shell:WindowChrome.WindowChrome>
+
+    <Grid Background="{StaticResource PosScreenBackgroundBrush}">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="44" />
+            <RowDefinition Height="*" />
+        </Grid.RowDefinitions>
+
+        <Border Grid.Row="0"
+                Background="White"
+                BorderBrush="#FFE7E8EB"
+                BorderThickness="0,0,0,1"
+                MouseLeftButtonDown="TitleBar_MouseLeftButtonDown">
+            <Grid Margin="16,0">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="Auto" />
+                </Grid.ColumnDefinitions>
+
+                <TextBlock Text="{loc:Loc CustomerDisplay}"
+                           FontSize="15"
+                           FontWeight="Black"
+                           Foreground="{StaticResource PosTextBrush}"
+                           VerticalAlignment="Center" />
+
+                <Button Grid.Column="1"
+                        Click="CloseButton_Click"
+                        Style="{StaticResource TitleBarCloseButtonStyle}"
+                        ToolTip="{loc:Loc shell.window.close}"
+                        shell:WindowChrome.IsHitTestVisibleInChrome="True">
+                    <materialDesign:PackIcon Kind="Close" Width="18" Height="18" />
+                </Button>
+            </Grid>
+        </Border>
+
+        <views:CustomerDisplayView Grid.Row="1" />
+    </Grid>
 </Window>

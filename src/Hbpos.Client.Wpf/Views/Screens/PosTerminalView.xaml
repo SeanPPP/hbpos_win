@@ -99,6 +99,90 @@
                 </Setter.Value>
             </Setter>
         </Style>
+
+        <Style x:Key="CartSearchClearButtonStyle" TargetType="Button">
+            <Setter Property="Width" Value="34" />
+            <Setter Property="Height" Value="34" />
+            <Setter Property="Padding" Value="0" />
+            <Setter Property="Margin" Value="0,0,6,0" />
+            <Setter Property="BorderThickness" Value="0" />
+            <Setter Property="Background" Value="#00FFFFFF" />
+            <Setter Property="Foreground" Value="{StaticResource PosMutedForegroundBrush}" />
+            <Setter Property="Cursor" Value="Hand" />
+            <Setter Property="Focusable" Value="False" />
+            <Setter Property="IsTabStop" Value="False" />
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="{x:Type Button}">
+                        <Border x:Name="Root"
+                                Background="{TemplateBinding Background}"
+                                CornerRadius="10">
+                            <ContentPresenter HorizontalAlignment="Center"
+                                              VerticalAlignment="Center"
+                                              TextBlock.Foreground="{TemplateBinding Foreground}" />
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="Root" Property="Background" Value="#FFFFFFFF" />
+                                <Setter Property="Foreground" Value="{StaticResource PosTextBrush}" />
+                            </Trigger>
+                            <Trigger Property="IsPressed" Value="True">
+                                <Setter TargetName="Root" Property="Background" Value="#FFE2E2E6" />
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <Style x:Key="CartQuantityStepButtonStyle" TargetType="Button">
+            <Setter Property="Width" Value="34" />
+            <Setter Property="Height" Value="34" />
+            <Setter Property="Padding" Value="0" />
+            <Setter Property="BorderThickness" Value="0" />
+            <Setter Property="Cursor" Value="Hand" />
+            <Setter Property="Focusable" Value="False" />
+            <Setter Property="IsTabStop" Value="False" />
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="{x:Type Button}">
+                        <Border x:Name="Root"
+                                Background="{TemplateBinding Background}"
+                                CornerRadius="11">
+                            <ContentPresenter HorizontalAlignment="Center"
+                                              VerticalAlignment="Center"
+                                              TextBlock.Foreground="{TemplateBinding Foreground}" />
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="Root" Property="Opacity" Value="0.9" />
+                            </Trigger>
+                            <Trigger Property="IsPressed" Value="True">
+                                <Setter TargetName="Root" Property="Opacity" Value="0.75" />
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <Style x:Key="CartQuantityIncreaseButtonStyle" TargetType="Button" BasedOn="{StaticResource CartQuantityStepButtonStyle}">
+            <Setter Property="Background" Value="#FFDCFCE7" />
+            <Setter Property="Foreground" Value="#FF15803D" />
+        </Style>
+
+        <Style x:Key="CartQuantityDecreaseButtonStyle" TargetType="Button" BasedOn="{StaticResource CartQuantityStepButtonStyle}">
+            <Setter Property="Background" Value="#FFFFE4E6" />
+            <Setter Property="Foreground" Value="#FFE11D48" />
+        </Style>
+
+        <Style x:Key="CartTouchScrollBarStyle" TargetType="ScrollBar">
+            <Setter Property="Width" Value="22" />
+            <Setter Property="MinWidth" Value="22" />
+            <Setter Property="Background" Value="#FFF3F5F8" />
+            <Setter Property="BorderBrush" Value="#FFC3C6D6" />
+            <Setter Property="BorderThickness" Value="1" />
+        </Style>
     </UserControl.Resources>
 
     <Grid>
@@ -122,6 +206,7 @@
                             <ColumnDefinition Width="Auto" />
                             <ColumnDefinition Width="*" />
                             <ColumnDefinition Width="Auto" />
+                            <ColumnDefinition Width="Auto" />
                         </Grid.ColumnDefinitions>
                         <materialDesign:PackIcon Kind="Magnify"
                                                  Width="20"
@@ -142,7 +227,14 @@
                                 <KeyBinding Key="Enter" Command="{Binding ScanCommand}" />
                             </TextBox.InputBindings>
                         </TextBox>
-                        <Border Grid.Column="2"
+                        <Button Grid.Column="2"
+                                Command="{Binding ClearSearchCommand}"
+                                Style="{StaticResource CartSearchClearButtonStyle}"
+                                Visibility="{Binding ScanText, Converter={StaticResource StringHasValueToVis}}"
+                                ToolTip="{loc:Loc Clear}">
+                            <materialDesign:PackIcon Kind="CloseCircle" Width="19" Height="19" />
+                        </Button>
+                        <Border Grid.Column="3"
                                 Width="140"
                                 Height="38"
                                 Margin="0,0,6,0"
@@ -346,11 +438,31 @@
                           VirtualizingPanel.IsVirtualizing="True"
                           VirtualizingPanel.VirtualizationMode="Recycling"
                           ScrollViewer.CanContentScroll="True"
+                          ScrollViewer.PanningMode="VerticalFirst"
+                          ScrollViewer.PanningDeceleration="0.001"
+                          ScrollViewer.PanningRatio="1.1"
                           GridLinesVisibility="None"
                           BorderThickness="0"
                           RowStyle="{StaticResource CartDataGridRowStyle}"
                           CellStyle="{StaticResource CartDataGridCellStyle}"
                           Style="{StaticResource PosCartDataGridStyle}">
+                    <DataGrid.Resources>
+                        <Style TargetType="{x:Type ScrollBar}" BasedOn="{StaticResource CartTouchScrollBarStyle}" />
+                        <Style TargetType="{x:Type Thumb}">
+                            <Setter Property="MinHeight" Value="52" />
+                            <Setter Property="Template">
+                                <Setter.Value>
+                                    <ControlTemplate TargetType="{x:Type Thumb}">
+                                        <Border Background="#FF94A3B8"
+                                                BorderBrush="#FF64748B"
+                                                BorderThickness="1"
+                                                CornerRadius="9"
+                                                Margin="4" />
+                                    </ControlTemplate>
+                                </Setter.Value>
+                            </Setter>
+                        </Style>
+                    </DataGrid.Resources>
                     <DataGrid.Columns>
                         <DataGridTemplateColumn Header="#" Width="52" HeaderStyle="{StaticResource CartColumnHeaderCenterStyle}">
                             <DataGridTemplateColumn.CellTemplate>
@@ -420,15 +532,37 @@
                                 </DataTemplate>
                             </DataGridTemplateColumn.CellTemplate>
                         </DataGridTemplateColumn>
-                        <DataGridTemplateColumn Header="{loc:Loc Quantity}" Width="0.7*" HeaderStyle="{StaticResource CartColumnHeaderCenterStyle}">
+                        <DataGridTemplateColumn Header="{loc:Loc Quantity}" Width="1.1*" HeaderStyle="{StaticResource CartColumnHeaderCenterStyle}">
                             <DataGridTemplateColumn.CellTemplate>
                                 <DataTemplate>
-                                    <TextBlock Text="{Binding Quantity, StringFormat={}{0:0.##}}"
-                                               FontSize="20"
-                                               FontWeight="Black"
-                                               TextAlignment="Center"
-                                               HorizontalAlignment="Center"
-                                               VerticalAlignment="Center" />
+                                    <Grid HorizontalAlignment="Center" VerticalAlignment="Center">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="Auto" />
+                                            <ColumnDefinition Width="58" />
+                                            <ColumnDefinition Width="Auto" />
+                                        </Grid.ColumnDefinitions>
+                                        <Button Grid.Column="0"
+                                                Command="{Binding DataContext.DecreaseLineCommand, RelativeSource={RelativeSource AncestorType=DataGrid}}"
+                                                CommandParameter="{Binding}"
+                                                Style="{StaticResource CartQuantityDecreaseButtonStyle}"
+                                                ToolTip="{loc:Loc pos.terminal.actions.qtyMinus}">
+                                            <materialDesign:PackIcon Kind="Minus" Width="18" Height="18" />
+                                        </Button>
+                                        <TextBlock Grid.Column="1"
+                                                   Text="{Binding Quantity, StringFormat={}{0:0.##}}"
+                                                   FontSize="20"
+                                                   FontWeight="Black"
+                                                   TextAlignment="Center"
+                                                   HorizontalAlignment="Stretch"
+                                                   VerticalAlignment="Center" />
+                                        <Button Grid.Column="2"
+                                                Command="{Binding DataContext.IncreaseLineCommand, RelativeSource={RelativeSource AncestorType=DataGrid}}"
+                                                CommandParameter="{Binding}"
+                                                Style="{StaticResource CartQuantityIncreaseButtonStyle}"
+                                                ToolTip="{loc:Loc pos.terminal.actions.qtyPlus}">
+                                            <materialDesign:PackIcon Kind="Plus" Width="18" Height="18" />
+                                        </Button>
+                                    </Grid>
                                 </DataTemplate>
                             </DataGridTemplateColumn.CellTemplate>
                         </DataGridTemplateColumn>
@@ -477,8 +611,35 @@
                             <RowDefinition Height="Auto" />
                             <RowDefinition Height="Auto" />
                             <RowDefinition Height="Auto" />
+                            <RowDefinition Height="Auto" />
                         </Grid.RowDefinitions>
                         <Grid>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="*" />
+                            </Grid.ColumnDefinitions>
+                            <Border Grid.Column="0" Padding="10,6" Background="#FFF8FAFD" CornerRadius="8" Margin="0,0,4,0">
+                                <Grid>
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="Auto" />
+                                    </Grid.ColumnDefinitions>
+                                    <TextBlock Text="{loc:Loc pos.terminal.cart.itemQuantity}" FontSize="10" FontWeight="Black" Foreground="{StaticResource PosMutedForegroundBrush}" />
+                                    <TextBlock Grid.Column="1" Text="{Binding CartItemQuantity, StringFormat={}{0:0.##}}" FontSize="13" FontWeight="Black" TextAlignment="Right" />
+                                </Grid>
+                            </Border>
+                            <Border Grid.Column="1" Padding="10,6" Background="#FFF8FAFD" CornerRadius="8" Margin="4,0,0,0">
+                                <Grid>
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="Auto" />
+                                    </Grid.ColumnDefinitions>
+                                    <TextBlock Text="{loc:Loc pos.terminal.cart.skuCount}" FontSize="10" FontWeight="Black" Foreground="{StaticResource PosMutedForegroundBrush}" />
+                                    <TextBlock Grid.Column="1" Text="{Binding CartSkuCount}" FontSize="13" FontWeight="Black" TextAlignment="Right" />
+                                </Grid>
+                            </Border>
+                        </Grid>
+                        <Grid Grid.Row="1" Margin="0,6,0,0">
                             <Grid.ColumnDefinitions>
                                 <ColumnDefinition Width="*" />
                                 <ColumnDefinition Width="Auto" />
@@ -486,7 +647,7 @@
                             <TextBlock Text="{loc:Loc Subtotal}" FontSize="10" FontWeight="Black" Foreground="{StaticResource PosMutedForegroundBrush}" />
                             <TextBlock Grid.Column="1" Text="{Binding TotalAmount, StringFormat={}{0:C2}}" FontSize="14" FontWeight="Black" TextAlignment="Right" Margin="16,0,0,0" />
                         </Grid>
-                        <Grid Grid.Row="1" Margin="0,4,0,0">
+                        <Grid Grid.Row="2" Margin="0,4,0,0">
                             <Grid.ColumnDefinitions>
                                 <ColumnDefinition Width="*" />
                                 <ColumnDefinition Width="Auto" />
@@ -494,7 +655,7 @@
                             <TextBlock Text="{loc:Loc Discount}" FontSize="10" FontWeight="Black" Foreground="{StaticResource PosMutedForegroundBrush}" />
                             <TextBlock Grid.Column="1" Text="{Binding DiscountAmount, StringFormat={}{0:C2}}" FontSize="14" FontWeight="Black" TextAlignment="Right" Margin="16,0,0,0" />
                         </Grid>
-                        <Grid Grid.Row="2" Margin="0,8,0,0">
+                        <Grid Grid.Row="3" Margin="0,8,0,0">
                             <Grid.ColumnDefinitions>
                                 <ColumnDefinition Width="*" />
                                 <ColumnDefinition Width="Auto" />
@@ -566,18 +727,6 @@
             </Button>
 
             <UniformGrid Grid.Row="3" Columns="2" Margin="10,0,10,10" VerticalAlignment="Top">
-                <Button Style="{StaticResource PosStitchFunctionButtonStyle}">
-                    <StackPanel Orientation="Horizontal" HorizontalAlignment="Center" VerticalAlignment="Center">
-                        <materialDesign:PackIcon Kind="PlusCircle" Width="20" Height="20" Foreground="{StaticResource PosPrimaryBrush}" VerticalAlignment="Center" />
-                        <TextBlock Text="{loc:Loc pos.terminal.actions.qtyPlus}" Style="{StaticResource PosStitchTileLabelStyle}" />
-                    </StackPanel>
-                </Button>
-                <Button Style="{StaticResource PosStitchFunctionButtonStyle}">
-                    <StackPanel Orientation="Horizontal" HorizontalAlignment="Center" VerticalAlignment="Center">
-                        <materialDesign:PackIcon Kind="MinusCircle" Width="20" Height="20" Foreground="{StaticResource PosPrimaryBrush}" VerticalAlignment="Center" />
-                        <TextBlock Text="{loc:Loc pos.terminal.actions.qtyMinus}" Style="{StaticResource PosStitchTileLabelStyle}" />
-                    </StackPanel>
-                </Button>
                 <Button Style="{StaticResource PosStitchFunctionButtonStyle}">
                     <StackPanel Orientation="Horizontal" HorizontalAlignment="Center" VerticalAlignment="Center">
                         <materialDesign:PackIcon Kind="Pencil" Width="20" Height="20" Foreground="{StaticResource PosPrimaryBrush}" VerticalAlignment="Center" />

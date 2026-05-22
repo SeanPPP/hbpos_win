@@ -19,6 +19,12 @@ public sealed partial class CustomerDisplayViewModel : ObservableObject
     private decimal _totalToPay;
 
     [ObservableProperty]
+    private decimal _totalItemQuantity;
+
+    [ObservableProperty]
+    private int _skuCount;
+
+    [ObservableProperty]
     private string _terminalName = "Terminal 01";
 
     [ObservableProperty]
@@ -49,11 +55,14 @@ public sealed partial class CustomerDisplayViewModel : ObservableObject
 
     public void LoadLines(IEnumerable<CustomerDisplayLine> lines, decimal subtotal, decimal taxAmount, decimal savingsAmount)
     {
-        Lines.ReplaceWith(lines);
+        var materialized = lines.ToList();
+        Lines.ReplaceWith(materialized);
         Subtotal = subtotal;
         TaxAmount = taxAmount;
         SavingsAmount = savingsAmount;
         TotalToPay = subtotal + taxAmount - savingsAmount;
+        TotalItemQuantity = materialized.Sum(line => line.Quantity);
+        SkuCount = materialized.Count;
         IsReadyForPayment = TotalToPay > 0m;
     }
 }
