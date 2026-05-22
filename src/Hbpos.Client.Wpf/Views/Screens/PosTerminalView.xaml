@@ -2,6 +2,7 @@
              x:Name="Root"
              xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:converters="clr-namespace:Hbpos.Client.Wpf.Converters"
              xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
              xmlns:loc="clr-namespace:Hbpos.Client.Wpf.Localization"
              xmlns:materialDesign="http://materialdesigninxaml.net/winfx/xaml/themes"
@@ -12,6 +13,27 @@
              Background="{StaticResource PosScreenBackgroundBrush}">
     <UserControl.Resources>
         <BooleanToVisibilityConverter x:Key="BoolToVis" />
+        <converters:AlternationIndexToRowNumberConverter x:Key="RowNumberConverter" />
+
+        <Style x:Key="CartColumnHeaderCenterStyle" TargetType="DataGridColumnHeader">
+            <Setter Property="Background" Value="#FFF8FAFD" />
+            <Setter Property="Foreground" Value="{StaticResource PosMutedForegroundBrush}" />
+            <Setter Property="FontSize" Value="{StaticResource PosFontSizeSmall}" />
+            <Setter Property="FontWeight" Value="SemiBold" />
+            <Setter Property="Padding" Value="10,8" />
+            <Setter Property="BorderThickness" Value="0,0,0,1" />
+            <Setter Property="BorderBrush" Value="{StaticResource PosBorderBrush}" />
+            <Setter Property="HorizontalContentAlignment" Value="Center" />
+            <Setter Property="VerticalContentAlignment" Value="Center" />
+        </Style>
+
+        <Style x:Key="CartColumnHeaderRightStyle" TargetType="DataGridColumnHeader" BasedOn="{StaticResource CartColumnHeaderCenterStyle}">
+            <Setter Property="HorizontalContentAlignment" Value="Right" />
+        </Style>
+
+        <Style x:Key="CartColumnHeaderLeftStyle" TargetType="DataGridColumnHeader" BasedOn="{StaticResource CartColumnHeaderCenterStyle}">
+            <Setter Property="HorizontalContentAlignment" Value="Left" />
+        </Style>
     </UserControl.Resources>
 
     <Grid>
@@ -127,10 +149,10 @@
                                             Margin="0,0,10,10"
                                             Padding="0"
                                             Background="Transparent"
-                                            BorderThickness="0"
-                                            Style="{StaticResource PosSearchSegmentButtonStyle}"
-                                            Command="{Binding DataContext.SelectMatchCommand, Source={x:Reference Root}}"
-                                            CommandParameter="{Binding}">
+                                             BorderThickness="0"
+                                             Style="{StaticResource PosSearchSegmentButtonStyle}"
+                                             Command="{Binding DataContext.SelectMatchCommand, RelativeSource={RelativeSource AncestorType=ItemsControl}}"
+                                             CommandParameter="{Binding}">
                                         <Border Background="{StaticResource PosSurfaceBrush}"
                                                 BorderBrush="#FFE2E2E6"
                                                 BorderThickness="1"
@@ -246,14 +268,33 @@
             <Grid Grid.Row="1" Margin="14,0,14,6">
                 <DataGrid ItemsSource="{Binding CartLines}"
                           IsReadOnly="True"
+                          AlternationCount="1000000"
                           AlternatingRowBackground="{StaticResource PosSurfaceAltBrush}"
                           RowBackground="{StaticResource PosSurfaceBrush}"
                           RowHeight="78"
+                          EnableRowVirtualization="True"
+                          EnableColumnVirtualization="True"
+                          VirtualizingPanel.IsVirtualizing="True"
+                          VirtualizingPanel.VirtualizationMode="Recycling"
+                          ScrollViewer.CanContentScroll="True"
                           GridLinesVisibility="None"
                           BorderThickness="0"
                           Style="{StaticResource PosCartDataGridStyle}">
                     <DataGrid.Columns>
-                        <DataGridTemplateColumn Header="{loc:Loc Item}" Width="2.5*">
+                        <DataGridTemplateColumn Header="#" Width="52" HeaderStyle="{StaticResource CartColumnHeaderCenterStyle}">
+                            <DataGridTemplateColumn.CellTemplate>
+                                <DataTemplate>
+                                    <TextBlock Text="{Binding RelativeSource={RelativeSource AncestorType=DataGridRow}, Path=AlternationIndex, Converter={StaticResource RowNumberConverter}}"
+                                               FontSize="14"
+                                               FontWeight="Black"
+                                               Foreground="{StaticResource PosMutedForegroundBrush}"
+                                               TextAlignment="Center"
+                                               HorizontalAlignment="Center"
+                                               VerticalAlignment="Center" />
+                                </DataTemplate>
+                            </DataGridTemplateColumn.CellTemplate>
+                        </DataGridTemplateColumn>
+                        <DataGridTemplateColumn Header="{loc:Loc Item}" Width="2.1*" HeaderStyle="{StaticResource CartColumnHeaderLeftStyle}">
                             <DataGridTemplateColumn.CellTemplate>
                                 <DataTemplate>
                                     <Grid Margin="0,6,8,6">
@@ -266,59 +307,79 @@
                                         </Border>
                                         <StackPanel Grid.Column="1" VerticalAlignment="Center">
                                             <TextBlock Text="{Binding DisplayName}" FontSize="13" FontWeight="Black" TextTrimming="CharacterEllipsis" />
-                                            <TextBlock Text="{Binding ProductCode}" FontSize="10" Foreground="{StaticResource PosMutedForegroundBrush}" Margin="0,3,0,0" TextTrimming="CharacterEllipsis" />
+                                            <TextBlock Text="{Binding ItemNumber}" FontSize="10" Foreground="{StaticResource PosMutedForegroundBrush}" Margin="0,3,0,0" TextTrimming="CharacterEllipsis" />
                                             <TextBlock Text="{Binding LookupCode}" FontSize="10" Foreground="{StaticResource PosMutedForegroundBrush}" TextTrimming="CharacterEllipsis" />
                                         </StackPanel>
                                     </Grid>
                                 </DataTemplate>
                             </DataGridTemplateColumn.CellTemplate>
                         </DataGridTemplateColumn>
-                        <DataGridTemplateColumn Header="{loc:Loc UnitPrice}" Width="0.95*">
+                        <DataGridTemplateColumn Header="{loc:Loc UnitPrice}" Width="0.9*" HeaderStyle="{StaticResource CartColumnHeaderRightStyle}">
                             <DataGridTemplateColumn.CellTemplate>
                                 <DataTemplate>
-                                    <StackPanel VerticalAlignment="Center" Margin="0,6">
-                                        <TextBlock Text="{Binding UnitPrice, StringFormat={}{0:C2}}" FontSize="13" FontWeight="Black" TextAlignment="Right" />
+                                    <StackPanel VerticalAlignment="Center" HorizontalAlignment="Stretch" Margin="0,6,10,6">
+                                        <TextBlock Text="{Binding UnitPrice, StringFormat={}{0:C2}}" FontSize="13" FontWeight="Black" TextAlignment="Right" HorizontalAlignment="Stretch" />
                                         <TextBlock Text="{Binding DiscountRateText}"
                                                    Visibility="{Binding HasDiscount, Converter={StaticResource BoolToVis}}"
                                                    FontSize="10"
                                                    FontWeight="Black"
                                                    Foreground="{StaticResource PosAccentBrush}"
-                                                   TextAlignment="Right" />
+                                                   TextAlignment="Right"
+                                                   HorizontalAlignment="Stretch" />
                                     </StackPanel>
                                 </DataTemplate>
                             </DataGridTemplateColumn.CellTemplate>
                         </DataGridTemplateColumn>
-                        <DataGridTemplateColumn Header="{loc:Loc Quantity}" Width="0.7*">
+                        <DataGridTemplateColumn Header="{loc:Loc Quantity}" Width="0.7*" HeaderStyle="{StaticResource CartColumnHeaderCenterStyle}">
                             <DataGridTemplateColumn.CellTemplate>
                                 <DataTemplate>
                                     <TextBlock Text="{Binding Quantity, StringFormat={}{0:0.##}}"
-                                               FontSize="13"
+                                               FontSize="20"
                                                FontWeight="Black"
                                                TextAlignment="Center"
+                                               HorizontalAlignment="Center"
                                                VerticalAlignment="Center" />
                                 </DataTemplate>
                             </DataGridTemplateColumn.CellTemplate>
                         </DataGridTemplateColumn>
-                        <DataGridTemplateColumn Header="{loc:Loc Total}" Width="1*">
+                        <DataGridTemplateColumn Header="{loc:Loc Total}" Width="0.95*" HeaderStyle="{StaticResource CartColumnHeaderRightStyle}">
                             <DataGridTemplateColumn.CellTemplate>
                                 <DataTemplate>
-                                    <StackPanel VerticalAlignment="Center" Margin="0,6">
-                                        <TextBlock Text="{Binding GrossAmount, StringFormat={}{0:C2}}" FontSize="13" FontWeight="Black" TextAlignment="Right" />
+                                    <StackPanel VerticalAlignment="Center" HorizontalAlignment="Stretch" Margin="0,6,10,6">
+                                        <TextBlock Text="{Binding GrossAmount, StringFormat={}{0:C2}}" FontSize="13" FontWeight="Black" TextAlignment="Right" HorizontalAlignment="Stretch" />
                                         <TextBlock Text="{Binding ActualAmount, StringFormat={}{0:C2}}"
                                                    Visibility="{Binding HasDiscount, Converter={StaticResource BoolToVis}}"
                                                    FontSize="10"
                                                    FontWeight="Black"
                                                    Foreground="{StaticResource PosAccentBrush}"
-                                                   TextAlignment="Right" />
+                                                   TextAlignment="Right"
+                                                   HorizontalAlignment="Stretch" />
                                     </StackPanel>
+                                </DataTemplate>
+                            </DataGridTemplateColumn.CellTemplate>
+                        </DataGridTemplateColumn>
+                        <DataGridTemplateColumn Header="" Width="58" HeaderStyle="{StaticResource CartColumnHeaderCenterStyle}">
+                            <DataGridTemplateColumn.CellTemplate>
+                                <DataTemplate>
+                                    <Button Command="{Binding DataContext.RemoveLineCommand, RelativeSource={RelativeSource AncestorType=DataGrid}}"
+                                            CommandParameter="{Binding}"
+                                            Width="34"
+                                            Height="34"
+                                            Padding="0"
+                                            BorderThickness="0"
+                                            Background="#FFFFEEF0"
+                                            Foreground="{StaticResource PosDangerBrush}"
+                                            Cursor="Hand"
+                                            HorizontalAlignment="Center"
+                                            VerticalAlignment="Center"
+                                            ToolTip="{loc:Loc Remove}">
+                                        <materialDesign:PackIcon Kind="DeleteOutline" Width="18" Height="18" />
+                                    </Button>
                                 </DataTemplate>
                             </DataGridTemplateColumn.CellTemplate>
                         </DataGridTemplateColumn>
                     </DataGrid.Columns>
                 </DataGrid>
-                <Border Background="#33000000"
-                        IsHitTestVisible="True"
-                        Visibility="{Binding IsTouchKeyboardOpen, Converter={StaticResource BoolToVis}}" />
             </Grid>
 
             <Border Grid.Row="2" Padding="18,12,18,14" Background="{StaticResource PosSurfaceBrush}" BorderBrush="#FFE2E2E6" BorderThickness="0,1,0,0">

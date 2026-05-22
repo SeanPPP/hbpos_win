@@ -1,4 +1,5 @@
 using System.Collections.ObjectModel;
+using System.Diagnostics;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using Hbpos.Client.Wpf.Localization;
@@ -11,7 +12,6 @@ namespace Hbpos.Client.Wpf.ViewModels;
 public sealed partial class PosTerminalViewModel : ObservableObject, IDisposable
 {
     public const string PageId = "PosTerminal";
-    private static readonly TimeSpan DuplicateScanWindow = TimeSpan.FromMilliseconds(350);
 
     private readonly LocalSellableItemIndex _priceIndex;
     private readonly PosCartService _cart;
@@ -25,8 +25,6 @@ public sealed partial class PosTerminalViewModel : ObservableObject, IDisposable
     private string _statusKey = "pos.status.ready";
     private object[] _statusArgs = [];
     private string? _statusText;
-    private string? _lastSubmittedScanText;
-    private DateTimeOffset _lastSubmittedScanAt = DateTimeOffset.MinValue;
 
     [ObservableProperty]
     private PosSessionState _session;
@@ -73,6 +71,7 @@ public sealed partial class PosTerminalViewModel : ObservableObject, IDisposable
             _localization.CultureChanged += (_, _) => RaiseLocalizedProperties();
         }
 
+        _cart.CartChanged += OnCartChanged;
         _rawScannerService?.Subscribe(PageId, OnRawBarcodeScanned);
 
         ScanCommand = new RelayCommand(SearchAndAdd);
@@ -81,6 +80,7 @@ public sealed partial class PosTerminalViewModel : ObservableObject, IDisposable
         ToggleTouchKeyboardCommand = new RelayCommand(ToggleTouchKeyboard);
         AddSelectedCommand = new RelayCommand(AddSelected, () => SelectedItem is not null);
         SelectMatchCommand = new RelayCommand<SellableItemDto>(SelectMatch);
+        RemoveLineCommand = new RelayCommand<CartLine>(RemoveLine);
         ClearCartCommand = new RelayCommand(ClearCart, () => !_cart.IsEmpty);
         OpenPaymentCommand = new RelayCommand(OpenPayment, () => !_cart.IsEmpty);
         SyncCommand = new AsyncRelayCommand(SyncAsync);
@@ -101,6 +101,8 @@ public sealed partial class PosTerminalViewModel : ObservableObject, IDisposable
     public IRelayCommand AddSelectedCommand { get; }
 
     public IRelayCommand<SellableItemDto> SelectMatchCommand { get; }
+
+    public IRelayCommand<CartLine> RemoveLineCommand { get; }
 
     public IRelayCommand ClearCartCommand { get; }
 
@@ -148,6 +150,7 @@ public sealed partial class PosTerminalViewModel : ObservableObject, IDisposable
 
     public void Dispose()
     {
+        _cart.CartChanged -= OnCartChanged;
         _rawScannerService?.Unsubscribe(PageId);
     }
 
@@ -169,12 +172,47 @@ public sealed partial class PosTerminalViewModel : ObservableObject, IDisposable
 
     public void RefreshCart()
     {
-        CartLines.ReplaceWith(_cart.Lines);
+        SyncCartLines(_cart.Lines);
+        RefreshCartState();
+    }
+
+    private void RefreshCartState()
+    {
         OnPropertyChanged(nameof(TotalAmount));
         OnPropertyChanged(nameof(DiscountAmount));
         OnPropertyChanged(nameof(ActualAmount));
         ClearCartCommand.NotifyCanExecuteChanged();
         OpenPaymentCommand.NotifyCanExecuteChanged();
+    }
+
+    private void SyncCartLines(IReadOnlyList<CartLine> sourceLines)
+    {
+        for (var i = CartLines.Count - 1; i >= 0; i--)
+        {
+            if (!sourceLines.Contains(CartLines[i]))
+            {
+                CartLines.RemoveAt(i);
+            }
+        }
+
+        for (var sourceIndex = 0; sourceIndex < sourceLines.Count; sourceIndex++)
+        {
+            var line = sourceLines[sourceIndex];
+            var currentIndex = CartLines.IndexOf(line);
+            if (currentIndex < 0)
+            {
+                CartLines.Insert(Math.Min(sourceIndex, CartLines.Count), line);
+            }
+            else if (currentIndex != sourceIndex)
+            {
+                CartLines.Move(currentIndex, sourceIndex);
+            }
+        }
+    }
+
+    private void OnCartChanged(object? sender, EventArgs e)
+    {
+        RefreshCart();
     }
 
     private void AppendScanText(string? value)
@@ -202,6 +240,7 @@ public sealed partial class PosTerminalViewModel : ObservableObject, IDisposable
         {
             ScanText = string.Empty;
             IsMatchesPopupOpen = false;
+            IsTouchKeyboardOpen = false;
             return;
         }
 
@@ -280,8 +319,87 @@ public sealed partial class PosTerminalViewModel : ObservableObject, IDisposable
 
     private void SearchAndAdd()
     {
-        var submittedScanText = ScanText;
-        var matches = _priceIndex.Search(ScanText);
+        ProcessScan(ScanText, preferExactLookup: false, source: "manual");
+    }
+
+    private void ProcessScan(string scanText, bool preferExactLookup, string source)
+    {
+        var submittedScanText = scanText;
+        var totalStopwatch = Stopwatch.StartNew();
+        var exactLookupElapsedMs = 0L;
+        var searchElapsedMs = 0L;
+        var cartUpdateElapsedMs = 0L;
+        var uiRefreshElapsedMs = 0L;
+        var matchKind = preferExactLookup ? "exact-not-found" : "search";
+        var matchCount = 0;
+        var autoAdded = false;
+
+        if (preferExactLookup)
+        {
+            var exactLookupStopwatch = Stopwatch.StartNew();
+            var exactMatches = _priceIndex.FindExactMatches(Session.StoreCode, submittedScanText);
+            exactLookupStopwatch.Stop();
+            exactLookupElapsedMs = exactLookupStopwatch.ElapsedMilliseconds;
+            matchKind = exactMatches.Count switch
+            {
+                0 => "exact-not-found",
+                1 => "lookup-exact",
+                _ => "search-multiple"
+            };
+
+            var matches = exactMatches;
+            var allowAutoAdd = exactMatches.Count == 1;
+            if (exactMatches.Count == 0)
+            {
+                var metadataMatches = _priceIndex.FindMetadataExactMatches(Session.StoreCode, submittedScanText);
+                if (metadataMatches.Count > 0)
+                {
+                    matches = metadataMatches;
+                    matchKind = metadataMatches.Count > 1 ? "metadata-duplicate" : "metadata-only";
+                }
+            }
+
+            ApplyScanMatches(matches, submittedScanText, allowAutoAdd, out autoAdded, out cartUpdateElapsedMs, out uiRefreshElapsedMs);
+            matchCount = matches.Count;
+        }
+        else
+        {
+            var exactLookupStopwatch = Stopwatch.StartNew();
+            var exactMatches = _priceIndex.FindExactMatches(Session.StoreCode, submittedScanText);
+            exactLookupStopwatch.Stop();
+            exactLookupElapsedMs = exactLookupStopwatch.ElapsedMilliseconds;
+            var hasDuplicateExactMatch = exactMatches.Count > 1;
+            if (hasDuplicateExactMatch)
+            {
+                matchKind = "search-multiple";
+            }
+
+            var searchStopwatch = Stopwatch.StartNew();
+            var matches = _priceIndex.Search(submittedScanText);
+            searchStopwatch.Stop();
+            searchElapsedMs = searchStopwatch.ElapsedMilliseconds;
+
+            ApplyScanMatches(matches, submittedScanText, allowAutoAdd: !hasDuplicateExactMatch, out autoAdded, out cartUpdateElapsedMs, out uiRefreshElapsedMs);
+            matchCount = matches.Count;
+        }
+
+        totalStopwatch.Stop();
+        ConsoleLog.Write(
+            "PosScan",
+            $"barcode={submittedScanText} storeCode={Session.StoreCode} source={source} hit={matchKind} matchCount={matchCount} autoAdded={autoAdded} cartLines={_cart.Lines.Count} exactLookupElapsedMs={exactLookupElapsedMs} searchElapsedMs={searchElapsedMs} cartUpdateElapsedMs={cartUpdateElapsedMs} uiRefreshElapsedMs={uiRefreshElapsedMs} totalElapsedMs={totalStopwatch.ElapsedMilliseconds}");
+    }
+
+    private void ApplyScanMatches(
+        IReadOnlyList<SellableItemDto> matches,
+        string submittedScanText,
+        bool allowAutoAdd,
+        out bool autoAdded,
+        out long cartUpdateElapsedMs,
+        out long uiRefreshElapsedMs)
+    {
+        var uiRefreshStopwatch = Stopwatch.StartNew();
+        autoAdded = false;
+        cartUpdateElapsedMs = 0;
         Matches.ReplaceWith(matches);
         SelectedItem = matches.FirstOrDefault();
 
@@ -289,21 +407,29 @@ public sealed partial class PosTerminalViewModel : ObservableObject, IDisposable
         {
             IsMatchesPopupOpen = false;
             SetStatus("pos.status.noLocalMatch");
+            uiRefreshStopwatch.Stop();
+            uiRefreshElapsedMs = uiRefreshStopwatch.ElapsedMilliseconds;
             return;
         }
 
-        if (matches.Count == 1 || IsExactLookup(SelectedItem, ScanText))
+        if (allowAutoAdd && (matches.Count == 1 || IsExactLookup(SelectedItem, submittedScanText)))
         {
             IsMatchesPopupOpen = false;
+            var cartUpdateStopwatch = Stopwatch.StartNew();
             AddItem(SelectedItem);
+            cartUpdateStopwatch.Stop();
+            cartUpdateElapsedMs = cartUpdateStopwatch.ElapsedMilliseconds;
             ScanText = string.Empty;
-            RememberSubmittedScan(submittedScanText);
+            autoAdded = true;
         }
         else
         {
             IsMatchesPopupOpen = true;
             SetStatus("pos.status.multipleMatches", matches.Count);
         }
+
+        uiRefreshStopwatch.Stop();
+        uiRefreshElapsedMs = uiRefreshStopwatch.ElapsedMilliseconds;
     }
 
     private void AddSelected()
@@ -327,49 +453,37 @@ public sealed partial class PosTerminalViewModel : ObservableObject, IDisposable
         AddItem(item);
         ScanText = string.Empty;
         IsMatchesPopupOpen = false;
+        IsTouchKeyboardOpen = false;
+    }
+
+    private void RemoveLine(CartLine? line)
+    {
+        if (line is null || !_cart.RemoveLine(line))
+        {
+            return;
+        }
+
+        SetStatus("pos.status.ready");
     }
 
     private void AddItem(SellableItemDto item)
     {
         _cart.AddItem(item);
-        RefreshCart();
+        IsTouchKeyboardOpen = false;
         SetStatus("pos.status.added", item.DisplayName);
         BeginRemoteLookup(item);
     }
 
     private void OnRawBarcodeScanned(RawBarcodeScannedEventArgs e)
     {
-        if (IsDuplicateSubmittedScan(e.Barcode, e.ScannedAt))
-        {
-            return;
-        }
-
         ScanText = e.Barcode;
-        SearchAndAdd();
-    }
-
-    private void RememberSubmittedScan(string scanText)
-    {
-        if (string.IsNullOrWhiteSpace(scanText))
-        {
-            return;
-        }
-
-        _lastSubmittedScanText = scanText.Trim();
-        _lastSubmittedScanAt = DateTimeOffset.Now;
-    }
-
-    private bool IsDuplicateSubmittedScan(string scanText, DateTimeOffset scannedAt)
-    {
-        return !string.IsNullOrWhiteSpace(_lastSubmittedScanText) &&
-            string.Equals(_lastSubmittedScanText, scanText.Trim(), StringComparison.OrdinalIgnoreCase) &&
-            scannedAt - _lastSubmittedScanAt <= DuplicateScanWindow;
+        IsTouchKeyboardOpen = false;
+        ProcessScan(e.Barcode, preferExactLookup: true, source: "raw");
     }
 
     private void ClearCart()
     {
         _cart.Clear();
-        RefreshCart();
         SetStatus("pos.status.cartCleared");
     }
 
@@ -407,7 +521,6 @@ public sealed partial class PosTerminalViewModel : ObservableObject, IDisposable
 
             var catalogItems = await ReloadCatalogAsync(CancellationToken.None);
             RefreshMatches(catalogItems);
-            RefreshCart();
         }
         catch (Exception ex)
         {
@@ -440,7 +553,6 @@ public sealed partial class PosTerminalViewModel : ObservableObject, IDisposable
             SetStatusText("Syncing catalog...");
             var catalogItems = await _syncCatalogAsync(CancellationToken.None);
             RefreshMatches(catalogItems);
-            RefreshCart();
             SetStatusText("Catalog sync completed.");
         }
         catch (Exception ex)

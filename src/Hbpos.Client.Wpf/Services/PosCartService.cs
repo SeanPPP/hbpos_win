@@ -77,6 +77,17 @@ public sealed class PosCartService
         return true;
     }
 
+    public bool RemoveLine(CartLine line)
+    {
+        if (!_lines.Remove(line))
+        {
+            return false;
+        }
+
+        OnCartChanged();
+        return true;
+    }
+
     public void Clear()
     {
         if (_lines.Count == 0)

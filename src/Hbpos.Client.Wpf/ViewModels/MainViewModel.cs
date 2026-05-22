@@ -588,7 +588,6 @@ public sealed partial class MainViewModel : ObservableObject
 
     private void OnCartChanged(object? sender, EventArgs e)
     {
-        PosTerminal?.RefreshCart();
         CashPayment?.RefreshCart();
         LoadCustomerDisplayFromCart();
         ShowCashPaymentCommand.NotifyCanExecuteChanged();
@@ -631,11 +630,6 @@ public sealed partial class MainViewModel : ObservableObject
         await RefreshPendingSyncAsync();
         PaymentSuccess.LoadFromOrder(e.Order);
         CurrentScreen = PaymentSuccess;
-
-        if (PosTerminal is not null)
-        {
-            PosTerminal.RefreshCart();
-        }
 
         ShowCashPaymentCommand.NotifyCanExecuteChanged();
     }
@@ -711,7 +705,6 @@ public sealed partial class MainViewModel : ObservableObject
     private void ResetForNewTransaction()
     {
         _cart.Clear();
-        PosTerminal?.RefreshCart();
         ShowCashPaymentCommand.NotifyCanExecuteChanged();
         ShowPos();
     }
@@ -757,7 +750,6 @@ public sealed partial class MainViewModel : ObservableObject
             _cart.AddItem(items[1]);
         }
 
-        PosTerminal?.RefreshCart();
         ShowCashPaymentCommand.NotifyCanExecuteChanged();
     }
 

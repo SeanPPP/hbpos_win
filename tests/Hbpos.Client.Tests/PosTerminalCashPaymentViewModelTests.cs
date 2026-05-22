@@ -12,7 +12,7 @@ public sealed class PosTerminalCashPaymentViewModelTests
     {
         var cart = new PosCartService();
         var index = new LocalSellableItemIndex();
-        index.ReplaceAll([CreateItem("SKU-101", "Sparkling Water", "930101", PriceSourceKind.StoreRetailPrice, 2.5m)]);
+        index.ReplaceAll([CreateItem("SKU-101", "Sparkling Water", "930101", PriceSourceKind.StoreRetailPrice, 2.5m, itemNumber: "ITEM-101")]);
         var viewModel = new PosTerminalViewModel(
             index,
             cart,
@@ -26,6 +26,7 @@ public sealed class PosTerminalCashPaymentViewModelTests
         Assert.Equal(2.5m, viewModel.ActualAmount);
         var line = Assert.Single(viewModel.CartLines);
         Assert.Equal("Sparkling Water", line.DisplayName);
+        Assert.Equal("ITEM-101", line.ItemNumber);
         Assert.Equal("StoreRetailPrice", line.PriceSourceLabel);
     }
 
@@ -120,6 +121,142 @@ public sealed class PosTerminalCashPaymentViewModelTests
         Assert.Equal(1.8m, viewModel.ActualAmount);
         var line = Assert.Single(viewModel.CartLines);
         Assert.Equal("Scanner Apple", line.DisplayName);
+        Assert.False(viewModel.IsMatchesPopupOpen);
+    }
+
+    [Fact]
+    public void Pos_terminal_raw_scanner_uses_exact_lookup_without_keyword_search()
+    {
+        var cart = new PosCartService();
+        var index = new LocalSellableItemIndex();
+        var scanner = new FakeRawScannerService();
+        index.ReplaceAll([CreateItem("SKU-113", "Scanner Keyword Match", "930113", PriceSourceKind.StoreRetailPrice, 1.8m)]);
+        var viewModel = new PosTerminalViewModel(
+            index,
+            cart,
+            Session,
+            onOpenPayment: null,
+            rawScannerService: scanner);
+        scanner.SetActivePage(PosTerminalViewModel.PageId);
+
+        scanner.Emit("Keyword");
+
+        Assert.Empty(viewModel.CartLines);
+        Assert.Empty(viewModel.Matches);
+        Assert.False(viewModel.IsMatchesPopupOpen);
+        Assert.Equal("Keyword", viewModel.ScanText);
+    }
+
+    [Fact]
+    public void Pos_terminal_raw_scanner_duplicate_exact_lookup_requires_selection()
+    {
+        var cart = new PosCartService();
+        var index = new LocalSellableItemIndex();
+        var scanner = new FakeRawScannerService();
+        index.ReplaceAll(
+        [
+            CreateItem("SKU-114", "Scanner Apple Small", "930114", PriceSourceKind.StoreRetailPrice, 1.8m),
+            CreateItem("SKU-115", "Scanner Apple Large", "930114", PriceSourceKind.StoreRetailPrice, 2.8m)
+        ]);
+        var viewModel = new PosTerminalViewModel(
+            index,
+            cart,
+            Session,
+            onOpenPayment: null,
+            rawScannerService: scanner);
+        scanner.SetActivePage(PosTerminalViewModel.PageId);
+
+        scanner.Emit("930114");
+
+        Assert.Empty(viewModel.CartLines);
+        Assert.Equal(2, viewModel.Matches.Count);
+        Assert.True(viewModel.IsMatchesPopupOpen);
+        Assert.Equal("930114", viewModel.ScanText);
+    }
+
+    [Fact]
+    public void Pos_terminal_raw_scanner_uses_lookup_code_when_metadata_barcode_is_shared()
+    {
+        var cart = new PosCartService();
+        var index = new LocalSellableItemIndex();
+        var scanner = new FakeRawScannerService();
+        index.ReplaceAll(
+        [
+            CreateItem("SKU-117", "Base Barcode Item", "9525812460346", PriceSourceKind.StoreRetailPrice, 1.8m, productBarcode: "9525812460346"),
+            CreateItem("SKU-118", "Variant Metadata Item", "HB246-GJ-013", PriceSourceKind.StoreRetailPrice, 2.8m, productBarcode: "9525812460346")
+        ]);
+        var viewModel = new PosTerminalViewModel(
+            index,
+            cart,
+            Session,
+            onOpenPayment: null,
+            rawScannerService: scanner)
+        {
+            IsTouchKeyboardOpen = true
+        };
+        scanner.SetActivePage(PosTerminalViewModel.PageId);
+
+        scanner.Emit("9525812460346");
+
+        var line = Assert.Single(viewModel.CartLines);
+        Assert.Equal("Base Barcode Item", line.DisplayName);
+        Assert.Empty(viewModel.ScanText);
+        Assert.False(viewModel.IsMatchesPopupOpen);
+        Assert.False(viewModel.IsTouchKeyboardOpen);
+    }
+
+    [Fact]
+    public void Pos_terminal_select_match_adds_item_and_closes_popup_input_and_keyboard()
+    {
+        var cart = new PosCartService();
+        var index = new LocalSellableItemIndex();
+        var first = CreateItem("SKU-119", "Scanner Apple Small", "930119", PriceSourceKind.StoreRetailPrice, 1.8m);
+        var second = CreateItem("SKU-120", "Scanner Apple Large", "930119", PriceSourceKind.StoreRetailPrice, 2.8m);
+        index.ReplaceAll([first, second]);
+        var viewModel = new PosTerminalViewModel(
+            index,
+            cart,
+            Session,
+            onOpenPayment: null)
+        {
+            IsMatchesPopupOpen = true,
+            IsTouchKeyboardOpen = true,
+            ScanText = "930119"
+        };
+
+        viewModel.SelectMatchCommand.Execute(second);
+
+        var line = Assert.Single(viewModel.CartLines);
+        Assert.Equal("Scanner Apple Large", line.DisplayName);
+        Assert.Empty(viewModel.ScanText);
+        Assert.False(viewModel.IsMatchesPopupOpen);
+        Assert.False(viewModel.IsTouchKeyboardOpen);
+    }
+
+    [Fact]
+    public void Pos_terminal_repeated_scan_keeps_same_cart_line_and_updates_quantity()
+    {
+        var cart = new PosCartService();
+        var index = new LocalSellableItemIndex();
+        var scanner = new FakeRawScannerService();
+        index.ReplaceAll([CreateItem("SKU-116", "Scanner Pear", "930116", PriceSourceKind.StoreRetailPrice, 2m)]);
+        var viewModel = new PosTerminalViewModel(
+            index,
+            cart,
+            Session,
+            onOpenPayment: null,
+            rawScannerService: scanner);
+        scanner.SetActivePage(PosTerminalViewModel.PageId);
+        var firstScanAt = DateTimeOffset.Now;
+
+        scanner.Emit("930116", firstScanAt);
+        var firstLine = Assert.Single(viewModel.CartLines);
+        scanner.Emit("930116", firstScanAt.AddMilliseconds(100));
+
+        var line = Assert.Single(viewModel.CartLines);
+        Assert.Same(firstLine, line);
+        Assert.Equal(2m, line.Quantity);
+        Assert.Equal(4m, viewModel.ActualAmount);
     }
 
     [Fact]
@@ -162,6 +299,41 @@ public sealed class PosTerminalCashPaymentViewModelTests
         viewModel.KeypadInputCommand.Execute("QuickNinetyNine");
 
         Assert.Equal("12.99", viewModel.KeypadBuffer);
+    }
+
+    [Fact]
+    public void Pos_terminal_remove_line_command_removes_entire_cart_line_and_recalculates_total()
+    {
+        var cart = new PosCartService();
+        var index = new LocalSellableItemIndex();
+        index.ReplaceAll(
+        [
+            CreateItem("SKU-111", "Apples", "930111", PriceSourceKind.StoreRetailPrice, 2m),
+            CreateItem("SKU-112", "Bananas", "930112", PriceSourceKind.StoreRetailPrice, 3m)
+        ]);
+        var viewModel = new PosTerminalViewModel(
+            index,
+            cart,
+            Session,
+            onOpenPayment: null);
+
+        viewModel.ScanText = "930111";
+        viewModel.ScanCommand.Execute(null);
+        viewModel.ScanText = "930111";
+        viewModel.ScanCommand.Execute(null);
+        viewModel.ScanText = "930112";
+        viewModel.ScanCommand.Execute(null);
+
+        Assert.Equal(2, viewModel.CartLines.Count);
+        Assert.Equal(7m, viewModel.ActualAmount);
+
+        var appleLine = Assert.Single(viewModel.CartLines, line => line.LookupCode == "930111");
+        Assert.Equal(2m, appleLine.Quantity);
+        viewModel.RemoveLineCommand.Execute(appleLine);
+
+        var remaining = Assert.Single(viewModel.CartLines);
+        Assert.Equal("Bananas", remaining.DisplayName);
+        Assert.Equal(3m, viewModel.ActualAmount);
     }
 
     [Fact]
@@ -337,7 +509,9 @@ public sealed class PosTerminalCashPaymentViewModelTests
         string name,
         string barcode,
         PriceSourceKind priceSource,
-        decimal price)
+        decimal price,
+        string? itemNumber = null,
+        string? productBarcode = null)
     {
         return new SellableItemDto(
             StoreCode: "S001",
@@ -345,8 +519,8 @@ public sealed class PosTerminalCashPaymentViewModelTests
             ReferenceCode: null,
             DisplayName: name,
             LookupCode: barcode,
-            ItemNumber: productCode,
-            Barcode: barcode,
+            ItemNumber: itemNumber ?? productCode,
+            Barcode: productBarcode ?? barcode,
             RetailPrice: price,
             PriceSource: priceSource,
             PriceSourceLabel: priceSource.ToString(),
@@ -456,11 +630,11 @@ public sealed class PosTerminalCashPaymentViewModelTests
             return IntPtr.Zero;
         }
 
-        public void Emit(string barcode)
+        public void Emit(string barcode, DateTimeOffset? scannedAt = null)
         {
             if (_activePageId is not null && _handlers.TryGetValue(_activePageId, out var handler))
             {
-                handler(new RawBarcodeScannedEventArgs(barcode, "scanner-device", DateTimeOffset.Now));
+                handler(new RawBarcodeScannedEventArgs(barcode, "scanner-device", scannedAt ?? DateTimeOffset.Now));
             }
         }
 

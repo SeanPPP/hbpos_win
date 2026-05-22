@@ -24,6 +24,32 @@ public sealed class PosCoreTests
     }
 
     [Fact]
+    public void Local_price_index_exact_lookup_matches_lookup_code_within_store()
+    {
+        var index = new LocalSellableItemIndex();
+        var barcodeItem = CreateItem("SKU-001", "Milk 1L", "690001", PriceSourceKind.StoreRetailPrice, 12.5m, itemNumber: "ITEM-001");
+        var productCodeItem = CreateItem("SKU-002", "Apple Juice", "690002", PriceSourceKind.ProductBase, 8.8m, itemNumber: "ITEM-002");
+        var otherStoreItem = CreateItem("SKU-003", "Other Store Milk", "690001", PriceSourceKind.ProductBase, 9.9m, storeCode: "S002");
+        index.ReplaceAll([barcodeItem, productCodeItem, otherStoreItem]);
+
+        Assert.Equal("SKU-001", Assert.Single(index.FindExactMatches("S001", "690001")).ProductCode);
+        Assert.Equal("SKU-003", Assert.Single(index.FindExactMatches("S002", "690001")).ProductCode);
+        Assert.Empty(index.FindExactMatches("S001", "ITEM-001"));
+        Assert.Empty(index.FindExactMatches("S001", "sku-002"));
+    }
+
+    [Fact]
+    public void Local_price_index_exact_lookup_deduplicates_same_item_code_aliases()
+    {
+        var index = new LocalSellableItemIndex();
+        index.ReplaceAll([CreateItem("690001", "Milk 1L", "690001", PriceSourceKind.StoreRetailPrice, 12.5m, itemNumber: "690001")]);
+
+        var matches = index.FindExactMatches("S001", "690001");
+
+        Assert.Single(matches);
+    }
+
+    [Fact]
     public void Cart_adds_scanned_item_and_calculates_totals()
     {
         var cart = new PosCartService();
@@ -215,15 +241,17 @@ public sealed class PosCoreTests
         string name,
         string barcode,
         PriceSourceKind priceSource,
-        decimal price)
+        decimal price,
+        string storeCode = "S001",
+        string? itemNumber = null)
     {
         return new SellableItemDto(
-            StoreCode: "S001",
+            StoreCode: storeCode,
             ProductCode: productCode,
             ReferenceCode: null,
             DisplayName: name,
             LookupCode: barcode,
-            ItemNumber: productCode,
+            ItemNumber: itemNumber ?? productCode,
             Barcode: barcode,
             RetailPrice: price,
             PriceSource: priceSource,

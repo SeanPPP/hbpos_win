@@ -73,6 +73,34 @@ public sealed class PosCartServiceTests
     }
 
     [Fact]
+    public void RemoveLine_removes_only_the_given_cart_line()
+    {
+        var cart = new PosCartService();
+        var first = cart.AddItem(CreateItem(productCode: "SKU-001", lookupCode: "690001", price: 10m));
+        var second = cart.AddItem(CreateItem(productCode: "SKU-002", lookupCode: "690002", price: 20m));
+
+        Assert.True(cart.RemoveLine(first));
+
+        var line = Assert.Single(cart.Lines);
+        Assert.Same(second, line);
+        Assert.Equal(20m, cart.TotalAmount);
+    }
+
+    [Fact]
+    public void RemoveLine_removes_the_entire_line_when_quantity_is_greater_than_one()
+    {
+        var cart = new PosCartService();
+        var line = cart.AddItem(CreateItem(productCode: "SKU-001", lookupCode: "690001", price: 10m));
+        cart.AddItem(CreateItem(productCode: "SKU-001", lookupCode: "690001", price: 10m));
+
+        Assert.Equal(2m, line.Quantity);
+        Assert.True(cart.RemoveLine(line));
+
+        Assert.Empty(cart.Lines);
+        Assert.Equal(0m, cart.TotalAmount);
+    }
+
+    [Fact]
     public void AddItem_does_not_merge_same_product_with_different_lookup()
     {
         var cart = new PosCartService();
@@ -90,6 +118,7 @@ public sealed class PosCartServiceTests
         string productCode = "SKU-001",
         string lookupCode = "690001",
         string displayName = "Milk 1L",
+        string? itemNumber = null,
         decimal price = 10m,
         PriceSourceKind priceSource = PriceSourceKind.StoreRetailPrice)
     {
@@ -99,7 +128,7 @@ public sealed class PosCartServiceTests
             ReferenceCode: null,
             DisplayName: displayName,
             LookupCode: lookupCode,
-            ItemNumber: productCode,
+            ItemNumber: itemNumber ?? productCode,
             Barcode: lookupCode.Trim(),
             RetailPrice: price,
             PriceSource: priceSource,
