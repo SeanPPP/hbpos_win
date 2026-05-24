@@ -1,5 +1,6 @@
 using System.Collections.ObjectModel;
 using System.Diagnostics;
+using System.Globalization;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using Hbpos.Client.Wpf.Localization;
@@ -48,6 +49,9 @@ public sealed partial class PosTerminalViewModel : ObservableObject, IDisposable
     [ObservableProperty]
     private bool _isTouchKeyboardOpen;
 
+    [ObservableProperty]
+    private bool _isWholeOrderOperation;
+
     public PosTerminalViewModel(
         LocalSellableItemIndex priceIndex,
         PosCartService cart,
@@ -87,6 +91,11 @@ public sealed partial class PosTerminalViewModel : ObservableObject, IDisposable
         RemoveLineCommand = new RelayCommand<CartLine>(RemoveLine);
         IncreaseLineCommand = new RelayCommand<CartLine>(IncreaseLine, line => line is not null && _cart.Lines.Contains(line));
         DecreaseLineCommand = new RelayCommand<CartLine>(DecreaseLine, line => line is not null && _cart.Lines.Contains(line));
+        ModifySelectedLineQuantityCommand = new RelayCommand(ModifySelectedLineQuantity);
+        ModifySelectedLinePriceCommand = new RelayCommand(ModifySelectedLinePrice);
+        ApplySelectedLineDiscountAmountCommand = new RelayCommand(ApplySelectedLineDiscountAmount);
+        ApplySelectedLineDiscountPercentCommand = new RelayCommand(ApplySelectedLineDiscountPercent);
+        ApplyQuickDiscountPercentCommand = new RelayCommand<string>(ApplyQuickDiscountPercent);
         ClearSearchCommand = new RelayCommand(ClearSearch, () => !string.IsNullOrWhiteSpace(ScanText));
         ClearCartCommand = new RelayCommand(ClearCart, () => !_cart.IsEmpty);
         OpenPaymentCommand = new RelayCommand(OpenPayment, () => !_cart.IsEmpty);
@@ -114,6 +123,16 @@ public sealed partial class PosTerminalViewModel : ObservableObject, IDisposable
     public IRelayCommand<CartLine> IncreaseLineCommand { get; }
 
     public IRelayCommand<CartLine> DecreaseLineCommand { get; }
+
+    public IRelayCommand ModifySelectedLineQuantityCommand { get; }
+
+    public IRelayCommand ModifySelectedLinePriceCommand { get; }
+
+    public IRelayCommand ApplySelectedLineDiscountAmountCommand { get; }
+
+    public IRelayCommand ApplySelectedLineDiscountPercentCommand { get; }
+
+    public IRelayCommand<string> ApplyQuickDiscountPercentCommand { get; }
 
     public IRelayCommand ClearSearchCommand { get; }
 
@@ -523,6 +542,206 @@ public sealed partial class PosTerminalViewModel : ObservableObject, IDisposable
         SetStatus("pos.status.ready");
     }
 
+    private void ModifySelectedLineQuantity()
+    {
+        if (!TryGetSelectedLineKeypadValue(out var line, out var value))
+        {
+            return;
+        }
+
+        if (value <= 0m)
+        {
+            SetStatus("pos.status.quantityMustBePositive");
+            return;
+        }
+
+        if (!_cart.SetLineQuantity(line, value))
+        {
+            return;
+        }
+
+        SelectCartLine(line);
+        KeypadBuffer = string.Empty;
+        SetStatus("pos.status.lineQuantityUpdated");
+    }
+
+    private void ModifySelectedLinePrice()
+    {
+        if (!TryGetSelectedLineKeypadValue(out var line, out var value) ||
+            !_cart.SetLineUnitPrice(line, value))
+        {
+            return;
+        }
+
+        SelectCartLine(line);
+        KeypadBuffer = string.Empty;
+        SetStatus("pos.status.linePriceUpdated");
+    }
+
+    private void ApplySelectedLineDiscountAmount()
+    {
+        if (IsWholeOrderOperation)
+        {
+            ApplyWholeOrderDiscountAmount();
+            return;
+        }
+
+        if (!TryGetSelectedLineKeypadValue(out var line, out var value))
+        {
+            return;
+        }
+
+        if (value > line.GrossAmount)
+        {
+            SetStatus("pos.status.discountAmountTooHigh");
+            return;
+        }
+
+        if (!_cart.SetLineDiscountAmount(line, value))
+        {
+            return;
+        }
+
+        SelectCartLine(line);
+        KeypadBuffer = string.Empty;
+        SetStatus("pos.status.lineDiscountUpdated");
+    }
+
+    private void ApplySelectedLineDiscountPercent()
+    {
+        if (IsWholeOrderOperation)
+        {
+            ApplyWholeOrderDiscountPercent();
+            return;
+        }
+
+        if (!TryGetSelectedLineKeypadValue(out var line, out var value))
+        {
+            return;
+        }
+
+        if (value > 100m)
+        {
+            SetStatus("pos.status.discountPercentOutOfRange");
+            return;
+        }
+
+        if (!_cart.SetLineDiscountPercent(line, value))
+        {
+            return;
+        }
+
+        SelectCartLine(line);
+        KeypadBuffer = string.Empty;
+        SetStatus("pos.status.lineDiscountUpdated");
+    }
+
+    private void ApplyQuickDiscountPercent(string? value)
+    {
+        if (!decimal.TryParse(value, NumberStyles.Number, CultureInfo.InvariantCulture, out var discountPercent) ||
+            discountPercent < 0m)
+        {
+            SetStatus("pos.status.invalidKeypadValue");
+            return;
+        }
+
+        if (discountPercent > 100m)
+        {
+            SetStatus("pos.status.discountPercentOutOfRange");
+            return;
+        }
+
+        if (IsWholeOrderOperation)
+        {
+            ApplyWholeOrderDiscountPercent(discountPercent);
+            return;
+        }
+
+        ApplySelectedLineDiscountPercent(discountPercent);
+    }
+
+    private void ApplyWholeOrderDiscountAmount()
+    {
+        if (!TryGetOrderDiscountKeypadValue(out var value))
+        {
+            return;
+        }
+
+        if (value > _cart.TotalAmount)
+        {
+            SetStatus("pos.status.discountAmountTooHigh");
+            return;
+        }
+
+        if (!_cart.SetOrderDiscountAmount(value))
+        {
+            return;
+        }
+
+        IsWholeOrderOperation = false;
+        KeypadBuffer = string.Empty;
+        SetStatus("pos.status.orderDiscountUpdated");
+    }
+
+    private void ApplyWholeOrderDiscountPercent()
+    {
+        if (!TryGetOrderDiscountKeypadValue(out var value))
+        {
+            return;
+        }
+
+        ApplyWholeOrderDiscountPercent(value);
+    }
+
+    private void ApplyWholeOrderDiscountPercent(decimal value)
+    {
+        if (_cart.IsEmpty)
+        {
+            SetStatus("pos.status.selectCartLine");
+            return;
+        }
+
+        if (value > 100m)
+        {
+            SetStatus("pos.status.discountPercentOutOfRange");
+            return;
+        }
+
+        if (!_cart.SetOrderDiscountPercent(value))
+        {
+            return;
+        }
+
+        IsWholeOrderOperation = false;
+        KeypadBuffer = string.Empty;
+        SetStatus("pos.status.orderDiscountUpdated");
+    }
+
+    private void ApplySelectedLineDiscountPercent(decimal value)
+    {
+        if (SelectedCartLine is null)
+        {
+            SetStatus("pos.status.selectCartLine");
+            return;
+        }
+
+        if (value > 100m)
+        {
+            SetStatus("pos.status.discountPercentOutOfRange");
+            return;
+        }
+
+        var line = SelectedCartLine;
+        if (!_cart.SetLineDiscountPercent(line, value))
+        {
+            return;
+        }
+
+        SelectCartLine(line);
+        KeypadBuffer = string.Empty;
+        SetStatus("pos.status.lineDiscountUpdated");
+    }
+
     private void AddItem(SellableItemDto item)
     {
         var line = _cart.AddItem(item);
@@ -540,6 +759,46 @@ public sealed partial class PosTerminalViewModel : ObservableObject, IDisposable
         }
 
         SelectedCartLine = line;
+    }
+
+    private bool TryGetSelectedLineKeypadValue(out CartLine line, out decimal value)
+    {
+        value = 0m;
+
+        if (SelectedCartLine is null)
+        {
+            line = null!;
+            SetStatus("pos.status.selectCartLine");
+            return false;
+        }
+
+        line = SelectedCartLine;
+        return TryGetKeypadValue(out value);
+    }
+
+    private bool TryGetOrderDiscountKeypadValue(out decimal value)
+    {
+        value = 0m;
+
+        if (_cart.IsEmpty)
+        {
+            SetStatus("pos.status.selectCartLine");
+            return false;
+        }
+
+        return TryGetKeypadValue(out value);
+    }
+
+    private bool TryGetKeypadValue(out decimal value)
+    {
+        if (!decimal.TryParse(KeypadBuffer, NumberStyles.Number, CultureInfo.InvariantCulture, out value) ||
+            value < 0m)
+        {
+            SetStatus("pos.status.invalidKeypadValue");
+            return false;
+        }
+
+        return true;
     }
 
     private void OnRawBarcodeScanned(RawBarcodeScannedEventArgs e)

@@ -260,7 +260,7 @@ public sealed partial class MainViewModel : ObservableObject
         await InitializePosExperienceAsync(startupOptions);
     }
 
-    public Task ContinueStartupAfterShownAsync(AppStartupOptions startupOptions)
+    public Task ContinueStartupAfterShownAsync(AppStartupOptions startupOptions, Window? owner = null)
     {
         if (startupOptions.PreviewMode)
         {
@@ -273,7 +273,7 @@ public sealed partial class MainViewModel : ObservableObject
             return _deviceRegistrationStoreLoadTask;
         }
 
-        return ContinuePosStartupAfterShownAsync(startupOptions);
+        return ContinuePosStartupAfterShownAsync(startupOptions, owner);
     }
 
     public bool TryProcessKeyboardScannerInput(string barcode)
@@ -306,7 +306,7 @@ public sealed partial class MainViewModel : ObservableObject
         }
 
         await InitializePosExperienceAsync(startupOptions);
-        _ = ContinuePosStartupAfterShownAsync(startupOptions);
+        _ = ContinuePosStartupAfterShownAsync(startupOptions, Application.Current.MainWindow);
     }
 
     private async Task InitializePosExperienceAsync(AppStartupOptions startupOptions)
@@ -356,19 +356,21 @@ public sealed partial class MainViewModel : ObservableObject
 
     }
 
-    private Task ContinuePosStartupAfterShownAsync(AppStartupOptions startupOptions)
+    private Task ContinuePosStartupAfterShownAsync(AppStartupOptions startupOptions, Window? owner)
     {
         if (startupOptions.PreviewMode)
         {
             return Task.CompletedTask;
         }
 
-        _posPostShowStartupTask ??= ContinuePosStartupAfterShownCoreAsync();
+        _posPostShowStartupTask ??= ContinuePosStartupAfterShownCoreAsync(owner);
         return _posPostShowStartupTask;
     }
 
-    private async Task ContinuePosStartupAfterShownCoreAsync()
+    private async Task ContinuePosStartupAfterShownCoreAsync(Window? owner)
     {
+        OpenCustomerDisplayWindow(owner);
+
         await RefreshOnlineStateAsync(CancellationToken.None);
         _connectivityTimer.Start();
         BeginInitialCatalogSync();
@@ -757,15 +759,34 @@ public sealed partial class MainViewModel : ObservableObject
 
     private void ToggleCustomerDisplayWindow()
     {
-        LoadCustomerDisplayFromCart();
         var owner = Application.Current.MainWindow;
         if (owner is null)
         {
             return;
         }
 
-        _customerDisplayWindowService.Toggle(CustomerDisplay, owner);
-        IsCustomerDisplayOpen = _customerDisplayWindowService.IsOpen;
+        ToggleCustomerDisplayWindow(owner);
+    }
+
+    public void ToggleCustomerDisplayWindow(Window? owner)
+    {
+        LoadCustomerDisplayFromCart();
+        ApplyCustomerDisplayWindowResult(_customerDisplayWindowService.Toggle(CustomerDisplay, owner));
+    }
+
+    private void OpenCustomerDisplayWindow(Window? owner)
+    {
+        LoadCustomerDisplayFromCart();
+        ApplyCustomerDisplayWindowResult(_customerDisplayWindowService.Open(CustomerDisplay, owner));
+    }
+
+    private void ApplyCustomerDisplayWindowResult(CustomerDisplayWindowResult result)
+    {
+        IsCustomerDisplayOpen = result.IsOpen;
+        if (!string.IsNullOrWhiteSpace(result.StatusMessageKey))
+        {
+            StatusMessage = _localization.T(result.StatusMessageKey);
+        }
     }
 
     private async Task ResetScannerBindingAsync()

@@ -335,6 +335,307 @@ public sealed class PosTerminalCashPaymentViewModelTests
     }
 
     [Fact]
+    public void Pos_terminal_keypad_can_modify_selected_line_quantity_and_price()
+    {
+        var cart = new PosCartService();
+        var index = new LocalSellableItemIndex();
+        index.ReplaceAll([CreateItem("SKU-129", "Adjustable Tea", "930129", PriceSourceKind.StoreRetailPrice, 2m)]);
+        var viewModel = new PosTerminalViewModel(
+            index,
+            cart,
+            Session,
+            onOpenPayment: null);
+
+        viewModel.ScanText = "930129";
+        viewModel.ScanCommand.Execute(null);
+        var line = Assert.Single(viewModel.CartLines);
+
+        viewModel.KeypadInputCommand.Execute("2");
+        viewModel.KeypadInputCommand.Execute(".");
+        viewModel.KeypadInputCommand.Execute("5");
+        viewModel.ModifySelectedLineQuantityCommand.Execute(null);
+
+        Assert.Empty(viewModel.KeypadBuffer);
+        Assert.Equal(2.5m, line.Quantity);
+        Assert.Equal(5m, viewModel.ActualAmount);
+        Assert.Same(line, viewModel.SelectedCartLine);
+
+        viewModel.KeypadInputCommand.Execute("3");
+        viewModel.ModifySelectedLinePriceCommand.Execute(null);
+
+        Assert.Empty(viewModel.KeypadBuffer);
+        Assert.Equal(3m, line.UnitPrice);
+        Assert.Equal(7.5m, viewModel.ActualAmount);
+        Assert.Same(line, viewModel.SelectedCartLine);
+    }
+
+    [Fact]
+    public void Pos_terminal_keypad_can_apply_selected_line_discount_amount_and_percent()
+    {
+        var cart = new PosCartService();
+        var index = new LocalSellableItemIndex();
+        index.ReplaceAll([CreateItem("SKU-130", "Discount Tea", "930130", PriceSourceKind.StoreRetailPrice, 10m)]);
+        var viewModel = new PosTerminalViewModel(
+            index,
+            cart,
+            Session,
+            onOpenPayment: null);
+
+        viewModel.ScanText = "930130";
+        viewModel.ScanCommand.Execute(null);
+        var line = Assert.Single(viewModel.CartLines);
+
+        viewModel.KeypadInputCommand.Execute("2");
+        viewModel.ApplySelectedLineDiscountAmountCommand.Execute(null);
+
+        Assert.Empty(viewModel.KeypadBuffer);
+        Assert.Equal(2m, line.DiscountAmount);
+        Assert.Equal(8m, viewModel.ActualAmount);
+
+        viewModel.KeypadInputCommand.Execute("8");
+        viewModel.KeypadInputCommand.Execute(".");
+        viewModel.KeypadInputCommand.Execute("5");
+        viewModel.ApplySelectedLineDiscountPercentCommand.Execute(null);
+
+        Assert.Empty(viewModel.KeypadBuffer);
+        Assert.Equal(0.85m, line.DiscountAmount);
+        Assert.Equal("-8.5%", line.DiscountRateText);
+        Assert.Equal(9.15m, viewModel.ActualAmount);
+        Assert.Same(line, viewModel.SelectedCartLine);
+    }
+
+    [Fact]
+    public void Pos_terminal_keypad_commands_ignore_missing_selection_or_invalid_input()
+    {
+        var cart = new PosCartService();
+        var index = new LocalSellableItemIndex();
+        index.ReplaceAll([CreateItem("SKU-131", "Guarded Tea", "930131", PriceSourceKind.StoreRetailPrice, 5m)]);
+        var viewModel = new PosTerminalViewModel(
+            index,
+            cart,
+            Session,
+            onOpenPayment: null);
+
+        viewModel.KeypadInputCommand.Execute("2");
+        viewModel.ModifySelectedLineQuantityCommand.Execute(null);
+
+        Assert.Equal("2", viewModel.KeypadBuffer);
+        Assert.Equal("pos.status.selectCartLine", viewModel.StatusMessage);
+
+        viewModel.ScanText = "930131";
+        viewModel.ScanCommand.Execute(null);
+        var line = Assert.Single(viewModel.CartLines);
+        viewModel.KeypadInputCommand.Execute("Clear");
+
+        viewModel.ApplySelectedLineDiscountAmountCommand.Execute(null);
+
+        Assert.Empty(viewModel.KeypadBuffer);
+        Assert.Equal(0m, line.DiscountAmount);
+        Assert.Equal(5m, viewModel.ActualAmount);
+        Assert.Equal("pos.status.invalidKeypadValue", viewModel.StatusMessage);
+    }
+
+    [Fact]
+    public void Pos_terminal_keypad_commands_show_friendly_messages_for_zero_quantity_and_invalid_discounts()
+    {
+        var cart = new PosCartService();
+        var index = new LocalSellableItemIndex();
+        index.ReplaceAll([CreateItem("SKU-134", "Friendly Tea", "930134", PriceSourceKind.StoreRetailPrice, 10m)]);
+        var viewModel = new PosTerminalViewModel(
+            index,
+            cart,
+            Session,
+            onOpenPayment: null);
+
+        viewModel.ScanText = "930134";
+        viewModel.ScanCommand.Execute(null);
+        var line = Assert.Single(viewModel.CartLines);
+
+        viewModel.KeypadInputCommand.Execute("0");
+        viewModel.ModifySelectedLineQuantityCommand.Execute(null);
+
+        Assert.Equal("0", viewModel.KeypadBuffer);
+        Assert.Equal(1m, line.Quantity);
+        Assert.Equal("pos.status.quantityMustBePositive", viewModel.StatusMessage);
+
+        viewModel.KeypadInputCommand.Execute("Clear");
+        viewModel.KeypadInputCommand.Execute("1");
+        viewModel.KeypadInputCommand.Execute("1");
+        viewModel.ApplySelectedLineDiscountAmountCommand.Execute(null);
+
+        Assert.Equal("11", viewModel.KeypadBuffer);
+        Assert.Equal(0m, line.DiscountAmount);
+        Assert.Equal("pos.status.discountAmountTooHigh", viewModel.StatusMessage);
+
+        viewModel.KeypadInputCommand.Execute("Clear");
+        viewModel.KeypadInputCommand.Execute("1");
+        viewModel.KeypadInputCommand.Execute("0");
+        viewModel.KeypadInputCommand.Execute("1");
+        viewModel.ApplySelectedLineDiscountPercentCommand.Execute(null);
+
+        Assert.Equal("101", viewModel.KeypadBuffer);
+        Assert.Equal(0m, line.DiscountAmount);
+        Assert.Equal("pos.status.discountPercentOutOfRange", viewModel.StatusMessage);
+    }
+
+    [Fact]
+    public void Pos_terminal_whole_order_discount_shows_friendly_messages_for_invalid_values()
+    {
+        var cart = new PosCartService();
+        var index = new LocalSellableItemIndex();
+        index.ReplaceAll([CreateItem("SKU-135", "Order Friendly Tea", "930135", PriceSourceKind.StoreRetailPrice, 10m)]);
+        var viewModel = new PosTerminalViewModel(
+            index,
+            cart,
+            Session,
+            onOpenPayment: null);
+
+        viewModel.ScanText = "930135";
+        viewModel.ScanCommand.Execute(null);
+
+        viewModel.IsWholeOrderOperation = true;
+        viewModel.KeypadInputCommand.Execute("1");
+        viewModel.KeypadInputCommand.Execute("1");
+        viewModel.ApplySelectedLineDiscountAmountCommand.Execute(null);
+
+        Assert.True(viewModel.IsWholeOrderOperation);
+        Assert.Equal("11", viewModel.KeypadBuffer);
+        Assert.Equal(0m, viewModel.DiscountAmount);
+        Assert.Equal("pos.status.discountAmountTooHigh", viewModel.StatusMessage);
+
+        viewModel.KeypadInputCommand.Execute("Clear");
+        viewModel.KeypadInputCommand.Execute("1");
+        viewModel.KeypadInputCommand.Execute("0");
+        viewModel.KeypadInputCommand.Execute("1");
+        viewModel.ApplySelectedLineDiscountPercentCommand.Execute(null);
+
+        Assert.True(viewModel.IsWholeOrderOperation);
+        Assert.Equal("101", viewModel.KeypadBuffer);
+        Assert.Equal(0m, viewModel.DiscountAmount);
+        Assert.Equal("pos.status.discountPercentOutOfRange", viewModel.StatusMessage);
+    }
+
+    [Fact]
+    public void Pos_terminal_whole_order_toggle_applies_one_time_order_discount()
+    {
+        var cart = new PosCartService();
+        var index = new LocalSellableItemIndex();
+        index.ReplaceAll(
+        [
+            CreateItem("SKU-132", "Small Tea", "930132", PriceSourceKind.StoreRetailPrice, 10m),
+            CreateItem("SKU-133", "Large Tea", "930133", PriceSourceKind.StoreRetailPrice, 30m)
+        ]);
+        var viewModel = new PosTerminalViewModel(
+            index,
+            cart,
+            Session,
+            onOpenPayment: null);
+
+        viewModel.ScanText = "930132";
+        viewModel.ScanCommand.Execute(null);
+        viewModel.ScanText = "930133";
+        viewModel.ScanCommand.Execute(null);
+
+        viewModel.IsWholeOrderOperation = true;
+        viewModel.KeypadInputCommand.Execute("1");
+        viewModel.KeypadInputCommand.Execute("0");
+        viewModel.ApplySelectedLineDiscountPercentCommand.Execute(null);
+
+        var first = Assert.Single(viewModel.CartLines, line => line.LookupCode == "930132");
+        var second = Assert.Single(viewModel.CartLines, line => line.LookupCode == "930133");
+        Assert.False(viewModel.IsWholeOrderOperation);
+        Assert.Empty(viewModel.KeypadBuffer);
+        Assert.Equal(1m, first.DiscountAmount);
+        Assert.Equal(3m, second.DiscountAmount);
+        Assert.Equal(4m, viewModel.DiscountAmount);
+        Assert.Equal(36m, viewModel.ActualAmount);
+        Assert.Equal("pos.status.orderDiscountUpdated", viewModel.StatusMessage);
+    }
+
+    [Fact]
+    public void Pos_terminal_quick_discount_applies_percent_to_selected_line()
+    {
+        var cart = new PosCartService();
+        var index = new LocalSellableItemIndex();
+        index.ReplaceAll([CreateItem("SKU-136", "Quick Discount Tea", "930136", PriceSourceKind.StoreRetailPrice, 10m)]);
+        var viewModel = new PosTerminalViewModel(
+            index,
+            cart,
+            Session,
+            onOpenPayment: null);
+
+        viewModel.ScanText = "930136";
+        viewModel.ScanCommand.Execute(null);
+        var line = Assert.Single(viewModel.CartLines);
+        viewModel.KeypadInputCommand.Execute("9");
+
+        viewModel.ApplyQuickDiscountPercentCommand.Execute("20");
+
+        Assert.Empty(viewModel.KeypadBuffer);
+        Assert.False(viewModel.IsWholeOrderOperation);
+        Assert.Equal(2m, line.DiscountAmount);
+        Assert.Equal(8m, viewModel.ActualAmount);
+        Assert.Equal("pos.status.lineDiscountUpdated", viewModel.StatusMessage);
+    }
+
+    [Fact]
+    public void Pos_terminal_quick_discount_applies_percent_to_whole_order_and_turns_mode_off()
+    {
+        var cart = new PosCartService();
+        var index = new LocalSellableItemIndex();
+        index.ReplaceAll(
+        [
+            CreateItem("SKU-137", "Quick Small Tea", "930137", PriceSourceKind.StoreRetailPrice, 10m),
+            CreateItem("SKU-138", "Quick Large Tea", "930138", PriceSourceKind.StoreRetailPrice, 30m)
+        ]);
+        var viewModel = new PosTerminalViewModel(
+            index,
+            cart,
+            Session,
+            onOpenPayment: null);
+
+        viewModel.ScanText = "930137";
+        viewModel.ScanCommand.Execute(null);
+        viewModel.ScanText = "930138";
+        viewModel.ScanCommand.Execute(null);
+        viewModel.IsWholeOrderOperation = true;
+        viewModel.KeypadInputCommand.Execute("9");
+
+        viewModel.ApplyQuickDiscountPercentCommand.Execute("50");
+
+        var first = Assert.Single(viewModel.CartLines, line => line.LookupCode == "930137");
+        var second = Assert.Single(viewModel.CartLines, line => line.LookupCode == "930138");
+        Assert.False(viewModel.IsWholeOrderOperation);
+        Assert.Empty(viewModel.KeypadBuffer);
+        Assert.Equal(5m, first.DiscountAmount);
+        Assert.Equal(15m, second.DiscountAmount);
+        Assert.Equal(20m, viewModel.ActualAmount);
+        Assert.Equal("pos.status.orderDiscountUpdated", viewModel.StatusMessage);
+    }
+
+    [Fact]
+    public void Pos_terminal_quick_discount_requires_selection_or_cart()
+    {
+        var cart = new PosCartService();
+        var index = new LocalSellableItemIndex();
+        var viewModel = new PosTerminalViewModel(
+            index,
+            cart,
+            Session,
+            onOpenPayment: null);
+
+        viewModel.ApplyQuickDiscountPercentCommand.Execute("10");
+
+        Assert.Equal("pos.status.selectCartLine", viewModel.StatusMessage);
+
+        viewModel.IsWholeOrderOperation = true;
+        viewModel.ApplyQuickDiscountPercentCommand.Execute("10");
+
+        Assert.True(viewModel.IsWholeOrderOperation);
+        Assert.Equal("pos.status.selectCartLine", viewModel.StatusMessage);
+    }
+
+    [Fact]
     public void Pos_terminal_remove_line_command_removes_entire_cart_line_and_recalculates_total()
     {
         var cart = new PosCartService();

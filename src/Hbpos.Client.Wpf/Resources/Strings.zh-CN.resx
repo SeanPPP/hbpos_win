@@ -182,6 +182,8 @@
   <data name="customer.promotionTitle" xml:space="preserve"><value>本周特惠</value></data>
   <data name="customer.promotionSubtitle" xml:space="preserve"><value>有机生鲜最高 7 折</value></data>
   <data name="customer.promotionBody" xml:space="preserve"><value>本周末精选新鲜商品与会员专享优惠。</value></data>
+  <data name="customerDisplay.window.opened" xml:space="preserve"><value>&#x5BA2;&#x663E;&#x7A97;&#x53E3;&#x5DF2;&#x5728;&#x7B2C;&#x4E8C;&#x4E2A;&#x5C4F;&#x5E55;&#x6253;&#x5F00;&#x3002;</value></data>
+  <data name="customerDisplay.window.noSecondDisplay" xml:space="preserve"><value>&#x672A;&#x68C0;&#x6D4B;&#x5230;&#x7B2C;&#x4E8C;&#x4E2A;&#x5C4F;&#x5E55;&#xFF0C;&#x5BA2;&#x663E;&#x7A97;&#x53E3;&#x672A;&#x6253;&#x5F00;&#x3002;</value></data>
 
   <data name="shell.customerDisplayWindow" xml:space="preserve"><value>客显窗口</value></data>
   <data name="shell.window.minimize" xml:space="preserve"><value>最小化</value></data>
@@ -212,4 +214,13 @@
   <data name="shell.numpad" xml:space="preserve"><value>数字键盘</value></data>
   <data name="shell.member" xml:space="preserve"><value>会员</value></data>
   <data name="shell.memberDefault" xml:space="preserve"><value>金卡会员</value></data>
+  <data name="pos.status.selectCartLine" xml:space="preserve"><value>&#x8BF7;&#x5148;&#x9009;&#x62E9;&#x8D2D;&#x7269;&#x8F66;&#x5546;&#x54C1;&#x884C;&#x3002;</value></data>
+  <data name="pos.status.invalidKeypadValue" xml:space="preserve"><value>&#x8BF7;&#x8F93;&#x5165;&#x6709;&#x6548;&#x7684;&#x5C0F;&#x952E;&#x76D8;&#x6570;&#x503C;&#x3002;</value></data>
+  <data name="pos.status.quantityMustBePositive" xml:space="preserve"><value>&#x6570;&#x91CF;&#x5FC5;&#x987B;&#x5927;&#x4E8E; 0&#x3002;</value></data>
+  <data name="pos.status.discountAmountTooHigh" xml:space="preserve"><value>&#x6298;&#x6263;&#x91D1;&#x989D;&#x4E0D;&#x80FD;&#x8D85;&#x8FC7;&#x5F53;&#x524D;&#x5408;&#x8BA1;&#x3002;</value></data>
+  <data name="pos.status.discountPercentOutOfRange" xml:space="preserve"><value>&#x6298;&#x6263;&#x767E;&#x5206;&#x6BD4;&#x5FC5;&#x987B;&#x5728; 0 &#x5230; 100 &#x4E4B;&#x95F4;&#x3002;</value></data>
+  <data name="pos.status.lineQuantityUpdated" xml:space="preserve"><value>&#x6570;&#x91CF;&#x5DF2;&#x66F4;&#x65B0;&#x3002;</value></data>
+  <data name="pos.status.linePriceUpdated" xml:space="preserve"><value>&#x4EF7;&#x683C;&#x5DF2;&#x66F4;&#x65B0;&#x3002;</value></data>
+  <data name="pos.status.lineDiscountUpdated" xml:space="preserve"><value>&#x5546;&#x54C1;&#x884C;&#x6298;&#x6263;&#x5DF2;&#x66F4;&#x65B0;&#x3002;</value></data>
+  <data name="pos.status.orderDiscountUpdated" xml:space="preserve"><value>&#x6574;&#x5355;&#x6298;&#x6263;&#x5DF2;&#x5E94;&#x7528;&#x3002;</value></data>
 </root>

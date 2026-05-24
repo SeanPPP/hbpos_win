@@ -388,6 +388,8 @@
         <Setter Property="Background" Value="#FFE7E8EB" />
         <Setter Property="BorderBrush" Value="#FFE7E8EB" />
         <Setter Property="FontSize" Value="10" />
+        <Setter Property="HorizontalContentAlignment" Value="Stretch" />
+        <Setter Property="VerticalContentAlignment" Value="Center" />
     </Style>
 
     <Style x:Key="PosStitchDiscountButtonStyle" TargetType="Button" BasedOn="{StaticResource PosStitchFunctionButtonStyle}">
@@ -542,7 +544,10 @@
     <Style x:Key="PosMainSwitchButtonStyle" TargetType="ToggleButton">
         <Setter Property="MinHeight" Value="42" />
         <Setter Property="Margin" Value="2" />
-        <Setter Property="Padding" Value="6,0" />
+        <Setter Property="Padding" Value="8,4" />
+        <Setter Property="Background" Value="#FFF8FAFD" />
+        <Setter Property="BorderBrush" Value="#FFD4D8E2" />
+        <Setter Property="Foreground" Value="{StaticResource PosTextBrush}" />
         <Setter Property="FontFamily" Value="{StaticResource PosFontFamily}" />
         <Setter Property="FontSize" Value="12" />
         <Setter Property="FontWeight" Value="Black" />
@@ -551,8 +556,8 @@
             <Setter.Value>
                 <ControlTemplate TargetType="{x:Type ToggleButton}">
                     <Border x:Name="Root"
-                            Background="#FFE8F0FE"
-                            BorderBrush="#FFD4E2FF"
+                            Background="{TemplateBinding Background}"
+                            BorderBrush="{TemplateBinding BorderBrush}"
                             BorderThickness="1"
                             CornerRadius="12"
                             RenderTransformOrigin="0.5,0.5"
@@ -560,37 +565,16 @@
                         <Border.RenderTransform>
                             <ScaleTransform x:Name="RootScale" ScaleX="1" ScaleY="1" />
                         </Border.RenderTransform>
-                        <Grid Margin="{TemplateBinding Padding}">
-                            <Grid.ColumnDefinitions>
-                                <ColumnDefinition Width="*" />
-                                <ColumnDefinition Width="36" />
-                            </Grid.ColumnDefinitions>
-                            <TextBlock VerticalAlignment="Center"
-                                       HorizontalAlignment="Center"
-                                       Margin="0,0,4,0"
-                                       FontSize="{TemplateBinding FontSize}"
-                                       FontWeight="{TemplateBinding FontWeight}"
-                                       Foreground="{TemplateBinding Foreground}"
-                                       Text="{TemplateBinding Content}"
-                                       TextAlignment="Center"
-                                       TextTrimming="CharacterEllipsis"
-                                       TextWrapping="Wrap" />
-                            <Border x:Name="SwitchTrack"
-                                    Grid.Column="1"
-                                    Width="32"
-                                    Height="18"
-                                    Background="#FFC3C6D6"
-                                    CornerRadius="9"
-                                    VerticalAlignment="Center">
-                                <Border x:Name="SwitchThumb"
-                                        Width="14"
-                                        Height="14"
-                                        Margin="2"
-                                        Background="White"
-                                        CornerRadius="7"
-                                        HorizontalAlignment="Left" />
-                            </Border>
-                        </Grid>
+                        <TextBlock Margin="{TemplateBinding Padding}"
+                                   VerticalAlignment="Center"
+                                   HorizontalAlignment="Center"
+                                   FontSize="{TemplateBinding FontSize}"
+                                   FontWeight="{TemplateBinding FontWeight}"
+                                   Foreground="{TemplateBinding Foreground}"
+                                   Text="{TemplateBinding Content}"
+                                   TextAlignment="Center"
+                                   TextTrimming="CharacterEllipsis"
+                                   TextWrapping="Wrap" />
                     </Border>
                     <ControlTemplate.Triggers>
                         <Trigger Property="IsMouseOver" Value="True">
@@ -613,14 +597,65 @@
                             <Setter TargetName="Root" Property="BorderBrush" Value="{StaticResource PosPrimaryBrush}" />
                         </Trigger>
                         <Trigger Property="IsPressed" Value="True">
-                            <Setter TargetName="Root" Property="Background" Value="#FFDCEAFF" />
+                            <Setter TargetName="Root" Property="Background" Value="#FFE8F0FE" />
                         </Trigger>
                         <Trigger Property="IsChecked" Value="True">
-                            <Setter TargetName="Root" Property="Background" Value="{StaticResource PosPrimaryBrush}" />
-                            <Setter TargetName="Root" Property="BorderBrush" Value="{StaticResource PosPrimaryBrush}" />
+                            <Setter TargetName="Root" Property="Background" Value="#FF0F766E" />
+                            <Setter TargetName="Root" Property="BorderBrush" Value="#FF0F766E" />
                             <Setter Property="Foreground" Value="White" />
-                            <Setter TargetName="SwitchTrack" Property="Background" Value="#80FFFFFF" />
-                            <Setter TargetName="SwitchThumb" Property="HorizontalAlignment" Value="Right" />
+                        </Trigger>
+                    </ControlTemplate.Triggers>
+                </ControlTemplate>
+            </Setter.Value>
+        </Setter>
+    </Style>
+
+    <Style x:Key="PosQuickDiscountButtonStyle" TargetType="Button">
+        <Setter Property="Height" Value="38" />
+        <Setter Property="Margin" Value="3" />
+        <Setter Property="Padding" Value="6,2" />
+        <Setter Property="BorderThickness" Value="1" />
+        <Setter Property="FontFamily" Value="{StaticResource PosFontFamily}" />
+        <Setter Property="FontSize" Value="13" />
+        <Setter Property="FontWeight" Value="Black" />
+        <Setter Property="Cursor" Value="Hand" />
+        <Setter Property="Template">
+            <Setter.Value>
+                <ControlTemplate TargetType="{x:Type Button}">
+                    <Border x:Name="Root"
+                            Background="{TemplateBinding Background}"
+                            BorderBrush="{TemplateBinding BorderBrush}"
+                            BorderThickness="{TemplateBinding BorderThickness}"
+                            CornerRadius="11"
+                            RenderTransformOrigin="0.5,0.5"
+                            SnapsToDevicePixels="True">
+                        <Border.RenderTransform>
+                            <ScaleTransform x:Name="RootScale" ScaleX="1" ScaleY="1" />
+                        </Border.RenderTransform>
+                        <TextBlock Margin="{TemplateBinding Padding}"
+                                   HorizontalAlignment="Center"
+                                   VerticalAlignment="Center"
+                                   FontSize="{TemplateBinding FontSize}"
+                                   FontWeight="{TemplateBinding FontWeight}"
+                                   Foreground="{TemplateBinding Foreground}"
+                                   Text="{TemplateBinding Content}"
+                                   TextAlignment="Center"
+                                   TextWrapping="NoWrap" />
+                    </Border>
+                    <ControlTemplate.Triggers>
+                        <Trigger Property="IsMouseOver" Value="True">
+                            <Setter TargetName="Root" Property="Opacity" Value="0.9" />
+                        </Trigger>
+                        <Trigger Property="IsPressed" Value="True">
+                            <Setter TargetName="Root" Property="RenderTransform">
+                                <Setter.Value>
+                                    <ScaleTransform ScaleX="0.95" ScaleY="0.95" />
+                                </Setter.Value>
+                            </Setter>
+                            <Setter TargetName="Root" Property="Opacity" Value="0.82" />
+                        </Trigger>
+                        <Trigger Property="IsEnabled" Value="False">
+                            <Setter TargetName="Root" Property="Opacity" Value="0.55" />
                         </Trigger>
                     </ControlTemplate.Triggers>
                 </ControlTemplate>

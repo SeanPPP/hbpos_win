@@ -128,6 +128,79 @@ public sealed class PosCartService
         return true;
     }
 
+    public bool SetLineQuantity(CartLine? line, decimal quantity)
+    {
+        if (line is null || !_lines.Contains(line) || quantity <= 0m)
+        {
+            return false;
+        }
+
+        line.SetQuantity(quantity);
+        OnCartChanged();
+        return true;
+    }
+
+    public bool SetLineUnitPrice(CartLine? line, decimal unitPrice)
+    {
+        if (line is null || !_lines.Contains(line) || unitPrice < 0m)
+        {
+            return false;
+        }
+
+        line.SetUnitPrice(unitPrice);
+        OnCartChanged();
+        return true;
+    }
+
+    public bool SetLineDiscountAmount(CartLine? line, decimal discountAmount)
+    {
+        if (line is null || !_lines.Contains(line) || discountAmount < 0m || discountAmount > line.GrossAmount)
+        {
+            return false;
+        }
+
+        line.SetDiscountAmount(discountAmount);
+        OnCartChanged();
+        return true;
+    }
+
+    public bool SetLineDiscountPercent(CartLine? line, decimal discountPercent)
+    {
+        if (line is null || !_lines.Contains(line) || discountPercent < 0m || discountPercent > 100m)
+        {
+            return false;
+        }
+
+        line.SetDiscountPercent(discountPercent);
+        OnCartChanged();
+        return true;
+    }
+
+    public bool SetOrderDiscountAmount(decimal discountAmount)
+    {
+        if (_lines.Count == 0 || discountAmount < 0m || discountAmount > TotalAmount)
+        {
+            return false;
+        }
+
+        ApplyOrderDiscountAmount(discountAmount);
+        OnCartChanged();
+        return true;
+    }
+
+    public bool SetOrderDiscountPercent(decimal discountPercent)
+    {
+        if (_lines.Count == 0 || discountPercent < 0m || discountPercent > 100m)
+        {
+            return false;
+        }
+
+        var discountAmount = decimal.Round(TotalAmount * discountPercent / 100m, 2, MidpointRounding.AwayFromZero);
+        ApplyOrderDiscountAmount(discountAmount);
+        OnCartChanged();
+        return true;
+    }
+
     public void Clear()
     {
         if (_lines.Count == 0)
@@ -142,5 +215,32 @@ public sealed class PosCartService
     private void OnCartChanged()
     {
         CartChanged?.Invoke(this, EventArgs.Empty);
+    }
+
+    private void ApplyOrderDiscountAmount(decimal discountAmount)
+    {
+        var totalGrossAmount = TotalAmount;
+        var remainingDiscount = Math.Clamp(
+            decimal.Round(discountAmount, 2, MidpointRounding.AwayFromZero),
+            0m,
+            totalGrossAmount);
+        var discountableLines = _lines.Where(line => line.GrossAmount > 0m).ToList();
+
+        if (discountableLines.Count == 0)
+        {
+            return;
+        }
+
+        for (var i = 0; i < discountableLines.Count; i++)
+        {
+            var line = discountableLines[i];
+            var lineDiscount = i == discountableLines.Count - 1
+                ? remainingDiscount
+                : decimal.Round(discountAmount * line.GrossAmount / totalGrossAmount, 2, MidpointRounding.AwayFromZero);
+
+            lineDiscount = Math.Clamp(lineDiscount, 0m, Math.Min(line.GrossAmount, remainingDiscount));
+            line.SetDiscountAmount(lineDiscount);
+            remainingDiscount -= lineDiscount;
+        }
     }
 }

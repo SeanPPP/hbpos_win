@@ -16,6 +16,7 @@ public sealed class CartLine : ObservableObject
     private decimal _quantity;
     private decimal _unitPrice;
     private decimal _discountAmount;
+    private decimal? _discountPercent;
     private PriceSourceKind _priceSource;
     private string _priceSourceLabel = string.Empty;
 
@@ -80,6 +81,7 @@ public sealed class CartLine : ObservableObject
         {
             if (SetProperty(ref _quantity, value))
             {
+                RefreshDiscountForGrossChange();
                 OnAmountPropertiesChanged();
             }
         }
@@ -92,6 +94,7 @@ public sealed class CartLine : ObservableObject
         {
             if (SetProperty(ref _unitPrice, value))
             {
+                RefreshDiscountForGrossChange();
                 OnAmountPropertiesChanged();
             }
         }
@@ -125,7 +128,7 @@ public sealed class CartLine : ObservableObject
             }
 
             var rate = DiscountAmount / GrossAmount;
-            return $"-{rate:P0}";
+            return $"-{rate * 100m:0.##}%";
         }
     }
 
@@ -158,6 +161,28 @@ public sealed class CartLine : ObservableObject
         return true;
     }
 
+    public void SetQuantity(decimal quantity)
+    {
+        Quantity = quantity;
+    }
+
+    public void SetUnitPrice(decimal unitPrice)
+    {
+        UnitPrice = unitPrice;
+    }
+
+    public void SetDiscountAmount(decimal discountAmount)
+    {
+        _discountPercent = null;
+        DiscountAmount = ClampDiscountAmount(discountAmount);
+    }
+
+    public void SetDiscountPercent(decimal discountPercent)
+    {
+        _discountPercent = Math.Clamp(discountPercent, 0m, 100m);
+        DiscountAmount = CalculateDiscountAmount(_discountPercent.Value);
+    }
+
     public void UpdateFrom(SellableItemDto item)
     {
         StoreCode = item.StoreCode;
@@ -184,5 +209,22 @@ public sealed class CartLine : ObservableObject
         OnPropertyChanged(nameof(ActualAmount));
         OnPropertyChanged(nameof(HasDiscount));
         OnPropertyChanged(nameof(DiscountRateText));
+    }
+
+    private void RefreshDiscountForGrossChange()
+    {
+        DiscountAmount = _discountPercent is decimal discountPercent
+            ? CalculateDiscountAmount(discountPercent)
+            : ClampDiscountAmount(DiscountAmount);
+    }
+
+    private decimal CalculateDiscountAmount(decimal discountPercent)
+    {
+        return ClampDiscountAmount(decimal.Round(GrossAmount * discountPercent / 100m, 2, MidpointRounding.AwayFromZero));
+    }
+
+    private decimal ClampDiscountAmount(decimal discountAmount)
+    {
+        return Math.Clamp(decimal.Round(discountAmount, 2, MidpointRounding.AwayFromZero), 0m, GrossAmount);
     }
 }

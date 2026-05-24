@@ -133,6 +133,15 @@
   <data name="pos.status.multipleMatches" xml:space="preserve"><value>Found {0} items. Select one to add.</value></data>
   <data name="pos.status.added" xml:space="preserve"><value>Added {0}</value></data>
   <data name="pos.status.cartCleared" xml:space="preserve"><value>Cart cleared.</value></data>
+  <data name="pos.status.selectCartLine" xml:space="preserve"><value>Select a cart line first.</value></data>
+  <data name="pos.status.invalidKeypadValue" xml:space="preserve"><value>Enter a valid keypad value.</value></data>
+  <data name="pos.status.quantityMustBePositive" xml:space="preserve"><value>Quantity must be greater than 0.</value></data>
+  <data name="pos.status.discountAmountTooHigh" xml:space="preserve"><value>Discount amount cannot exceed the current total.</value></data>
+  <data name="pos.status.discountPercentOutOfRange" xml:space="preserve"><value>Discount percent must be between 0 and 100.</value></data>
+  <data name="pos.status.lineQuantityUpdated" xml:space="preserve"><value>Quantity updated.</value></data>
+  <data name="pos.status.linePriceUpdated" xml:space="preserve"><value>Price updated.</value></data>
+  <data name="pos.status.lineDiscountUpdated" xml:space="preserve"><value>Line discount updated.</value></data>
+  <data name="pos.status.orderDiscountUpdated" xml:space="preserve"><value>Order discount applied.</value></data>
 
   <data name="payment.cash.title" xml:space="preserve"><value>Cash Payment</value></data>
   <data name="payment.cash.orderSummary" xml:space="preserve"><value>Current order</value></data>
@@ -179,6 +188,8 @@
   <data name="customer.promotionTitle" xml:space="preserve"><value>Deal of the Week</value></data>
   <data name="customer.promotionSubtitle" xml:space="preserve"><value>Organic Produce Up to 30% Off</value></data>
   <data name="customer.promotionBody" xml:space="preserve"><value>Fresh market selection this weekend and member-only savings.</value></data>
+  <data name="customerDisplay.window.opened" xml:space="preserve"><value>Customer display opened on the second display.</value></data>
+  <data name="customerDisplay.window.noSecondDisplay" xml:space="preserve"><value>No second display detected. Customer display was not opened.</value></data>
   <data name="shell.customerDisplayWindow" xml:space="preserve"><value>Customer display window</value></data>
   <data name="shell.window.minimize" xml:space="preserve"><value>Minimize</value></data>
   <data name="shell.window.maximize" xml:space="preserve"><value>Maximize</value></data>

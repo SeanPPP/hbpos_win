@@ -14,6 +14,7 @@ public partial class MainWindow : Window
     private readonly MainViewModel _viewModel;
     private readonly AppStartupOptions _startupOptions;
     private readonly IRawScannerService _rawScannerService;
+    private readonly IDisplayTopologyService _displayTopologyService;
     private HwndSource? _hwndSource;
     private Task? _startupInitializationTask;
     private readonly KeyboardScannerFallbackBuffer _keyboardScannerFallback = new();
@@ -24,11 +25,13 @@ public partial class MainWindow : Window
     public MainWindow(
         MainViewModel viewModel,
         AppStartupOptions startupOptions,
-        IRawScannerService rawScannerService)
+        IRawScannerService rawScannerService,
+        IDisplayTopologyService displayTopologyService)
     {
         _viewModel = viewModel;
         _startupOptions = startupOptions;
         _rawScannerService = rawScannerService;
+        _displayTopologyService = displayTopologyService;
         DataContext = _viewModel;
         InitializeComponent();
         SourceInitialized += MainWindowSourceInitialized;
@@ -75,7 +78,7 @@ public partial class MainWindow : Window
         {
             await Dispatcher.InvokeAsync(static () => { }, DispatcherPriority.ContextIdle);
             await Task.Delay(300);
-            await _viewModel.ContinueStartupAfterShownAsync(_startupOptions);
+            await _viewModel.ContinueStartupAfterShownAsync(_startupOptions, this);
         }
         catch (Exception ex)
         {
@@ -85,6 +88,7 @@ public partial class MainWindow : Window
 
     private void MainWindowSourceInitialized(object? sender, EventArgs e)
     {
+        _displayTopologyService.AttachWorkAreaConstraint(this);
         _hwndSource = (HwndSource?)PresentationSource.FromVisual(this);
         _hwndSource?.AddHook(_rawScannerService.ProcessWindowMessage);
     }

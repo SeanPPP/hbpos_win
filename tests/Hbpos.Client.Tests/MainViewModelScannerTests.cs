@@ -148,6 +148,79 @@ public sealed class MainViewModelScannerTests
         Assert.Contains("catalog load failed", viewModel.StatusMessage, StringComparison.Ordinal);
     }
 
+    [Fact]
+    public async Task ContinueStartupAfterShownAsync_WithSecondDisplay_OpensCustomerDisplayWindow()
+    {
+        var customerDisplayWindow = new FakeCustomerDisplayWindowService
+        {
+            OpenResult = new CustomerDisplayWindowResult(true, CustomerDisplayWindowService.OpenedStatusKey)
+        };
+        var viewModel = CreateAuthorizedMainViewModel(customerDisplayWindow);
+        var startupOptions = new AppStartupOptions([], false, null, null);
+
+        await viewModel.InitializeAsync(startupOptions);
+        await viewModel.ContinueStartupAfterShownAsync(startupOptions);
+
+        Assert.Equal(1, customerDisplayWindow.OpenCallCount);
+        Assert.True(viewModel.IsCustomerDisplayOpen);
+        Assert.Equal("Customer display opened on the second display.", viewModel.StatusMessage);
+    }
+
+    [Fact]
+    public async Task ContinueStartupAfterShownAsync_WithSingleDisplay_ShowsHelpfulStatus()
+    {
+        var customerDisplayWindow = new FakeCustomerDisplayWindowService
+        {
+            OpenResult = new CustomerDisplayWindowResult(false, CustomerDisplayWindowService.NoSecondDisplayStatusKey)
+        };
+        var viewModel = CreateAuthorizedMainViewModel(customerDisplayWindow);
+        var startupOptions = new AppStartupOptions([], false, null, null);
+
+        await viewModel.InitializeAsync(startupOptions);
+        await viewModel.ContinueStartupAfterShownAsync(startupOptions);
+
+        Assert.Equal(1, customerDisplayWindow.OpenCallCount);
+        Assert.False(viewModel.IsCustomerDisplayOpen);
+        Assert.Equal("No second display detected. Customer display was not opened.", viewModel.StatusMessage);
+    }
+
+    [Fact]
+    public async Task ToggleCustomerDisplayWindow_WithSingleDisplay_ShowsHelpfulStatus()
+    {
+        var customerDisplayWindow = new FakeCustomerDisplayWindowService
+        {
+            ToggleResult = new CustomerDisplayWindowResult(false, CustomerDisplayWindowService.NoSecondDisplayStatusKey)
+        };
+        var viewModel = CreateAuthorizedMainViewModel(customerDisplayWindow);
+
+        await viewModel.InitializeAsync(new AppStartupOptions([], false, null, null));
+        viewModel.ToggleCustomerDisplayWindow(null);
+
+        Assert.Equal(1, customerDisplayWindow.ToggleCallCount);
+        Assert.False(viewModel.IsCustomerDisplayOpen);
+        Assert.Equal("No second display detected. Customer display was not opened.", viewModel.StatusMessage);
+    }
+
+    [Fact]
+    public async Task CustomerDisplayWindowClosed_UpdatesOpenState()
+    {
+        var customerDisplayWindow = new FakeCustomerDisplayWindowService
+        {
+            OpenResult = new CustomerDisplayWindowResult(true, CustomerDisplayWindowService.OpenedStatusKey)
+        };
+        var viewModel = CreateAuthorizedMainViewModel(customerDisplayWindow);
+        var startupOptions = new AppStartupOptions([], false, null, null);
+
+        await viewModel.InitializeAsync(startupOptions);
+        await viewModel.ContinueStartupAfterShownAsync(startupOptions);
+
+        Assert.True(viewModel.IsCustomerDisplayOpen);
+
+        customerDisplayWindow.RaiseClosed();
+
+        Assert.False(viewModel.IsCustomerDisplayOpen);
+    }
+
     private static LocalDeviceCache CreateAllowedDevice(string storeCode)
     {
         return new LocalDeviceCache(
@@ -178,6 +251,29 @@ public sealed class MainViewModelScannerTests
             1m,
             DateTimeOffset.UtcNow,
             null);
+    }
+
+    private static MainViewModel CreateAuthorizedMainViewModel(FakeCustomerDisplayWindowService customerDisplayWindow)
+    {
+        return new MainViewModel(
+            new LocalSellableItemIndex(),
+            new PosCartService(),
+            new CashCheckoutService(),
+            new FakeLocalSchemaService(),
+            new FakeSettingsRepository(),
+            new FakeCatalogRepository(),
+            new FakeCatalogSyncService(),
+            new FakeRemoteLookupRefreshService(),
+            new FakeConnectivityApiClient(),
+            new FakeLocalDeviceRepository { Latest = CreateAllowedDevice("1042") },
+            new FakeDeviceApiClient(),
+            new FakeDeviceFingerprintService(),
+            new DeviceAuthorizationState(),
+            new FakeLocalOrderRepository(),
+            new FakeSyncQueueRepository(),
+            new LocalizationService(),
+            customerDisplayWindow,
+            new FakeRawScannerService());
     }
 
     private sealed class FakeRawScannerService : IRawScannerService
@@ -418,12 +514,35 @@ public sealed class MainViewModelScannerTests
 
     private sealed class FakeCustomerDisplayWindowService : ICustomerDisplayWindowService
     {
-        public bool IsOpen => false;
+        public CustomerDisplayWindowResult OpenResult { get; init; } = new(false, null);
+
+        public CustomerDisplayWindowResult ToggleResult { get; init; } = new(false, null);
+
+        public bool IsOpen { get; private set; }
+
+        public int OpenCallCount { get; private set; }
+
+        public int ToggleCallCount { get; private set; }
 
         public event EventHandler? Closed;
 
-        public void Toggle(CustomerDisplayViewModel viewModel, Window owner)
+        public CustomerDisplayWindowResult Open(CustomerDisplayViewModel viewModel, Window? owner)
         {
+            OpenCallCount++;
+            IsOpen = OpenResult.IsOpen;
+            return OpenResult;
+        }
+
+        public CustomerDisplayWindowResult Toggle(CustomerDisplayViewModel viewModel, Window? owner)
+        {
+            ToggleCallCount++;
+            IsOpen = ToggleResult.IsOpen;
+            return ToggleResult;
+        }
+
+        public void RaiseClosed()
+        {
+            IsOpen = false;
             Closed?.Invoke(this, EventArgs.Empty);
         }
     }
