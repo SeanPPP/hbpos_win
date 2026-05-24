@@ -32,6 +32,11 @@ public interface ILocalCatalogRepository
         bool isSpecialProduct,
         CancellationToken cancellationToken = default);
 
+    Task<int> ClearSpecialProductFlagsExceptAsync(
+        string storeCode,
+        IEnumerable<string> productCodesToKeep,
+        CancellationToken cancellationToken = default);
+
     Task<IReadOnlyList<LocalSellableItemCompareRow>> LoadSellableItemComparePageAsync(
         string storeCode,
         string? afterLookupCodeNormalized,
@@ -39,6 +44,8 @@ public interface ILocalCatalogRepository
         CancellationToken cancellationToken = default);
 
     Task<IReadOnlyList<SellableItemDto>> LoadSellableItemsAsync(CancellationToken cancellationToken = default);
+
+    Task<IReadOnlyList<SellableItemDto>> LoadSellableItemsAsync(string storeCode, CancellationToken cancellationToken = default);
 }
 
 public sealed class LocalCatalogRepository(LocalSqliteStore store) : ILocalCatalogRepository
@@ -377,6 +384,65 @@ public sealed class LocalCatalogRepository(LocalSqliteStore store) : ILocalCatal
         return updated;
     }
 
+    public async Task<int> ClearSpecialProductFlagsExceptAsync(
+        string storeCode,
+        IEnumerable<string> productCodesToKeep,
+        CancellationToken cancellationToken = default)
+    {
+        var normalizedStoreCode = NormalizeStoreCode(storeCode);
+        if (string.IsNullOrEmpty(normalizedStoreCode))
+        {
+            return 0;
+        }
+
+        var normalizedProductCodes = productCodesToKeep
+            .Select(NormalizeProductCode)
+            .Where(code => !string.IsNullOrEmpty(code))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+
+        await using var connection = await store.OpenConnectionAsync(cancellationToken);
+        using var transaction = connection.BeginTransaction();
+
+        var exclusionClause = normalizedProductCodes.Length == 0
+            ? string.Empty
+            : $" AND ProductCode NOT IN ({string.Join(", ", normalizedProductCodes.Select((_, index) => $"$ProductCode{index}"))})";
+
+        await using var updateCommand = connection.CreateCommand();
+        updateCommand.Transaction = transaction;
+        updateCommand.CommandText = $"""
+            UPDATE LocalSellableItemIndex
+            SET IsSpecialProduct = 0
+            WHERE StoreCode = $StoreCode
+              AND IsSpecialProduct = 1
+              {exclusionClause};
+            """;
+        updateCommand.Parameters.AddWithValue("$StoreCode", normalizedStoreCode);
+        for (var index = 0; index < normalizedProductCodes.Length; index++)
+        {
+            updateCommand.Parameters.AddWithValue($"$ProductCode{index}", normalizedProductCodes[index]);
+        }
+
+        var updated = await updateCommand.ExecuteNonQueryAsync(cancellationToken);
+
+        await using var deleteSortCommand = connection.CreateCommand();
+        deleteSortCommand.Transaction = transaction;
+        deleteSortCommand.CommandText = $"""
+            DELETE FROM LocalSpecialProductSortOrder
+            WHERE StoreCode = $StoreCode
+              {exclusionClause};
+            """;
+        deleteSortCommand.Parameters.AddWithValue("$StoreCode", normalizedStoreCode);
+        for (var index = 0; index < normalizedProductCodes.Length; index++)
+        {
+            deleteSortCommand.Parameters.AddWithValue($"$ProductCode{index}", normalizedProductCodes[index]);
+        }
+
+        await deleteSortCommand.ExecuteNonQueryAsync(cancellationToken);
+        await transaction.CommitAsync(cancellationToken);
+        return updated;
+    }
+
     public async Task<IReadOnlyList<LocalSellableItemCompareRow>> LoadSellableItemComparePageAsync(
         string storeCode,
         string? afterLookupCodeNormalized,
@@ -429,6 +495,33 @@ public sealed class LocalCatalogRepository(LocalSqliteStore store) : ILocalCatal
             {SelectSellableItemSql}
             ORDER BY StoreCode, LookupCodeNormalized;
             """;
+
+        var items = new List<SellableItemDto>();
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+        while (await reader.ReadAsync(cancellationToken))
+        {
+            items.Add(ReadSellableItem(reader));
+        }
+
+        return items;
+    }
+
+    public async Task<IReadOnlyList<SellableItemDto>> LoadSellableItemsAsync(string storeCode, CancellationToken cancellationToken = default)
+    {
+        var normalizedStoreCode = NormalizeStoreCode(storeCode);
+        if (string.IsNullOrWhiteSpace(normalizedStoreCode))
+        {
+            return [];
+        }
+
+        await using var connection = await store.OpenConnectionAsync(cancellationToken);
+        await using var command = connection.CreateCommand();
+        command.CommandText = $"""
+            {SelectSellableItemSql}
+            WHERE StoreCode = $StoreCode
+            ORDER BY LookupCodeNormalized;
+            """;
+        command.Parameters.AddWithValue("$StoreCode", normalizedStoreCode);
 
         var items = new List<SellableItemDto>();
         await using var reader = await command.ExecuteReaderAsync(cancellationToken);

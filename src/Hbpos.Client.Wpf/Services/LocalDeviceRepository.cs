@@ -11,6 +11,8 @@ public interface ILocalDeviceRepository
     Task SaveAsync(DeviceRegisterResponse response, string hardwareId, CancellationToken cancellationToken = default);
 
     Task SaveAsync(DeviceVerifyResponse response, string hardwareId, CancellationToken cancellationToken = default);
+
+    Task SaveAsync(DeviceReregisterResponse response, string hardwareId, CancellationToken cancellationToken = default);
 }
 
 public sealed class LocalDeviceRepository(
@@ -61,6 +63,20 @@ public sealed class LocalDeviceRepository(
     }
 
     public Task SaveAsync(DeviceVerifyResponse response, string hardwareId, CancellationToken cancellationToken = default)
+    {
+        return SaveAsync(
+            response.DeviceCode,
+            response.StoreCode,
+            response.StoreName,
+            hardwareId,
+            response.DeviceStatus,
+            response.IsAllowed,
+            response.Message,
+            response.AuthorizationCode,
+            cancellationToken);
+    }
+
+    public Task SaveAsync(DeviceReregisterResponse response, string hardwareId, CancellationToken cancellationToken = default)
     {
         return SaveAsync(
             response.DeviceCode,

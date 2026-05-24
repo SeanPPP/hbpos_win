@@ -206,35 +206,35 @@ public sealed class MainViewModelScannerTests
         viewModel.ToggleCustomerDisplayWindow(null);
 
         Assert.Equal(1, customerDisplayWindow.SetModeCallCount);
-        Assert.Equal(CustomerDisplayWindowMode.Fullscreen, customerDisplayWindow.LastSetMode);
+        Assert.Equal(CustomerDisplayWindowMode.Normal, customerDisplayWindow.LastSetMode);
         Assert.Equal(CustomerDisplayWindowMode.Closed, viewModel.CustomerDisplayWindowMode);
         Assert.False(viewModel.IsCustomerDisplayOpen);
         Assert.Equal("No second display detected. Customer display was not opened.", viewModel.StatusMessage);
     }
 
     [Fact]
-    public async Task CustomerDisplayModeCommands_UpdateModeAndStatus()
+    public async Task ToggleCustomerDisplayWindow_CyclesClosedNormalFullscreenClosed()
     {
         var customerDisplayWindow = new FakeCustomerDisplayWindowService();
         var viewModel = CreateAuthorizedMainViewModel(customerDisplayWindow);
 
         await viewModel.InitializeAsync(new AppStartupOptions([], false, null, null));
 
-        viewModel.ShowCustomerDisplayNormalCommand.Execute(null);
+        viewModel.ToggleCustomerDisplayWindow(null);
 
         Assert.Equal(CustomerDisplayWindowMode.Normal, customerDisplayWindow.LastSetMode);
         Assert.Equal(CustomerDisplayWindowMode.Normal, viewModel.CustomerDisplayWindowMode);
         Assert.True(viewModel.IsCustomerDisplayOpen);
         Assert.Equal("Customer display opened in a normal window on the second display.", viewModel.StatusMessage);
 
-        viewModel.ShowCustomerDisplayFullscreenCommand.Execute(null);
+        viewModel.ToggleCustomerDisplayWindow(null);
 
         Assert.Equal(CustomerDisplayWindowMode.Fullscreen, customerDisplayWindow.LastSetMode);
         Assert.Equal(CustomerDisplayWindowMode.Fullscreen, viewModel.CustomerDisplayWindowMode);
         Assert.True(viewModel.IsCustomerDisplayOpen);
         Assert.Equal("Customer display opened full screen on the second display.", viewModel.StatusMessage);
 
-        viewModel.CloseCustomerDisplayWindowCommand.Execute(null);
+        viewModel.ToggleCustomerDisplayWindow(null);
 
         Assert.Equal(CustomerDisplayWindowMode.Closed, customerDisplayWindow.LastSetMode);
         Assert.Equal(CustomerDisplayWindowMode.Closed, viewModel.CustomerDisplayWindowMode);
@@ -259,6 +259,83 @@ public sealed class MainViewModelScannerTests
 
         Assert.False(viewModel.IsCustomerDisplayOpen);
         Assert.Equal(CustomerDisplayWindowMode.Closed, viewModel.CustomerDisplayWindowMode);
+    }
+
+    [Fact]
+    public async Task ReregisterDevice_WithPendingSync_StaysOnPosAndShowsStatus()
+    {
+        var viewModel = new MainViewModel(
+            new LocalSellableItemIndex(),
+            new PosCartService(),
+            new CashCheckoutService(),
+            new FakeLocalSchemaService(),
+            new FakeSettingsRepository(),
+            new FakeCatalogRepository(),
+            new FakeCatalogSyncService(),
+            new FakeRemoteLookupRefreshService(),
+            new FakeSpecialProductService(),
+            new FakeConnectivityApiClient(),
+            new FakeLocalDeviceRepository { Latest = CreateAllowedDevice("1042") },
+            new FakeDeviceApiClient(),
+            new FakeDeviceFingerprintService(),
+            new DeviceAuthorizationState(),
+            new FakeLocalOrderRepository(),
+            new FakeSyncQueueRepository { Overview = new SyncQueueOverview(1, 0, 0, null) },
+            new LocalizationService(),
+            new FakeCustomerDisplayWindowService(),
+            new FakeRawScannerService());
+
+        await viewModel.InitializeAsync(new AppStartupOptions([], false, null, null));
+        await viewModel.PosTerminal!.ReregisterDeviceCommand.ExecuteAsync(null);
+
+        Assert.Same(viewModel.PosTerminal, viewModel.CurrentScreen);
+        Assert.Contains("待同步", viewModel.StatusMessage, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task ReregisterDevice_SubmitSuccess_ClearsAuthorizationAndShowsRegistration()
+    {
+        var authorizationState = new DeviceAuthorizationState();
+        var deviceApi = new FakeDeviceApiClient
+        {
+            Stores =
+            [
+                new StoreSelectionItem("1042", "Old Store", true),
+                new StoreSelectionItem("2042", "New Store", true)
+            ],
+            ReregisterResponse = new DeviceReregisterResponse("POS-NEW", "2042", "New Store", -1, false, "Pending approval")
+        };
+        var viewModel = new MainViewModel(
+            new LocalSellableItemIndex(),
+            new PosCartService(),
+            new CashCheckoutService(),
+            new FakeLocalSchemaService(),
+            new FakeSettingsRepository(),
+            new FakeCatalogRepository(),
+            new FakeCatalogSyncService(),
+            new FakeRemoteLookupRefreshService(),
+            new FakeSpecialProductService(),
+            new FakeConnectivityApiClient(),
+            new FakeLocalDeviceRepository { Latest = CreateAllowedDevice("1042") },
+            deviceApi,
+            new FakeDeviceFingerprintService(),
+            authorizationState,
+            new FakeLocalOrderRepository(),
+            new FakeSyncQueueRepository(),
+            new LocalizationService(),
+            new FakeCustomerDisplayWindowService(),
+            new FakeRawScannerService());
+
+        await viewModel.InitializeAsync(new AppStartupOptions([], false, null, null));
+        Assert.NotNull(authorizationState.Current);
+
+        await viewModel.PosTerminal!.ReregisterDeviceCommand.ExecuteAsync(null);
+        await viewModel.DeviceRegistration!.RegisterCommand.ExecuteAsync(null);
+
+        Assert.Null(authorizationState.Current);
+        Assert.Same(viewModel.DeviceRegistration, viewModel.CurrentScreen);
+        Assert.Equal("POS-NEW", viewModel.DeviceRegistration.DeviceCode);
+        Assert.Equal("2042", deviceApi.LastReregisterRequest?.TargetStoreCode);
     }
 
     private static LocalDeviceCache CreateAllowedDevice(string storeCode)
@@ -444,6 +521,14 @@ public sealed class MainViewModelScannerTests
             return Task.FromResult(0);
         }
 
+        public Task<int> ClearSpecialProductFlagsExceptAsync(
+            string storeCode,
+            IEnumerable<string> productCodesToKeep,
+            CancellationToken cancellationToken = default)
+        {
+            return Task.FromResult(0);
+        }
+
         public Task<IReadOnlyList<LocalSellableItemCompareRow>> LoadSellableItemComparePageAsync(
             string storeCode,
             string? afterLookupCodeNormalized,
@@ -458,6 +543,14 @@ public sealed class MainViewModelScannerTests
             LoadSellableItemsCallCount++;
             return LoadSellableItemsException is null
                 ? Task.FromResult(Items)
+                : Task.FromException<IReadOnlyList<SellableItemDto>>(LoadSellableItemsException);
+        }
+
+        public Task<IReadOnlyList<SellableItemDto>> LoadSellableItemsAsync(string storeCode, CancellationToken cancellationToken = default)
+        {
+            LoadSellableItemsCallCount++;
+            return LoadSellableItemsException is null
+                ? Task.FromResult<IReadOnlyList<SellableItemDto>>(Items.Where(item => string.Equals(item.StoreCode, storeCode, StringComparison.OrdinalIgnoreCase)).ToArray())
                 : Task.FromException<IReadOnlyList<SellableItemDto>>(LoadSellableItemsException);
         }
     }
@@ -494,6 +587,14 @@ public sealed class MainViewModelScannerTests
         {
             return Task.FromResult<IReadOnlyList<SellableItemDto>>([]);
         }
+
+        public Task<SpecialProductDownloadResult> DownloadSpecialProductsAsync(
+            string storeCode,
+            CancellationToken cancellationToken = default,
+            IProgress<SpecialProductDownloadProgress>? progress = null)
+        {
+            return Task.FromResult(new SpecialProductDownloadResult(storeCode, 0, 0, 0, 0, 0));
+        }
     }
 
     private sealed class FakeConnectivityApiClient : IConnectivityApiClient
@@ -522,16 +623,27 @@ public sealed class MainViewModelScannerTests
         {
             return Task.CompletedTask;
         }
+
+        public Task SaveAsync(DeviceReregisterResponse response, string hardwareId, CancellationToken cancellationToken = default)
+        {
+            return Task.CompletedTask;
+        }
     }
 
     private sealed class FakeDeviceApiClient : IDeviceApiClient
     {
         public int GetStoresCallCount { get; private set; }
 
+        public IReadOnlyList<StoreSelectionItem> Stores { get; init; } = [];
+
+        public DeviceReregisterResponse? ReregisterResponse { get; init; }
+
+        public DeviceReregisterRequest? LastReregisterRequest { get; private set; }
+
         public Task<IReadOnlyList<StoreSelectionItem>> GetStoresAsync(CancellationToken cancellationToken = default)
         {
             GetStoresCallCount++;
-            return Task.FromResult<IReadOnlyList<StoreSelectionItem>>([]);
+            return Task.FromResult(Stores);
         }
 
         public Task<DeviceRegisterResponse> RegisterAsync(DeviceRegisterRequest request, CancellationToken cancellationToken = default)
@@ -542,6 +654,12 @@ public sealed class MainViewModelScannerTests
         public Task<DeviceVerifyResponse> VerifyAsync(DeviceVerifyRequest request, CancellationToken cancellationToken = default)
         {
             return Task.FromResult(new DeviceVerifyResponse(string.Empty, string.Empty, string.Empty, 0, false, null, null));
+        }
+
+        public Task<DeviceReregisterResponse> ReregisterAsync(DeviceReregisterRequest request, CancellationToken cancellationToken = default)
+        {
+            LastReregisterRequest = request;
+            return Task.FromResult(ReregisterResponse ?? new DeviceReregisterResponse("POS-NEW", request.TargetStoreCode, "New Store", -1, false, "Pending approval"));
         }
     }
 
@@ -573,14 +691,16 @@ public sealed class MainViewModelScannerTests
 
     private sealed class FakeSyncQueueRepository : ISyncQueueRepository
     {
+        public SyncQueueOverview Overview { get; init; } = new(0, 0, 0, null);
+
         public Task<int> CountPendingAsync(CancellationToken cancellationToken = default)
         {
-            return Task.FromResult(0);
+            return Task.FromResult(Overview.PendingCount);
         }
 
         public Task<SyncQueueOverview> GetOverviewAsync(CancellationToken cancellationToken = default)
         {
-            return Task.FromResult(new SyncQueueOverview(0, 0, 0, null));
+            return Task.FromResult(Overview);
         }
 
         public Task<IReadOnlyList<SyncQueueListItem>> GetActiveItemsAsync(int take = 20, CancellationToken cancellationToken = default)

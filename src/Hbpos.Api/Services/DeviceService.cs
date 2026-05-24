@@ -9,7 +9,17 @@ public interface IDeviceService
     Task<DeviceRegisterResponse> RegisterAsync(DeviceRegisterRequest request, CancellationToken cancellationToken);
 
     Task<DeviceVerifyResponse> VerifyAsync(DeviceVerifyRequest request, CancellationToken cancellationToken);
+
+    Task<DeviceReregisterResponse> ReregisterAsync(
+        DeviceReregisterRequest request,
+        DeviceReregisterContext currentDevice,
+        CancellationToken cancellationToken);
 }
+
+public sealed record DeviceReregisterContext(
+    string DeviceCode,
+    string StoreCode,
+    string HardwareId);
 
 public sealed class DeviceService(HbposSqlSugarContext dbContext) : IDeviceService
 {
@@ -141,6 +151,113 @@ public sealed class DeviceService(HbposSqlSugarContext dbContext) : IDeviceServi
             device.DeviceStatus == EnabledStatus ? device.AuthorizationCode : null);
     }
 
+    public async Task<DeviceReregisterResponse> ReregisterAsync(
+        DeviceReregisterRequest request,
+        DeviceReregisterContext currentDevice,
+        CancellationToken cancellationToken)
+    {
+        var targetStoreCode = Normalize(request.TargetStoreCode);
+        var hardwareId = Normalize(request.HardwareId);
+        var currentDeviceCode = Normalize(currentDevice.DeviceCode);
+        var currentStoreCode = Normalize(currentDevice.StoreCode);
+        var currentHardwareId = Normalize(currentDevice.HardwareId);
+        var terminalName = Normalize(request.TerminalName);
+
+        if (string.IsNullOrEmpty(targetStoreCode))
+        {
+            return CreateReregisterResponse(string.Empty, targetStoreCode, string.Empty, UnregisteredStatus, "targetStoreCode is required");
+        }
+
+        if (string.IsNullOrEmpty(hardwareId))
+        {
+            return CreateReregisterResponse(string.Empty, targetStoreCode, string.Empty, UnregisteredStatus, "hardwareId is required");
+        }
+
+        if (!string.Equals(hardwareId, currentHardwareId, StringComparison.OrdinalIgnoreCase))
+        {
+            return CreateReregisterResponse(currentDeviceCode, currentStoreCode, string.Empty, DisabledStatus, "Device hardware id does not match.");
+        }
+
+        if (string.Equals(targetStoreCode, currentStoreCode, StringComparison.OrdinalIgnoreCase))
+        {
+            return CreateReregisterResponse(currentDeviceCode, currentStoreCode, string.Empty, DisabledStatus, "Please select a different store for device reregistration.");
+        }
+
+        var store = await dbContext.MainDb.Queryable<BlazorApp.Shared.Models.Store>()
+            .FirstAsync(x => x.StoreCode == targetStoreCode && x.IsActive && !x.IsDeleted, cancellationToken);
+
+        if (store is null)
+        {
+            return CreateReregisterResponse(string.Empty, targetStoreCode, string.Empty, UnregisteredStatus, "Store was not found or inactive.");
+        }
+
+        var deviceCode = CreateDeviceCode(targetStoreCode, DateTime.Now);
+        var authorizationCode = Guid.NewGuid().ToString("N");
+        var now = DateTime.Now;
+        var remark = string.IsNullOrWhiteSpace(terminalName)
+            ? $"HBPOS client reregistration from {currentStoreCode}/{currentDeviceCode}"
+            : $"HBPOS client reregistration from {currentStoreCode}/{currentDeviceCode}: {terminalName}";
+
+        await dbContext.PosmDb.Ado.BeginTranAsync();
+        try
+        {
+            const string disableSql = """
+                UPDATE [POSM_设备注册信息表]
+                SET [设备状态] = @DisabledStatus,
+                    [备注] = CONCAT(ISNULL([备注], ''), @RemarkSuffix)
+                WHERE [系统设备编号] = @CurrentDeviceCode
+                  AND [分店代码] = @CurrentStoreCode
+                  AND [设备硬件识别码] = @HardwareId
+                  AND [设备状态] = @EnabledStatus;
+                """;
+
+            await dbContext.PosmDb.Ado.ExecuteCommandAsync(
+                disableSql,
+                new SugarParameter("@DisabledStatus", DisabledStatus),
+                new SugarParameter("@RemarkSuffix", $" | Disabled by reregistration to {targetStoreCode} at {now:O}"),
+                new SugarParameter("@CurrentDeviceCode", currentDeviceCode),
+                new SugarParameter("@CurrentStoreCode", currentStoreCode),
+                new SugarParameter("@HardwareId", hardwareId),
+                new SugarParameter("@EnabledStatus", EnabledStatus));
+
+            const string insertSql = """
+                INSERT INTO [POSM_设备注册信息表]
+                    ([设备硬件识别码], [系统设备编号], [分店代码], [设备类型], [设备系统], [设备状态], [设备授权码], [备注], [创建时间], [创建人])
+                VALUES
+                    (@HardwareId, @DeviceCode, @StoreCode, @DeviceType, @DeviceSystem, @DeviceStatus, @AuthorizationCode, @Remark, @CreatedAt, @CreatedBy);
+                """;
+
+            await dbContext.PosmDb.Ado.ExecuteCommandAsync(
+                insertSql,
+                new SugarParameter("@HardwareId", hardwareId),
+                new SugarParameter("@DeviceCode", deviceCode),
+                new SugarParameter("@StoreCode", targetStoreCode),
+                new SugarParameter("@DeviceType", "POS"),
+                new SugarParameter("@DeviceSystem", "Windows"),
+                new SugarParameter("@DeviceStatus", PendingStatus),
+                new SugarParameter("@AuthorizationCode", authorizationCode),
+                new SugarParameter("@Remark", remark),
+                new SugarParameter("@CreatedAt", now),
+                new SugarParameter("@CreatedBy", "HBPOS_CLIENT"));
+
+            await dbContext.PosmDb.Ado.CommitTranAsync();
+        }
+        catch
+        {
+            await dbContext.PosmDb.Ado.RollbackTranAsync();
+            throw;
+        }
+
+        return new DeviceReregisterResponse(
+            deviceCode,
+            targetStoreCode,
+            store.StoreName,
+            PendingStatus,
+            false,
+            GetStatusMessage(PendingStatus),
+            null);
+    }
+
     private async Task<DeviceRegistrationRow?> FindDeviceByHardwareIdAsync(string hardwareId)
     {
         const string sql = """
@@ -198,6 +315,16 @@ public sealed class DeviceService(HbposSqlSugarContext dbContext) : IDeviceServi
         string message)
     {
         return new DeviceVerifyResponse(deviceCode, storeCode, storeName, status, false, message);
+    }
+
+    private static DeviceReregisterResponse CreateReregisterResponse(
+        string deviceCode,
+        string storeCode,
+        string storeName,
+        int status,
+        string message)
+    {
+        return new DeviceReregisterResponse(deviceCode, storeCode, storeName, status, false, message);
     }
 
     internal static string CreateDeviceCode(string storeCode, DateTime localTime)

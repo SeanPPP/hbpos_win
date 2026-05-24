@@ -28,3 +28,17 @@ public sealed record DeviceRegisterResponse(
     bool IsAllowed,
     string? Message = null,
     string? AuthorizationCode = null);
+
+public sealed record DeviceReregisterRequest(
+    string TargetStoreCode,
+    string HardwareId,
+    string? TerminalName = null);
+
+public sealed record DeviceReregisterResponse(
+    string DeviceCode,
+    string StoreCode,
+    string StoreName,
+    int DeviceStatus,
+    bool IsAllowed,
+    string? Message = null,
+    string? AuthorizationCode = null);

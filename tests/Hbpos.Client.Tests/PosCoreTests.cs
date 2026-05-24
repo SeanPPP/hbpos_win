@@ -39,6 +39,23 @@ public sealed class PosCoreTests
     }
 
     [Fact]
+    public void Local_price_index_search_can_filter_by_store()
+    {
+        var index = new LocalSellableItemIndex();
+        index.ReplaceAll(
+        [
+            CreateItem("SKU-001", "Shared Milk", "690001", PriceSourceKind.StoreRetailPrice, 12.5m, storeCode: "S001"),
+            CreateItem("SKU-002", "Shared Milk", "690001", PriceSourceKind.StoreRetailPrice, 9.9m, storeCode: "S002")
+        ]);
+
+        var matches = index.Search("S002", "milk");
+
+        var item = Assert.Single(matches);
+        Assert.Equal("S002", item.StoreCode);
+        Assert.Equal("SKU-002", item.ProductCode);
+    }
+
+    [Fact]
     public void Local_price_index_exact_lookup_deduplicates_same_item_code_aliases()
     {
         var index = new LocalSellableItemIndex();

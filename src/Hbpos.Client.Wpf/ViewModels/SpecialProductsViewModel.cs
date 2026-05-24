@@ -10,6 +10,8 @@ namespace Hbpos.Client.Wpf.ViewModels;
 
 public sealed partial class SpecialProductsViewModel : ObservableObject
 {
+    private const int PageSize = 20;
+
     private readonly LocalSellableItemIndex _priceIndex;
     private readonly PosCartService _cart;
     private readonly ILocalCatalogRepository _catalogRepository;
@@ -28,6 +30,27 @@ public sealed partial class SpecialProductsViewModel : ObservableObject
 
     [ObservableProperty]
     private string _statusMessage = string.Empty;
+
+    [ObservableProperty]
+    private bool _isDownloadProgressVisible;
+
+    [ObservableProperty]
+    private bool _isDownloadProgressFailed;
+
+    [ObservableProperty]
+    private double _downloadProgressValue;
+
+    [ObservableProperty]
+    private string _downloadProgressText = string.Empty;
+
+    [ObservableProperty]
+    private string _downloadProgressDetailText = string.Empty;
+
+    [ObservableProperty]
+    private bool _isEditMode;
+
+    [ObservableProperty]
+    private int _currentPage = 1;
 
     public SpecialProductsViewModel(
         LocalSellableItemIndex priceIndex,
@@ -50,6 +73,10 @@ public sealed partial class SpecialProductsViewModel : ObservableObject
         SearchCommand = new RelayCommand(SearchCatalog);
         ClearSearchCommand = new RelayCommand(ClearSearch, () => !string.IsNullOrWhiteSpace(SearchText));
         RefreshCommand = new AsyncRelayCommand(LoadAsync);
+        DownloadCommand = new AsyncRelayCommand(DownloadSpecialProductsAsync, CanDownloadSpecialProducts);
+        ToggleEditModeCommand = new RelayCommand(ToggleEditMode, () => !IsBusy);
+        PreviousPageCommand = new RelayCommand(ShowPreviousPage, CanShowPreviousPage);
+        NextPageCommand = new RelayCommand(ShowNextPage, CanShowNextPage);
         AddToCartCommand = new RelayCommand<SellableItemDto>(AddToCart);
         AddSpecialProductCommand = new AsyncRelayCommand<SellableItemDto>(AddSpecialProductAsync, CanMutateItem);
         RemoveSpecialProductCommand = new AsyncRelayCommand<SellableItemDto>(RemoveSpecialProductAsync, CanMutateItem);
@@ -62,6 +89,8 @@ public sealed partial class SpecialProductsViewModel : ObservableObject
 
     public ObservableCollection<SellableItemDto> SpecialItems { get; } = [];
 
+    public ObservableCollection<SellableItemDto> PagedSpecialItems { get; } = [];
+
     public ObservableCollection<SellableItemDto> SearchResults { get; } = [];
 
     public IRelayCommand BackCommand { get; }
@@ -71,6 +100,14 @@ public sealed partial class SpecialProductsViewModel : ObservableObject
     public IRelayCommand ClearSearchCommand { get; }
 
     public IAsyncRelayCommand RefreshCommand { get; }
+
+    public IAsyncRelayCommand DownloadCommand { get; }
+
+    public IRelayCommand ToggleEditModeCommand { get; }
+
+    public IRelayCommand PreviousPageCommand { get; }
+
+    public IRelayCommand NextPageCommand { get; }
 
     public IRelayCommand<SellableItemDto> AddToCartCommand { get; }
 
@@ -100,6 +137,14 @@ public sealed partial class SpecialProductsViewModel : ObservableObject
 
     public string RefreshText => T("specialProducts.refresh");
 
+    public string DownloadText => T("specialProducts.download");
+
+    public string EditModeText => T(IsEditMode ? "specialProducts.done" : "specialProducts.edit");
+
+    public string PreviousPageText => T("specialProducts.previousPage");
+
+    public string NextPageText => T("specialProducts.nextPage");
+
     public string AddText => T("specialProducts.add");
 
     public string RemoveText => T("specialProducts.remove");
@@ -122,6 +167,15 @@ public sealed partial class SpecialProductsViewModel : ObservableObject
 
     public bool IsSpecialListEmpty => SpecialItems.Count == 0;
 
+    public int TotalPages => Math.Max(1, (SpecialItems.Count + PageSize - 1) / PageSize);
+
+    public string PageStatusText => string.Format(
+        _localization.CurrentCulture,
+        T("specialProducts.pageStatus"),
+        CurrentPage,
+        TotalPages,
+        SpecialItems.Count);
+
     public async Task LoadAsync(CancellationToken cancellationToken = default)
     {
         if (IsBusy)
@@ -134,7 +188,7 @@ public sealed partial class SpecialProductsViewModel : ObservableObject
         {
             var specialItems = await _catalogRepository.LoadSpecialProductItemsAsync(Session.StoreCode, cancellationToken);
             SpecialItems.ReplaceWith(specialItems);
-            OnPropertyChanged(nameof(IsSpecialListEmpty));
+            RefreshPagedSpecialItems(resetToFirstPage: true);
             SetStatus("specialProducts.status.loaded", SpecialItems.Count);
             RefreshCommandStates();
         }
@@ -170,6 +224,17 @@ public sealed partial class SpecialProductsViewModel : ObservableObject
         RefreshCommandStates();
     }
 
+    partial void OnIsEditModeChanged(bool value)
+    {
+        OnPropertyChanged(nameof(EditModeText));
+        if (!value)
+        {
+            ClearSearch();
+        }
+
+        RefreshCommandStates();
+    }
+
     private void SearchCatalog()
     {
         if (string.IsNullOrWhiteSpace(SearchText))
@@ -179,7 +244,7 @@ public sealed partial class SpecialProductsViewModel : ObservableObject
             return;
         }
 
-        var results = _priceIndex.Search(SearchText, 80)
+        var results = _priceIndex.Search(Session.StoreCode, SearchText, 80)
             .Where(item =>
                 string.Equals(item.StoreCode, Session.StoreCode, StringComparison.OrdinalIgnoreCase) &&
                 !item.IsSpecialProduct)
@@ -218,9 +283,70 @@ public sealed partial class SpecialProductsViewModel : ObservableObject
         SetStatus("specialProducts.status.addedToCart", item.DisplayName);
     }
 
+    private async Task DownloadSpecialProductsAsync(CancellationToken cancellationToken)
+    {
+        if (IsBusy || !EnsureOnlineMutationAllowed())
+        {
+            return;
+        }
+
+        IsBusy = true;
+        try
+        {
+            ApplyDownloadProgress(new SpecialProductDownloadProgress(
+                Session.StoreCode,
+                SpecialProductDownloadProgressStage.Preparing,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0));
+
+            var progress = new Progress<SpecialProductDownloadProgress>(ApplyDownloadProgress);
+            var result = await _specialProductService.DownloadSpecialProductsAsync(
+                Session.StoreCode,
+                cancellationToken,
+                progress);
+
+            var catalogItems = await _catalogRepository.LoadSellableItemsAsync(Session.StoreCode, cancellationToken);
+            _priceIndex.ReplaceAll(catalogItems);
+            var specialItems = await _catalogRepository.LoadSpecialProductItemsAsync(Session.StoreCode, cancellationToken);
+            SpecialItems.ReplaceWith(specialItems);
+            SearchCatalog();
+            RefreshPagedSpecialItems(resetToFirstPage: true);
+            ApplyDownloadProgress(new SpecialProductDownloadProgress(
+                result.StoreCode,
+                SpecialProductDownloadProgressStage.Completed,
+                result.TotalCount,
+                result.DownloadedCount,
+                100,
+                result.PageCount,
+                result.UpsertedCount,
+                result.UnmarkedCount,
+                0));
+            SetStatus(
+                "specialProducts.status.downloadCompleted",
+                result.DownloadedCount,
+                result.UnmarkedCount);
+        }
+        catch (Exception ex)
+        {
+            SetStatusText(string.Format(
+                _localization.CurrentCulture,
+                T("specialProducts.status.downloadFailed"),
+                ex.Message));
+        }
+        finally
+        {
+            IsBusy = false;
+        }
+    }
+
     private async Task AddSpecialProductAsync(SellableItemDto? item, CancellationToken cancellationToken)
     {
-        if (item is null || !EnsureOnlineMutationAllowed())
+        if (item is null || !IsEditMode || !EnsureOnlineMutationAllowed())
         {
             return;
         }
@@ -231,7 +357,7 @@ public sealed partial class SpecialProductsViewModel : ObservableObject
 
     private async Task RemoveSpecialProductAsync(SellableItemDto? item, CancellationToken cancellationToken)
     {
-        if (item is null || !EnsureOnlineMutationAllowed())
+        if (item is null || !IsEditMode || !EnsureOnlineMutationAllowed())
         {
             return;
         }
@@ -252,11 +378,11 @@ public sealed partial class SpecialProductsViewModel : ObservableObject
                 item.ProductCode,
                 isSpecialProduct,
                 cancellationToken);
-            var catalogItems = await _catalogRepository.LoadSellableItemsAsync(cancellationToken);
+            var catalogItems = await _catalogRepository.LoadSellableItemsAsync(Session.StoreCode, cancellationToken);
             _priceIndex.ReplaceAll(catalogItems);
             var specialItems = await _catalogRepository.LoadSpecialProductItemsAsync(Session.StoreCode, cancellationToken);
             SpecialItems.ReplaceWith(specialItems);
-            OnPropertyChanged(nameof(IsSpecialListEmpty));
+            RefreshPagedSpecialItems(focusProductCode: isSpecialProduct ? item.ProductCode : null);
             SetStatus(
                 isSpecialProduct ? "specialProducts.status.marked" : "specialProducts.status.unmarked",
                 item.DisplayName);
@@ -273,7 +399,7 @@ public sealed partial class SpecialProductsViewModel : ObservableObject
 
     private async Task MoveSpecialProductAsync(SellableItemDto? item, int delta)
     {
-        if (item is null || IsBusy)
+        if (item is null || IsBusy || !IsEditMode)
         {
             return;
         }
@@ -290,7 +416,67 @@ public sealed partial class SpecialProductsViewModel : ObservableObject
             Session.StoreCode,
             SpecialItems.Select(x => x.ProductCode),
             CancellationToken.None);
+        RefreshPagedSpecialItems(focusProductCode: item.ProductCode);
         SetStatus("specialProducts.status.orderSaved");
+        RefreshCommandStates();
+    }
+
+    private void ToggleEditMode()
+    {
+        IsEditMode = !IsEditMode;
+    }
+
+    private void ShowPreviousPage()
+    {
+        if (!CanShowPreviousPage())
+        {
+            return;
+        }
+
+        CurrentPage--;
+        RefreshPagedSpecialItems();
+    }
+
+    private void ShowNextPage()
+    {
+        if (!CanShowNextPage())
+        {
+            return;
+        }
+
+        CurrentPage++;
+        RefreshPagedSpecialItems();
+    }
+
+    private void RefreshPagedSpecialItems(string? focusProductCode = null, bool resetToFirstPage = false)
+    {
+        if (resetToFirstPage)
+        {
+            CurrentPage = 1;
+        }
+        else if (!string.IsNullOrWhiteSpace(focusProductCode))
+        {
+            var focusIndex = SpecialItems
+                .Select((item, index) => new { item.ProductCode, Index = index })
+                .FirstOrDefault(x => string.Equals(
+                    NormalizeProductCode(x.ProductCode),
+                    NormalizeProductCode(focusProductCode),
+                    StringComparison.OrdinalIgnoreCase))
+                ?.Index;
+
+            if (focusIndex.HasValue)
+            {
+                CurrentPage = focusIndex.Value / PageSize + 1;
+            }
+        }
+
+        CurrentPage = Math.Clamp(CurrentPage, 1, TotalPages);
+        PagedSpecialItems.ReplaceWith(SpecialItems
+            .Skip((CurrentPage - 1) * PageSize)
+            .Take(PageSize));
+        OnPropertyChanged(nameof(IsSpecialListEmpty));
+        OnPropertyChanged(nameof(TotalPages));
+        OnPropertyChanged(nameof(PageStatusText));
         RefreshCommandStates();
     }
 
@@ -307,22 +493,41 @@ public sealed partial class SpecialProductsViewModel : ObservableObject
 
     private bool CanMutateItem(SellableItemDto? item)
     {
-        return item is not null && Session.IsOnline && !IsBusy;
+        return item is not null && IsEditMode && Session.IsOnline && !IsBusy;
+    }
+
+    private bool CanDownloadSpecialProducts()
+    {
+        return Session.IsOnline && !IsBusy;
     }
 
     private bool CanMoveUp(SellableItemDto? item)
     {
-        return item is not null && !IsBusy && SpecialItems.IndexOf(item) > 0;
+        return item is not null && IsEditMode && !IsBusy && SpecialItems.IndexOf(item) > 0;
     }
 
     private bool CanMoveDown(SellableItemDto? item)
     {
         var index = item is null ? -1 : SpecialItems.IndexOf(item);
-        return index >= 0 && !IsBusy && index < SpecialItems.Count - 1;
+        return index >= 0 && IsEditMode && !IsBusy && index < SpecialItems.Count - 1;
+    }
+
+    private bool CanShowPreviousPage()
+    {
+        return !IsBusy && CurrentPage > 1;
+    }
+
+    private bool CanShowNextPage()
+    {
+        return !IsBusy && CurrentPage < TotalPages;
     }
 
     private void RefreshCommandStates()
     {
+        DownloadCommand.NotifyCanExecuteChanged();
+        ToggleEditModeCommand.NotifyCanExecuteChanged();
+        PreviousPageCommand.NotifyCanExecuteChanged();
+        NextPageCommand.NotifyCanExecuteChanged();
         AddSpecialProductCommand.NotifyCanExecuteChanged();
         RemoveSpecialProductCommand.NotifyCanExecuteChanged();
         MoveUpCommand.NotifyCanExecuteChanged();
@@ -351,6 +556,11 @@ public sealed partial class SpecialProductsViewModel : ObservableObject
         OnPropertyChanged(nameof(SearchButtonText));
         OnPropertyChanged(nameof(ClearSearchText));
         OnPropertyChanged(nameof(RefreshText));
+        OnPropertyChanged(nameof(DownloadText));
+        OnPropertyChanged(nameof(EditModeText));
+        OnPropertyChanged(nameof(PreviousPageText));
+        OnPropertyChanged(nameof(NextPageText));
+        OnPropertyChanged(nameof(PageStatusText));
         OnPropertyChanged(nameof(AddText));
         OnPropertyChanged(nameof(RemoveText));
         OnPropertyChanged(nameof(MoveUpText));
@@ -365,6 +575,44 @@ public sealed partial class SpecialProductsViewModel : ObservableObject
     private string T(string key)
     {
         return _localization.T(key);
+    }
+
+    private void ApplyDownloadProgress(SpecialProductDownloadProgress progress)
+    {
+        IsDownloadProgressVisible = true;
+        IsDownloadProgressFailed = progress.Stage == SpecialProductDownloadProgressStage.Failed;
+        DownloadProgressValue = progress.Percent;
+
+        var titleKey = progress.Stage switch
+        {
+            SpecialProductDownloadProgressStage.Completed => "specialProducts.download.completed",
+            SpecialProductDownloadProgressStage.Failed => "specialProducts.download.failed",
+            _ => "specialProducts.download.downloading"
+        };
+        DownloadProgressText = string.Format(
+            _localization.CurrentCulture,
+            T(titleKey),
+            progress.Percent);
+
+        DownloadProgressDetailText = progress.Stage == SpecialProductDownloadProgressStage.Failed
+            ? (progress.ErrorMessage ?? string.Empty)
+            : string.Format(
+                _localization.CurrentCulture,
+                T("specialProducts.download.detail"),
+                progress.DownloadedCount,
+                progress.TotalCount,
+                progress.PageCount,
+                progress.UpsertedCount,
+                progress.UnmarkedCount,
+                FormatElapsed(progress.ElapsedMilliseconds));
+    }
+
+    private string FormatElapsed(long elapsedMilliseconds)
+    {
+        return string.Format(
+            _localization.CurrentCulture,
+            T("shell.catalogDownload.elapsedSeconds"),
+            elapsedMilliseconds / 1000d);
     }
 
     private static int PreferredLookupRank(SellableItemDto item)

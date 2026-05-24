@@ -41,7 +41,7 @@ public sealed class SpecialProductsViewModelTests
     }
 
     [Fact]
-    public async Task Offline_add_and_remove_do_not_call_backend()
+    public async Task Offline_edit_commands_are_disabled_and_do_not_call_backend()
     {
         var item = CreateItem("SKU-001", "Alpha", "930001", isSpecialProduct: true);
         var repository = new FakeCatalogRepository { SpecialItems = [item] };
@@ -51,12 +51,14 @@ public sealed class SpecialProductsViewModelTests
             service: service,
             session: Session with { IsOnline = false });
         await viewModel.LoadAsync();
+        viewModel.ToggleEditModeCommand.Execute(null);
 
         await viewModel.AddSpecialProductCommand.ExecuteAsync(item);
         await viewModel.RemoveSpecialProductCommand.ExecuteAsync(item);
 
+        Assert.False(viewModel.AddSpecialProductCommand.CanExecute(item));
+        Assert.False(viewModel.RemoveSpecialProductCommand.CanExecute(item));
         Assert.Equal(0, service.CallCount);
-        Assert.Contains("online", viewModel.StatusMessage, StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact]
@@ -68,12 +70,72 @@ public sealed class SpecialProductsViewModelTests
         var service = new FakeSpecialProductService();
         var viewModel = CreateViewModel(repository: repository, service: service);
         await viewModel.LoadAsync();
+        viewModel.ToggleEditModeCommand.Execute(null);
 
         await viewModel.MoveDownCommand.ExecuteAsync(first);
 
         Assert.Equal(["SKU-002", "SKU-001"], viewModel.SpecialItems.Select(x => x.ProductCode).ToArray());
         Assert.Equal(["SKU-002", "SKU-001"], Assert.Single(repository.SavedOrders));
         Assert.Equal(0, service.CallCount);
+    }
+
+    [Fact]
+    public async Task LoadAsync_with_more_than_twenty_items_pages_the_special_product_list()
+    {
+        var repository = new FakeCatalogRepository { SpecialItems = CreateSpecialItems(21) };
+        var viewModel = CreateViewModel(repository: repository);
+
+        await viewModel.LoadAsync();
+
+        Assert.Equal(1, viewModel.CurrentPage);
+        Assert.Equal(2, viewModel.TotalPages);
+        Assert.Equal(
+            Enumerable.Range(1, 20).Select(number => $"SKU-{number:000}"),
+            viewModel.PagedSpecialItems.Select(item => item.ProductCode));
+
+        viewModel.NextPageCommand.Execute(null);
+
+        Assert.Equal(2, viewModel.CurrentPage);
+        Assert.Equal("SKU-021", Assert.Single(viewModel.PagedSpecialItems).ProductCode);
+
+        viewModel.PreviousPageCommand.Execute(null);
+
+        Assert.Equal(1, viewModel.CurrentPage);
+        Assert.Equal("SKU-001", viewModel.PagedSpecialItems.First().ProductCode);
+    }
+
+    [Fact]
+    public void Edit_mode_is_off_by_default_and_can_be_toggled()
+    {
+        var viewModel = CreateViewModel();
+
+        Assert.False(viewModel.IsEditMode);
+
+        viewModel.ToggleEditModeCommand.Execute(null);
+
+        Assert.True(viewModel.IsEditMode);
+
+        viewModel.ToggleEditModeCommand.Execute(null);
+
+        Assert.False(viewModel.IsEditMode);
+    }
+
+    [Fact]
+    public async Task MoveDown_across_page_boundary_keeps_moved_item_visible_on_destination_page()
+    {
+        var repository = new FakeCatalogRepository { SpecialItems = CreateSpecialItems(21) };
+        var viewModel = CreateViewModel(repository: repository);
+        await viewModel.LoadAsync();
+        viewModel.ToggleEditModeCommand.Execute(null);
+        var lastItemOnFirstPage = viewModel.PagedSpecialItems.Last();
+
+        await viewModel.MoveDownCommand.ExecuteAsync(lastItemOnFirstPage);
+
+        Assert.Equal(2, viewModel.CurrentPage);
+        Assert.Equal("SKU-020", Assert.Single(viewModel.PagedSpecialItems).ProductCode);
+        Assert.Equal(
+            ["SKU-019", "SKU-021", "SKU-020"],
+            Assert.Single(repository.SavedOrders).Skip(18).ToArray());
     }
 
     [Fact]
@@ -89,6 +151,7 @@ public sealed class SpecialProductsViewModelTests
         };
         var service = new FakeSpecialProductService();
         var viewModel = CreateViewModel(index, repository: repository, service: service);
+        viewModel.ToggleEditModeCommand.Execute(null);
 
         await viewModel.AddSpecialProductCommand.ExecuteAsync(item);
 
@@ -96,6 +159,99 @@ public sealed class SpecialProductsViewModelTests
         Assert.Equal(("S001", "SKU-001", true), service.LastCall);
         Assert.True(repository.LoadSellableItemsCallCount > 0);
         Assert.Contains(viewModel.SpecialItems, x => x.ProductCode == "SKU-001" && x.IsSpecialProduct);
+    }
+
+    [Fact]
+    public async Task Remove_last_item_on_last_page_returns_to_previous_page()
+    {
+        var initialItems = CreateSpecialItems(21);
+        var repository = new FakeCatalogRepository { SpecialItems = initialItems };
+        var service = new FakeSpecialProductService
+        {
+            OnMark = (_, isSpecialProduct) =>
+            {
+                if (!isSpecialProduct)
+                {
+                    repository.SpecialItems = initialItems.Take(20).ToArray();
+                }
+            }
+        };
+        var viewModel = CreateViewModel(repository: repository, service: service);
+        await viewModel.LoadAsync();
+        viewModel.ToggleEditModeCommand.Execute(null);
+        viewModel.NextPageCommand.Execute(null);
+        var lastPageItem = Assert.Single(viewModel.PagedSpecialItems);
+
+        await viewModel.RemoveSpecialProductCommand.ExecuteAsync(lastPageItem);
+
+        Assert.Equal(1, viewModel.CurrentPage);
+        Assert.Equal(1, viewModel.TotalPages);
+        Assert.Equal(20, viewModel.PagedSpecialItems.Count());
+        Assert.DoesNotContain(viewModel.PagedSpecialItems, item => item.ProductCode == "SKU-021");
+    }
+
+    [Fact]
+    public async Task Add_item_that_creates_new_page_navigates_to_the_added_item()
+    {
+        var initialItems = CreateSpecialItems(20);
+        var addedItem = CreateItem("SKU-021", "Item 021", "930021");
+        var repository = new FakeCatalogRepository { SpecialItems = initialItems };
+        var service = new FakeSpecialProductService
+        {
+            OnMark = (productCode, isSpecialProduct) =>
+            {
+                if (isSpecialProduct && productCode == addedItem.ProductCode)
+                {
+                    repository.SpecialItems = [.. initialItems, addedItem with { IsSpecialProduct = true }];
+                }
+            }
+        };
+        var viewModel = CreateViewModel(repository: repository, service: service);
+        await viewModel.LoadAsync();
+        viewModel.ToggleEditModeCommand.Execute(null);
+
+        await viewModel.AddSpecialProductCommand.ExecuteAsync(addedItem);
+
+        Assert.Equal(2, viewModel.CurrentPage);
+        Assert.Equal(2, viewModel.TotalPages);
+        Assert.Equal("SKU-021", Assert.Single(viewModel.PagedSpecialItems).ProductCode);
+    }
+
+    [Fact]
+    public async Task Offline_download_does_not_call_service()
+    {
+        var service = new FakeSpecialProductService();
+        var viewModel = CreateViewModel(
+            service: service,
+            session: Session with { IsOnline = false });
+
+        await viewModel.DownloadCommand.ExecuteAsync(null);
+
+        Assert.Equal(0, service.DownloadCallCount);
+        Assert.Contains("online", viewModel.StatusMessage, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task Online_download_calls_service_and_updates_progress()
+    {
+        var item = CreateItem("SKU-001", "Alpha", "930001", isSpecialProduct: true);
+        var repository = new FakeCatalogRepository
+        {
+            SellableItems = [item],
+            SpecialItems = [item]
+        };
+        var service = new FakeSpecialProductService
+        {
+            DownloadResult = new SpecialProductDownloadResult("S001", 1, 1, 1, 1, 0)
+        };
+        var viewModel = CreateViewModel(repository: repository, service: service);
+
+        await viewModel.DownloadCommand.ExecuteAsync(null);
+
+        Assert.Equal(1, service.DownloadCallCount);
+        Assert.True(viewModel.IsDownloadProgressVisible);
+        Assert.Equal(100d, viewModel.DownloadProgressValue);
+        Assert.Contains("Downloaded", viewModel.StatusMessage, StringComparison.OrdinalIgnoreCase);
     }
 
     private static SpecialProductsViewModel CreateViewModel(
@@ -141,11 +297,22 @@ public sealed class SpecialProductsViewModelTests
             IsSpecialProduct: isSpecialProduct);
     }
 
+    private static SellableItemDto[] CreateSpecialItems(int count)
+    {
+        return Enumerable.Range(1, count)
+            .Select(number => CreateItem(
+                $"SKU-{number:000}",
+                $"Item {number:000}",
+                $"930{number:000}",
+                isSpecialProduct: true))
+            .ToArray();
+    }
+
     private sealed class FakeCatalogRepository : ILocalCatalogRepository
     {
         public IReadOnlyList<SellableItemDto> SellableItems { get; init; } = [];
 
-        public IReadOnlyList<SellableItemDto> SpecialItems { get; init; } = [];
+        public IReadOnlyList<SellableItemDto> SpecialItems { get; set; } = [];
 
         public List<string[]> SavedOrders { get; } = [];
 
@@ -196,6 +363,14 @@ public sealed class SpecialProductsViewModelTests
             return Task.FromResult(0);
         }
 
+        public Task<int> ClearSpecialProductFlagsExceptAsync(
+            string storeCode,
+            IEnumerable<string> productCodesToKeep,
+            CancellationToken cancellationToken = default)
+        {
+            return Task.FromResult(0);
+        }
+
         public Task<IReadOnlyList<LocalSellableItemCompareRow>> LoadSellableItemComparePageAsync(
             string storeCode,
             string? afterLookupCodeNormalized,
@@ -210,13 +385,27 @@ public sealed class SpecialProductsViewModelTests
             LoadSellableItemsCallCount++;
             return Task.FromResult(SellableItems);
         }
+
+        public Task<IReadOnlyList<SellableItemDto>> LoadSellableItemsAsync(string storeCode, CancellationToken cancellationToken = default)
+        {
+            LoadSellableItemsCallCount++;
+            return Task.FromResult<IReadOnlyList<SellableItemDto>>(
+                SellableItems.Where(item => string.Equals(item.StoreCode, storeCode, StringComparison.OrdinalIgnoreCase)).ToArray());
+        }
     }
 
     private sealed class FakeSpecialProductService : ISpecialProductService
     {
         public int CallCount { get; private set; }
 
+        public int DownloadCallCount { get; private set; }
+
         public (string StoreCode, string ProductCode, bool IsSpecialProduct)? LastCall { get; private set; }
+
+        public SpecialProductDownloadResult DownloadResult { get; init; } =
+            new("S001", 0, 0, 0, 0, 0);
+
+        public Action<string, bool>? OnMark { get; init; }
 
         public Task<IReadOnlyList<SellableItemDto>> MarkSpecialProductAsync(
             string storeCode,
@@ -226,7 +415,37 @@ public sealed class SpecialProductsViewModelTests
         {
             CallCount++;
             LastCall = (storeCode, productCode, isSpecialProduct);
+            OnMark?.Invoke(productCode, isSpecialProduct);
             return Task.FromResult<IReadOnlyList<SellableItemDto>>([]);
+        }
+
+        public Task<SpecialProductDownloadResult> DownloadSpecialProductsAsync(
+            string storeCode,
+            CancellationToken cancellationToken = default,
+            IProgress<SpecialProductDownloadProgress>? progress = null)
+        {
+            DownloadCallCount++;
+            progress?.Report(new SpecialProductDownloadProgress(
+                storeCode,
+                SpecialProductDownloadProgressStage.Downloading,
+                1,
+                1,
+                100,
+                1,
+                1,
+                0,
+                10));
+            progress?.Report(new SpecialProductDownloadProgress(
+                storeCode,
+                SpecialProductDownloadProgressStage.Completed,
+                DownloadResult.TotalCount,
+                DownloadResult.DownloadedCount,
+                100,
+                DownloadResult.PageCount,
+                DownloadResult.UpsertedCount,
+                DownloadResult.UnmarkedCount,
+                20));
+            return Task.FromResult(DownloadResult);
         }
     }
 }

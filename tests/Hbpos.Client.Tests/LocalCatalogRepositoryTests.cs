@@ -144,6 +144,35 @@ public sealed class LocalCatalogRepositoryTests
     }
 
     [Fact]
+    public async Task ClearSpecialProductFlagsExceptAsync_unmarks_missing_products_and_keeps_requested_sort_order()
+    {
+        var databasePath = CreateTempDatabasePath();
+
+        try
+        {
+            var repository = await CreateRepositoryAsync(databasePath);
+            await repository.UpsertSellableItemsAsync(
+            [
+                CreateItem("S001", "SKU-001", "abc", "Alpha", 1m, isSpecialProduct: true),
+                CreateItem("S001", "SKU-002", "def", "Beta", 2m, isSpecialProduct: true),
+                CreateItem("S001", "SKU-003", "ghi", "Gamma", 3m, isSpecialProduct: true)
+            ]);
+            await repository.SaveSpecialProductOrderAsync("S001", ["SKU-003", "SKU-002", "SKU-001"]);
+
+            var updated = await repository.ClearSpecialProductFlagsExceptAsync("S001", ["SKU-002"]);
+            var specialItems = await repository.LoadSpecialProductItemsAsync("S001");
+
+            Assert.Equal(2, updated);
+            var item = Assert.Single(specialItems);
+            Assert.Equal("SKU-002", item.ProductCode);
+        }
+        finally
+        {
+            DeleteTempDatabase(databasePath);
+        }
+    }
+
+    [Fact]
     public async Task DeleteByLookupCodesAsync_deletes_only_matching_store_and_normalized_lookup_codes()
     {
         var databasePath = CreateTempDatabasePath();
@@ -164,6 +193,32 @@ public sealed class LocalCatalogRepositoryTests
             Assert.Null(await repository.FindByLookupCodeAsync("S001", "abc"));
             Assert.NotNull(await repository.FindByLookupCodeAsync("S001", "def"));
             Assert.NotNull(await repository.FindByLookupCodeAsync("S002", "abc"));
+        }
+        finally
+        {
+            DeleteTempDatabase(databasePath);
+        }
+    }
+
+    [Fact]
+    public async Task LoadSellableItemsAsync_WithStoreCode_ReturnsOnlyThatStore()
+    {
+        var databasePath = CreateTempDatabasePath();
+
+        try
+        {
+            var repository = await CreateRepositoryAsync(databasePath);
+            await repository.UpsertSellableItemsAsync(
+            [
+                CreateItem("S001", "SKU-001", "abc", "S001 ABC", 1m),
+                CreateItem("S002", "SKU-002", "abc", "S002 ABC", 2m)
+            ]);
+
+            var items = await repository.LoadSellableItemsAsync("S002");
+
+            var item = Assert.Single(items);
+            Assert.Equal("S002", item.StoreCode);
+            Assert.Equal("SKU-002", item.ProductCode);
         }
         finally
         {

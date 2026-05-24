@@ -99,6 +99,39 @@ public sealed class DeviceRegistrationTests
         Assert.NotNull(repository.LastVerifyResponse);
     }
 
+    [Fact]
+    public async Task DeviceRegistrationViewModel_ReregisterMode_SubmitsReregisterAndFiltersCurrentStore()
+    {
+        var api = new FakeDeviceApiClient
+        {
+            Stores =
+            [
+                new StoreSelectionItem("1002", "Lutwyche", true),
+                new StoreSelectionItem("1003", "Zillmere", true)
+            ],
+            ReregisterResponse = new DeviceReregisterResponse("POS-NEW", "1003", "Zillmere", -1, false, "Pending approval")
+        };
+        var repository = new FakeLocalDeviceRepository();
+        var viewModel = new DeviceRegistrationViewModel(
+            api,
+            repository,
+            new FakeFingerprintService("HW-001"));
+        DeviceReregisteredEventArgs? reregistered = null;
+        viewModel.DeviceReregistered += (_, args) => reregistered = args;
+
+        viewModel.PrepareReregister("1002");
+        await viewModel.LoadStoresAsync(cachedDevice: null);
+        await viewModel.RegisterCommand.ExecuteAsync(null);
+
+        Assert.Equal("Zillmere (1003)", viewModel.SelectedStore?.DisplayName);
+        Assert.Equal("POS-NEW", viewModel.DeviceCode);
+        Assert.True(viewModel.HasPendingRegistration);
+        Assert.Equal("Pending approval", viewModel.StatusMessage);
+        Assert.NotNull(repository.LastReregisterResponse);
+        Assert.Equal("1003", api.LastReregisterRequest?.TargetStoreCode);
+        Assert.NotNull(reregistered);
+    }
+
     private static string CreateTempDatabasePath()
     {
         return Path.Combine(Path.GetTempPath(), $"hbpos-client-device-{Guid.NewGuid():N}.db");
@@ -119,6 +152,10 @@ public sealed class DeviceRegistrationTests
         public DeviceRegisterResponse? RegisterResponse { get; init; }
 
         public DeviceVerifyResponse? VerifyResponse { get; init; }
+
+        public DeviceReregisterResponse? ReregisterResponse { get; init; }
+
+        public DeviceReregisterRequest? LastReregisterRequest { get; private set; }
 
         public Task<IReadOnlyList<StoreSelectionItem>> GetStoresAsync(CancellationToken cancellationToken = default)
         {
@@ -142,6 +179,14 @@ public sealed class DeviceRegistrationTests
         {
             return Task.FromResult(VerifyResponse!);
         }
+
+        public Task<DeviceReregisterResponse> ReregisterAsync(
+            DeviceReregisterRequest request,
+            CancellationToken cancellationToken = default)
+        {
+            LastReregisterRequest = request;
+            return Task.FromResult(ReregisterResponse!);
+        }
     }
 
     private sealed class FakeLocalDeviceRepository : ILocalDeviceRepository
@@ -149,6 +194,8 @@ public sealed class DeviceRegistrationTests
         public DeviceRegisterResponse? LastRegisterResponse { get; private set; }
 
         public DeviceVerifyResponse? LastVerifyResponse { get; private set; }
+
+        public DeviceReregisterResponse? LastReregisterResponse { get; private set; }
 
         public string? LastHardwareId { get; private set; }
 
@@ -167,6 +214,13 @@ public sealed class DeviceRegistrationTests
         public Task SaveAsync(DeviceVerifyResponse response, string hardwareId, CancellationToken cancellationToken = default)
         {
             LastVerifyResponse = response;
+            LastHardwareId = hardwareId;
+            return Task.CompletedTask;
+        }
+
+        public Task SaveAsync(DeviceReregisterResponse response, string hardwareId, CancellationToken cancellationToken = default)
+        {
+            LastReregisterResponse = response;
             LastHardwareId = hardwareId;
             return Task.CompletedTask;
         }

@@ -122,6 +122,7 @@
   <data name="pos.terminal.actions.wholeOrderToggle" xml:space="preserve"><value>Whole Order</value></data>
   <data name="pos.terminal.actions.specialItems" xml:space="preserve"><value>Special Items</value></data>
   <data name="pos.terminal.actions.switchUser" xml:space="preserve"><value>Switch User</value></data>
+  <data name="pos.terminal.actions.reregisterDevice" xml:space="preserve"><value>Re-register Device</value></data>
   <data name="pos.terminal.inputBuffer" xml:space="preserve"><value>Input Buffer</value></data>
   <data name="pos.terminal.quickHalf" xml:space="preserve"><value>0.5</value></data>
   <data name="pos.terminal.quickNinetyNine" xml:space="preserve"><value>0.99</value></data>
@@ -196,9 +197,6 @@
   <data name="customerDisplay.window.closed" xml:space="preserve"><value>Customer display closed.</value></data>
   <data name="customerDisplay.window.noSecondDisplay" xml:space="preserve"><value>No second display detected. Customer display was not opened.</value></data>
   <data name="shell.customerDisplayWindow" xml:space="preserve"><value>Customer display window</value></data>
-  <data name="shell.customerDisplay.off" xml:space="preserve"><value>Off</value></data>
-  <data name="shell.customerDisplay.normal" xml:space="preserve"><value>Normal</value></data>
-  <data name="shell.customerDisplay.fullscreen" xml:space="preserve"><value>Full</value></data>
   <data name="shell.window.minimize" xml:space="preserve"><value>Minimize</value></data>
   <data name="shell.window.maximize" xml:space="preserve"><value>Maximize</value></data>
   <data name="shell.window.close" xml:space="preserve"><value>Close</value></data>
@@ -236,6 +234,12 @@
   <data name="specialProducts.search.placeholder" xml:space="preserve"><value>Search non-special products to add...</value></data>
   <data name="specialProducts.search.action" xml:space="preserve"><value>Search</value></data>
   <data name="specialProducts.refresh" xml:space="preserve"><value>Refresh</value></data>
+  <data name="specialProducts.download" xml:space="preserve"><value>Download Special</value></data>
+  <data name="specialProducts.edit" xml:space="preserve"><value>Edit</value></data>
+  <data name="specialProducts.done" xml:space="preserve"><value>Done</value></data>
+  <data name="specialProducts.previousPage" xml:space="preserve"><value>Previous</value></data>
+  <data name="specialProducts.nextPage" xml:space="preserve"><value>Next</value></data>
+  <data name="specialProducts.pageStatus" xml:space="preserve"><value>Page {0} / {1}  ({2} items)</value></data>
   <data name="specialProducts.add" xml:space="preserve"><value>Add Special</value></data>
   <data name="specialProducts.remove" xml:space="preserve"><value>Remove</value></data>
   <data name="specialProducts.moveUp" xml:space="preserve"><value>Move Up</value></data>
@@ -255,4 +259,10 @@
   <data name="specialProducts.status.markFailed" xml:space="preserve"><value>Special product update failed: {0}</value></data>
   <data name="specialProducts.status.orderSaved" xml:space="preserve"><value>Local special product order saved.</value></data>
   <data name="specialProducts.status.onlineRequired" xml:space="preserve"><value>Go online to add or remove special product marks.</value></data>
+  <data name="specialProducts.status.downloadCompleted" xml:space="preserve"><value>Downloaded {0} special item lookups and unmarked {1} local products.</value></data>
+  <data name="specialProducts.status.downloadFailed" xml:space="preserve"><value>Special product download failed: {0}</value></data>
+  <data name="specialProducts.download.downloading" xml:space="preserve"><value>Special product download {0}%</value></data>
+  <data name="specialProducts.download.completed" xml:space="preserve"><value>Special product download complete {0}%</value></data>
+  <data name="specialProducts.download.failed" xml:space="preserve"><value>Special product download failed {0}%</value></data>
+  <data name="specialProducts.download.detail" xml:space="preserve"><value>{0}/{1}  Pages: {2}  Upserted: {3}  Unmarked: {4}  Elapsed: {5}</value></data>
 </root>

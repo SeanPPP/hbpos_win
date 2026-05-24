@@ -2,6 +2,7 @@ using Hbpos.Api.Controllers;
 using Hbpos.Api.Services;
 using Hbpos.Contracts.Common;
 using Hbpos.Contracts.Devices;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 
 namespace Hbpos.Api.Tests;
@@ -13,6 +14,11 @@ public sealed class DevicesControllerTests
     {
         Assert.Equal("register", GetHttpPostTemplate(nameof(DevicesController.Register)));
         Assert.Equal("verify", GetHttpPostTemplate(nameof(DevicesController.Verify)));
+        Assert.Equal("reregister", GetHttpPostTemplate(nameof(DevicesController.Reregister)));
+        Assert.NotNull(typeof(DevicesController)
+            .GetMethod(nameof(DevicesController.Reregister))?
+            .GetCustomAttributes(typeof(AuthorizeAttribute), inherit: false)
+            .SingleOrDefault());
     }
 
     [Fact]
@@ -62,6 +68,22 @@ public sealed class DevicesControllerTests
     }
 
     [Fact]
+    public async Task Reregister_RequiresAuthenticatedDeviceClaims()
+    {
+        var service = new FakeDeviceService();
+        var controller = new DevicesController(service);
+
+        var result = await controller.Reregister(
+            new DeviceReregisterRequest("1003", "HW-001", "Counter 1"),
+            CancellationToken.None);
+
+        var unauthorized = Assert.IsType<UnauthorizedObjectResult>(result.Result);
+        var apiResult = Assert.IsType<ApiResult<DeviceReregisterResponse>>(unauthorized.Value);
+        Assert.False(apiResult.Success);
+        Assert.Equal("DEVICE_AUTH_REQUIRED", apiResult.ErrorCode);
+    }
+
+    [Fact]
     public void CreateDeviceCode_UsesStoreCodeAndLocalHourMinute()
     {
         var deviceCode = DeviceService.CreateDeviceCode(
@@ -87,9 +109,15 @@ public sealed class DevicesControllerTests
 
         public DeviceVerifyResponse? VerifyResponse { get; init; }
 
+        public DeviceReregisterResponse? ReregisterResponse { get; init; }
+
         public DeviceRegisterRequest? LastRegisterRequest { get; private set; }
 
         public DeviceVerifyRequest? LastVerifyRequest { get; private set; }
+
+        public DeviceReregisterRequest? LastReregisterRequest { get; private set; }
+
+        public DeviceReregisterContext? LastReregisterContext { get; private set; }
 
         public Task<DeviceRegisterResponse> RegisterAsync(
             DeviceRegisterRequest request,
@@ -105,6 +133,16 @@ public sealed class DevicesControllerTests
         {
             LastVerifyRequest = request;
             return Task.FromResult(VerifyResponse!);
+        }
+
+        public Task<DeviceReregisterResponse> ReregisterAsync(
+            DeviceReregisterRequest request,
+            DeviceReregisterContext currentDevice,
+            CancellationToken cancellationToken)
+        {
+            LastReregisterRequest = request;
+            LastReregisterContext = currentDevice;
+            return Task.FromResult(ReregisterResponse!);
         }
     }
 }

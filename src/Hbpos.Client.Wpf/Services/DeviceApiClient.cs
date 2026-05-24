@@ -15,6 +15,8 @@ public interface IDeviceApiClient
     Task<DeviceRegisterResponse> RegisterAsync(DeviceRegisterRequest request, CancellationToken cancellationToken = default);
 
     Task<DeviceVerifyResponse> VerifyAsync(DeviceVerifyRequest request, CancellationToken cancellationToken = default);
+
+    Task<DeviceReregisterResponse> ReregisterAsync(DeviceReregisterRequest request, CancellationToken cancellationToken = default);
 }
 
 public sealed class DeviceApiClient(HttpClient httpClient) : IDeviceApiClient
@@ -55,6 +57,18 @@ public sealed class DeviceApiClient(HttpClient httpClient) : IDeviceApiClient
             JsonOptions,
             cancellationToken);
         return await ReadApiResultAsync<DeviceVerifyResponse>(response, cancellationToken);
+    }
+
+    public async Task<DeviceReregisterResponse> ReregisterAsync(
+        DeviceReregisterRequest request,
+        CancellationToken cancellationToken = default)
+    {
+        using var response = await httpClient.PostAsJsonAsync(
+            "api/v1/devices/reregister",
+            request,
+            JsonOptions,
+            cancellationToken);
+        return await ReadApiResultAsync<DeviceReregisterResponse>(response, cancellationToken);
     }
 
     private static async Task<T> ReadApiResultAsync<T>(

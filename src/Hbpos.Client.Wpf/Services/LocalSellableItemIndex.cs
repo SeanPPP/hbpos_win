@@ -56,11 +56,17 @@ public sealed class LocalSellableItemIndex
 
     public IReadOnlyList<SellableItemDto> Search(string query, int take = 20)
     {
+        return Search(null, query, take);
+    }
+
+    public IReadOnlyList<SellableItemDto> Search(string? storeCode, string query, int take = 20)
+    {
         if (string.IsNullOrWhiteSpace(query))
         {
             return [];
         }
 
+        var normalizedStoreCode = Normalize(storeCode);
         var normalized = Normalize(query);
         SellableItemDto[] snapshot;
         lock (_gate)
@@ -69,6 +75,7 @@ public sealed class LocalSellableItemIndex
         }
 
         return snapshot
+            .Where(item => normalizedStoreCode.Length == 0 || Normalize(item.StoreCode) == normalizedStoreCode)
             .Select(item => new { Item = item, Rank = Rank(item, normalized) })
             .Where(match => match.Rank < int.MaxValue)
             .OrderBy(match => match.Rank)

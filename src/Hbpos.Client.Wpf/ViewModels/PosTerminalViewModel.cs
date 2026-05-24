@@ -19,6 +19,7 @@ public sealed partial class PosTerminalViewModel : ObservableObject, IDisposable
     private readonly PosCartService _cart;
     private readonly Action? _onOpenPayment;
     private readonly Func<Task>? _onOpenSpecialProductsAsync;
+    private readonly Func<Task>? _onReregisterDeviceAsync;
     private readonly ILocalizationService? _localization;
     private readonly IRawScannerService? _rawScannerService;
     private readonly Func<string, string, CancellationToken, Task<RemoteLookupRefreshResult>>? _remoteLookupRefreshAsync;
@@ -64,13 +65,15 @@ public sealed partial class PosTerminalViewModel : ObservableObject, IDisposable
         Func<CancellationToken, Task<IReadOnlyList<SellableItemDto>>>? reloadCatalogAsync = null,
         Func<CancellationToken, Task<IReadOnlyList<SellableItemDto>>>? syncCatalogAsync = null,
         Func<CancellationToken, Task<bool>>? refreshOnlineAsync = null,
-        IRawScannerService? rawScannerService = null)
+        IRawScannerService? rawScannerService = null,
+        Func<Task>? onReregisterDeviceAsync = null)
     {
         _priceIndex = priceIndex;
         _cart = cart;
         _session = session;
         _onOpenPayment = onOpenPayment;
         _onOpenSpecialProductsAsync = onOpenSpecialProductsAsync;
+        _onReregisterDeviceAsync = onReregisterDeviceAsync;
         _localization = localization;
         _remoteLookupRefreshAsync = remoteLookupRefreshAsync;
         _reloadCatalogAsync = reloadCatalogAsync;
@@ -104,6 +107,7 @@ public sealed partial class PosTerminalViewModel : ObservableObject, IDisposable
         OpenPaymentCommand = new RelayCommand(OpenPayment, () => !_cart.IsEmpty);
         OpenSpecialProductsCommand = new AsyncRelayCommand(OpenSpecialProductsAsync);
         SyncCommand = new AsyncRelayCommand(SyncAsync);
+        ReregisterDeviceCommand = new AsyncRelayCommand(ReregisterDeviceAsync);
     }
 
     public ObservableCollection<SellableItemDto> Matches { get; } = [];
@@ -148,6 +152,8 @@ public sealed partial class PosTerminalViewModel : ObservableObject, IDisposable
 
     public IAsyncRelayCommand SyncCommand { get; }
 
+    public IAsyncRelayCommand ReregisterDeviceCommand { get; }
+
     public event EventHandler? PaymentRequested;
 
     public string ScreenTitleText => T("pos.terminal.title");
@@ -173,6 +179,8 @@ public sealed partial class PosTerminalViewModel : ObservableObject, IDisposable
     public string MemberText => T("pos.terminal.actions.member");
 
     public string SyncText => T("pos.terminal.actions.sync");
+
+    public string ReregisterDeviceText => T("pos.terminal.actions.reregisterDevice");
 
     public string OnlineText => T(Session.IsOnline ? "pos.status.online" : "pos.status.offline");
 
@@ -431,7 +439,7 @@ public sealed partial class PosTerminalViewModel : ObservableObject, IDisposable
             }
 
             var searchStopwatch = Stopwatch.StartNew();
-            var matches = _priceIndex.Search(submittedScanText);
+            var matches = _priceIndex.Search(Session.StoreCode, submittedScanText);
             searchStopwatch.Stop();
             searchElapsedMs = searchStopwatch.ElapsedMilliseconds;
 
@@ -896,6 +904,14 @@ public sealed partial class PosTerminalViewModel : ObservableObject, IDisposable
         }
     }
 
+    private async Task ReregisterDeviceAsync()
+    {
+        if (_onReregisterDeviceAsync is not null)
+        {
+            await _onReregisterDeviceAsync();
+        }
+    }
+
     private void BeginRemoteLookup(CartLine line, SellableItemDto item)
     {
         if (!Session.IsOnline || _remoteLookupRefreshAsync is null)
@@ -1034,7 +1050,7 @@ public sealed partial class PosTerminalViewModel : ObservableObject, IDisposable
     {
         var matches = string.IsNullOrWhiteSpace(ScanText)
             ? catalogItems.Take(8)
-            : _priceIndex.Search(ScanText);
+            : _priceIndex.Search(Session.StoreCode, ScanText);
         Matches.ReplaceWith(matches);
         SelectedItem = Matches.FirstOrDefault();
     }
@@ -1088,6 +1104,7 @@ public sealed partial class PosTerminalViewModel : ObservableObject, IDisposable
         OnPropertyChanged(nameof(RecallOrderText));
         OnPropertyChanged(nameof(MemberText));
         OnPropertyChanged(nameof(SyncText));
+        OnPropertyChanged(nameof(ReregisterDeviceText));
         OnPropertyChanged(nameof(OnlineText));
         OnPropertyChanged(nameof(PendingSyncText));
         OnPropertyChanged(nameof(StatusMessage));

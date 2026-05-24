@@ -700,7 +700,7 @@
         <Grid Grid.Column="1" Background="{StaticResource PosSurfaceBrush}">
             <Grid.RowDefinitions>
                 <RowDefinition Height="Auto" />
-                <RowDefinition Height="Auto" />
+                <RowDefinition Height="*" />
                 <RowDefinition Height="Auto" />
                 <RowDefinition Height="Auto" />
             </Grid.RowDefinitions>
@@ -717,7 +717,7 @@
                 </StackPanel>
             </Border>
 
-            <UniformGrid Grid.Row="1" Columns="3" Rows="5" Margin="12,0,12,6">
+            <UniformGrid Grid.Row="1" Columns="3" Rows="5" Margin="12,0,12,6" VerticalAlignment="Stretch">
                 <Button Content="1" Command="{Binding KeypadInputCommand}" CommandParameter="1" Style="{StaticResource PosMainNumberButtonStyle}" />
                 <Button Content="2" Command="{Binding KeypadInputCommand}" CommandParameter="2" Style="{StaticResource PosMainNumberButtonStyle}" />
                 <Button Content="3" Command="{Binding KeypadInputCommand}" CommandParameter="3" Style="{StaticResource PosMainNumberButtonStyle}" />
@@ -843,12 +843,12 @@
                         <TextBlock Text="{loc:Loc Refund}" Style="{StaticResource PosStitchTileLabelStyle}" />
                     </StackPanel>
                 </Button>
-                <Button IsEnabled="False" Style="{StaticResource PosStitchActionButtonStyle}">
+                <Button Command="{Binding ReregisterDeviceCommand}" Style="{StaticResource PosStitchActionButtonStyle}">
                     <StackPanel>
                         <Border Style="{StaticResource PosStitchActionIconCircleStyle}">
-                            <materialDesign:PackIcon Kind="AccountSwitch" Width="18" Height="18" Foreground="{StaticResource PosMutedForegroundBrush}" HorizontalAlignment="Center" VerticalAlignment="Center" />
+                            <materialDesign:PackIcon Kind="CashRegister" Width="18" Height="18" Foreground="{StaticResource PosPrimaryBrush}" HorizontalAlignment="Center" VerticalAlignment="Center" />
                         </Border>
-                        <TextBlock Text="{loc:Loc pos.terminal.actions.switchUser}" Style="{StaticResource PosStitchTileLabelStyle}" />
+                        <TextBlock Text="{Binding ReregisterDeviceText}" Style="{StaticResource PosStitchTileLabelStyle}" />
                     </StackPanel>
                 </Button>
                 <Button IsEnabled="False" Style="{StaticResource PosStitchActionButtonStyle}">

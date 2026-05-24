@@ -71,7 +71,8 @@ public partial class App : Application
                     {
                         client.BaseAddress = GetCatalogApiBaseAddress();
                         client.Timeout = TimeSpan.FromSeconds(3);
-                    });
+                    })
+                    .AddHttpMessageHandler<DeviceAuthorizationMessageHandler>();
                     services.AddHttpClient<IConnectivityApiClient, ConnectivityApiClient>(client =>
                     {
                         client.BaseAddress = GetCatalogApiBaseAddress();

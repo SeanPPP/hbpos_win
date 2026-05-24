@@ -46,6 +46,7 @@ public sealed partial class MainViewModel : ObservableObject
     private LocalDeviceCache? _pendingDeviceRegistrationCache;
     private Task? _deviceRegistrationStoreLoadTask;
     private Task? _posPostShowStartupTask;
+    private AppStartupOptions? _startupOptions;
 
     [ObservableProperty]
     private PosSessionState _session = new("HB POS", DefaultTestStoreCode, "Main Branch", "Terminal 04", "C001", "Alice", false, 0);
@@ -233,6 +234,7 @@ public sealed partial class MainViewModel : ObservableObject
 
     public async Task InitializeAsync(AppStartupOptions startupOptions)
     {
+        _startupOptions = startupOptions;
         await _schema.InitializeAsync();
         _schemaReady = true;
 
@@ -248,11 +250,7 @@ public sealed partial class MainViewModel : ObservableObject
                 || !string.Equals(cachedDevice.HardwareId, hardwareId, StringComparison.OrdinalIgnoreCase))
             {
                 _deviceAuthorizationState.Clear();
-                DeviceRegistration = new DeviceRegistrationViewModel(
-                    _deviceApiClient,
-                    _deviceRepository,
-                    _fingerprintService);
-                DeviceRegistration.DeviceActivated += async (_, args) => await ActivateDeviceAsync(args, startupOptions);
+                DeviceRegistration = CreateDeviceRegistrationViewModel(startupOptions);
                 _pendingDeviceRegistrationCache = cachedDevice;
                 DeviceRegistration.Prepare(cachedDevice);
                 CurrentScreen = DeviceRegistration;
@@ -307,6 +305,8 @@ public sealed partial class MainViewModel : ObservableObject
 
     private async Task ActivateDeviceAsync(DeviceActivatedEventArgs args, AppStartupOptions startupOptions)
     {
+        _deviceRegistrationStoreLoadTask = null;
+        _posPostShowStartupTask = null;
         Session = Session with
         {
             StoreCode = args.StoreCode,
@@ -328,6 +328,7 @@ public sealed partial class MainViewModel : ObservableObject
 
     private async Task InitializePosExperienceAsync(AppStartupOptions startupOptions)
     {
+        PosTerminal?.Dispose();
         IReadOnlyList<SellableItemDto> cachedItems = [];
         if (startupOptions.PreviewMode)
         {
@@ -351,7 +352,8 @@ public sealed partial class MainViewModel : ObservableObject
             ReloadCatalogIndexAsync,
             SyncCatalogAndReloadAsync,
             RefreshOnlineStateAsync,
-            _rawScannerService);
+            _rawScannerService,
+            BeginDeviceReregistrationAsync);
         SpecialProducts = new SpecialProductsViewModel(
             _priceIndex,
             _cart,
@@ -547,6 +549,18 @@ public sealed partial class MainViewModel : ObservableObject
         RefreshLocalizedShell();
     }
 
+    private DeviceRegistrationViewModel CreateDeviceRegistrationViewModel(AppStartupOptions startupOptions)
+    {
+        var viewModel = new DeviceRegistrationViewModel(
+            _deviceApiClient,
+            _deviceRepository,
+            _fingerprintService);
+        viewModel.DeviceActivated += async (_, args) => await ActivateDeviceAsync(args, startupOptions);
+        viewModel.DeviceReregistered += (_, _) => ApplyDeviceReregistered();
+        viewModel.CancelRequested += (_, _) => CancelDeviceReregistration();
+        return viewModel;
+    }
+
     private void RefreshClock()
     {
         CurrentTime = DateTimeOffset.Now.ToString("yyyy-MM-dd HH:mm:ss");
@@ -691,9 +705,69 @@ public sealed partial class MainViewModel : ObservableObject
 
     private async Task<IReadOnlyList<SellableItemDto>> ReloadCatalogIndexAsync(CancellationToken cancellationToken = default)
     {
-        var cachedItems = await _catalogRepository.LoadSellableItemsAsync(cancellationToken);
+        var cachedItems = await _catalogRepository.LoadSellableItemsAsync(Session.StoreCode, cancellationToken);
         _priceIndex.ReplaceAll(cachedItems);
         return cachedItems;
+    }
+
+    private async Task BeginDeviceReregistrationAsync()
+    {
+        if (_startupOptions?.PreviewMode == true)
+        {
+            StatusMessage = "Preview mode does not support device reregistration.";
+            return;
+        }
+
+        if (!_cart.IsEmpty)
+        {
+            StatusMessage = "请先完成或清空当前购物车后再重新注册设备。";
+            return;
+        }
+
+        var overview = await _syncQueueRepository.GetOverviewAsync();
+        if (overview.PendingCount > 0 || overview.FailedCount > 0 || overview.SyncingCount > 0)
+        {
+            StatusMessage = "存在待同步、失败或同步中的订单，请先处理同步后再重新注册设备。";
+            await RefreshPendingSyncAsync();
+            return;
+        }
+
+        var startupOptions = _startupOptions ?? new AppStartupOptions([], false, null, null);
+        DeviceRegistration = CreateDeviceRegistrationViewModel(startupOptions);
+        _pendingDeviceRegistrationCache = null;
+        _deviceRegistrationStoreLoadTask = null;
+        DeviceRegistration.PrepareReregister(Session.StoreCode);
+        CurrentScreen = DeviceRegistration;
+        _deviceRegistrationStoreLoadTask = DeviceRegistration.LoadStoresAsync(null);
+        await _deviceRegistrationStoreLoadTask;
+    }
+
+    private void ApplyDeviceReregistered()
+    {
+        _deviceAuthorizationState.Clear();
+        _posPostShowStartupTask = null;
+        PosTerminal?.Dispose();
+        PosTerminal = null;
+        SpecialProducts = null;
+        CashPayment = null;
+        TransactionHistory = null;
+        _lastCompletedOrder = null;
+        _cart.Clear();
+        SetCustomerDisplayWindowMode(CustomerDisplayWindowMode.Closed, Application.Current?.MainWindow);
+        StatusMessage = "设备重新注册申请已提交，旧注册信息已禁用，请等待审批后重新检查。";
+    }
+
+    private void CancelDeviceReregistration()
+    {
+        if (PosTerminal is null)
+        {
+            return;
+        }
+
+        DeviceRegistration = null;
+        _deviceRegistrationStoreLoadTask = null;
+        ShowPos();
+        StatusMessage = "已取消重新注册设备。";
     }
 
     private void OnCartChanged(object? sender, EventArgs e)
@@ -818,9 +892,12 @@ public sealed partial class MainViewModel : ObservableObject
 
     public void ToggleCustomerDisplayWindow(Window? owner)
     {
-        var targetMode = CustomerDisplayWindowMode == CustomerDisplayWindowMode.Closed
-            ? CustomerDisplayWindowMode.Fullscreen
-            : CustomerDisplayWindowMode.Closed;
+        var targetMode = CustomerDisplayWindowMode switch
+        {
+            CustomerDisplayWindowMode.Closed => CustomerDisplayWindowMode.Normal,
+            CustomerDisplayWindowMode.Normal => CustomerDisplayWindowMode.Fullscreen,
+            _ => CustomerDisplayWindowMode.Closed
+        };
         SetCustomerDisplayWindowMode(targetMode, owner);
     }
 

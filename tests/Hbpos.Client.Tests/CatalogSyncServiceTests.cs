@@ -200,7 +200,28 @@ public sealed class CatalogSyncServiceTests
         await service.FullSyncAsync("S01");
 
         var pageRequest = Assert.Single(apiClient.PageRequests);
-        Assert.Equal(("S01", null, 1000), pageRequest);
+        Assert.Equal(("S01", null, 5000), pageRequest);
+    }
+
+    [Fact]
+    public async Task DownloadSpecialProductsAsync_RequestsRemotePagesWithMaxBatchSize()
+    {
+        var repository = new FakeLocalCatalogRepository();
+        var apiClient = new FakeCatalogApiClient();
+        apiClient.SpecialProductsPageResponses.Enqueue(new CatalogSpecialProductsPageResponse(
+            "S01",
+            Timestamp,
+            Cursor: null,
+            [],
+            NextCursor: null,
+            HasMore: false,
+            TotalCount: 0));
+        var service = new SpecialProductService(repository, apiClient);
+
+        await service.DownloadSpecialProductsAsync("S01");
+
+        var pageRequest = Assert.Single(apiClient.PageRequests);
+        Assert.Equal(("S01", null, 5000), pageRequest);
     }
 
     [Fact]
@@ -259,6 +280,36 @@ public sealed class CatalogSyncServiceTests
         Assert.Equal("P01", response.ProductCode);
         Assert.True(response.IsSpecialProduct);
         Assert.Equal("P01", Assert.Single(response.Items).ProductCode);
+    }
+
+    [Fact]
+    public async Task CatalogApiClient_GetSpecialProductsPageAsync_GetsJsonAndUnwrapsApiResult()
+    {
+        HttpRequestMessage? capturedRequest = null;
+        var expected = new CatalogSpecialProductsPageResponse(
+            "S01",
+            Timestamp,
+            Cursor: null,
+            [CreateLookupItem("P01", "p01-code")],
+            NextCursor: null,
+            HasMore: false,
+            TotalCount: 1);
+        var handler = new StubHttpMessageHandler((request, _) =>
+        {
+            capturedRequest = request;
+            return JsonResponse(ApiResult<CatalogSpecialProductsPageResponse>.Ok(expected));
+        });
+        var client = new CatalogApiClient(new HttpClient(handler)
+        {
+            BaseAddress = new Uri("http://localhost:5000/")
+        });
+
+        var response = await client.GetSpecialProductsPageAsync("S01", cursor: null, pageSize: 100);
+
+        Assert.Equal(HttpMethod.Get, capturedRequest?.Method);
+        Assert.Equal("http://localhost:5000/api/v1/catalog/special-products/page?storeCode=S01&pageSize=100", capturedRequest?.RequestUri?.ToString());
+        Assert.Equal("P01", Assert.Single(response.Items).ProductCode);
+        Assert.Equal(1, response.TotalCount);
     }
 
     [Fact]
@@ -492,6 +543,14 @@ public sealed class CatalogSyncServiceTests
             return Task.FromResult(0);
         }
 
+        public Task<int> ClearSpecialProductFlagsExceptAsync(
+            string storeCode,
+            IEnumerable<string> productCodesToKeep,
+            CancellationToken cancellationToken = default)
+        {
+            return Task.FromResult(0);
+        }
+
         public Task<IReadOnlyList<LocalSellableItemCompareRow>> LoadSellableItemComparePageAsync(
             string storeCode,
             string? afterLookupCodeNormalized,
@@ -505,6 +564,11 @@ public sealed class CatalogSyncServiceTests
         {
             return Task.FromResult<IReadOnlyList<SellableItemDto>>([]);
         }
+
+        public Task<IReadOnlyList<SellableItemDto>> LoadSellableItemsAsync(string storeCode, CancellationToken cancellationToken = default)
+        {
+            return Task.FromResult<IReadOnlyList<SellableItemDto>>([]);
+        }
     }
 
     private sealed class FakeCatalogApiClient : ICatalogApiClient
@@ -512,6 +576,8 @@ public sealed class CatalogSyncServiceTests
         public Queue<CatalogSyncPageResponse> PageResponses { get; } = new();
 
         public Queue<CatalogCompareResponse> CompareResponses { get; } = new();
+
+        public Queue<CatalogSpecialProductsPageResponse> SpecialProductsPageResponses { get; } = new();
 
         public List<(string StoreCode, string? Cursor, int PageSize)> PageRequests { get; } = [];
 
@@ -541,6 +607,16 @@ public sealed class CatalogSyncServiceTests
             return CompareException is not null
                 ? Task.FromException<CatalogCompareResponse>(CompareException)
                 : Task.FromResult(CompareResponses.Dequeue());
+        }
+
+        public Task<CatalogSpecialProductsPageResponse> GetSpecialProductsPageAsync(
+            string storeCode,
+            string? cursor,
+            int pageSize,
+            CancellationToken cancellationToken = default)
+        {
+            PageRequests.Add((storeCode, cursor, pageSize));
+            return Task.FromResult(SpecialProductsPageResponses.Dequeue());
         }
 
         public Task<CatalogLookupResponse?> LookupSellableItemAsync(
