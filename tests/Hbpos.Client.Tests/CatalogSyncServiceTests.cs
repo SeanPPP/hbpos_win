@@ -233,6 +233,35 @@ public sealed class CatalogSyncServiceTests
     }
 
     [Fact]
+    public async Task CatalogApiClient_MarkSpecialProductAsync_PostsJsonAndUnwrapsApiResult()
+    {
+        HttpRequestMessage? capturedRequest = null;
+        var expected = new CatalogSpecialProductMarkResponse(
+            "S01",
+            "P01",
+            true,
+            Timestamp,
+            [CreateLookupItem("P01", "p01-code")]);
+        var handler = new StubHttpMessageHandler((request, _) =>
+        {
+            capturedRequest = request;
+            return JsonResponse(ApiResult<CatalogSpecialProductMarkResponse>.Ok(expected));
+        });
+        var client = new CatalogApiClient(new HttpClient(handler)
+        {
+            BaseAddress = new Uri("http://localhost:5000/")
+        });
+
+        var response = await client.MarkSpecialProductAsync(new CatalogSpecialProductMarkRequest("S01", "P01", true));
+
+        Assert.Equal(HttpMethod.Post, capturedRequest?.Method);
+        Assert.Equal("http://localhost:5000/api/v1/catalog/special-products/mark", capturedRequest?.RequestUri?.ToString());
+        Assert.Equal("P01", response.ProductCode);
+        Assert.True(response.IsSpecialProduct);
+        Assert.Equal("P01", Assert.Single(response.Items).ProductCode);
+    }
+
+    [Fact]
     public async Task DeviceAuthorizationMessageHandler_AddsBearerAndDeviceHeaders()
     {
         HttpRequestMessage? capturedRequest = null;
