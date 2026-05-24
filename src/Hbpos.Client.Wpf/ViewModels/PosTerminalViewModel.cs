@@ -18,6 +18,7 @@ public sealed partial class PosTerminalViewModel : ObservableObject, IDisposable
     private readonly LocalSellableItemIndex _priceIndex;
     private readonly PosCartService _cart;
     private readonly Action? _onOpenPayment;
+    private readonly Func<Task>? _onOpenSpecialProductsAsync;
     private readonly ILocalizationService? _localization;
     private readonly IRawScannerService? _rawScannerService;
     private readonly Func<string, string, CancellationToken, Task<RemoteLookupRefreshResult>>? _remoteLookupRefreshAsync;
@@ -57,6 +58,7 @@ public sealed partial class PosTerminalViewModel : ObservableObject, IDisposable
         PosCartService cart,
         PosSessionState session,
         Action? onOpenPayment,
+        Func<Task>? onOpenSpecialProductsAsync = null,
         ILocalizationService? localization = null,
         Func<string, string, CancellationToken, Task<RemoteLookupRefreshResult>>? remoteLookupRefreshAsync = null,
         Func<CancellationToken, Task<IReadOnlyList<SellableItemDto>>>? reloadCatalogAsync = null,
@@ -68,6 +70,7 @@ public sealed partial class PosTerminalViewModel : ObservableObject, IDisposable
         _cart = cart;
         _session = session;
         _onOpenPayment = onOpenPayment;
+        _onOpenSpecialProductsAsync = onOpenSpecialProductsAsync;
         _localization = localization;
         _remoteLookupRefreshAsync = remoteLookupRefreshAsync;
         _reloadCatalogAsync = reloadCatalogAsync;
@@ -99,6 +102,7 @@ public sealed partial class PosTerminalViewModel : ObservableObject, IDisposable
         ClearSearchCommand = new RelayCommand(ClearSearch, () => !string.IsNullOrWhiteSpace(ScanText));
         ClearCartCommand = new RelayCommand(ClearCart, () => !_cart.IsEmpty);
         OpenPaymentCommand = new RelayCommand(OpenPayment, () => !_cart.IsEmpty);
+        OpenSpecialProductsCommand = new AsyncRelayCommand(OpenSpecialProductsAsync);
         SyncCommand = new AsyncRelayCommand(SyncAsync);
     }
 
@@ -139,6 +143,8 @@ public sealed partial class PosTerminalViewModel : ObservableObject, IDisposable
     public IRelayCommand ClearCartCommand { get; }
 
     public IRelayCommand OpenPaymentCommand { get; }
+
+    public IAsyncRelayCommand OpenSpecialProductsCommand { get; }
 
     public IAsyncRelayCommand SyncCommand { get; }
 
@@ -466,11 +472,13 @@ public sealed partial class PosTerminalViewModel : ObservableObject, IDisposable
         {
             IsMatchesPopupOpen = false;
             var cartUpdateStopwatch = Stopwatch.StartNew();
-            AddItem(SelectedItem);
+            autoAdded = AddItem(SelectedItem);
             cartUpdateStopwatch.Stop();
             cartUpdateElapsedMs = cartUpdateStopwatch.ElapsedMilliseconds;
-            ScanText = string.Empty;
-            autoAdded = true;
+            if (autoAdded)
+            {
+                ScanText = string.Empty;
+            }
         }
         else
         {
@@ -500,10 +508,12 @@ public sealed partial class PosTerminalViewModel : ObservableObject, IDisposable
         }
 
         SelectedItem = item;
-        AddItem(item);
-        ScanText = string.Empty;
-        IsMatchesPopupOpen = false;
-        IsTouchKeyboardOpen = false;
+        if (AddItem(item))
+        {
+            ScanText = string.Empty;
+            IsMatchesPopupOpen = false;
+            IsTouchKeyboardOpen = false;
+        }
     }
 
     private void RemoveLine(CartLine? line)
@@ -520,6 +530,11 @@ public sealed partial class PosTerminalViewModel : ObservableObject, IDisposable
     {
         if (line is null || !_cart.IncreaseLine(line))
         {
+            if (line is not null)
+            {
+                SetStatus("cart.status.quantityMustBeInteger");
+            }
+
             return;
         }
 
@@ -531,6 +546,11 @@ public sealed partial class PosTerminalViewModel : ObservableObject, IDisposable
     {
         if (line is null || !_cart.DecreaseLine(line))
         {
+            if (line is not null)
+            {
+                SetStatus("cart.status.quantityMustBeInteger");
+            }
+
             return;
         }
 
@@ -552,6 +572,12 @@ public sealed partial class PosTerminalViewModel : ObservableObject, IDisposable
         if (value <= 0m)
         {
             SetStatus("pos.status.quantityMustBePositive");
+            return;
+        }
+
+        if (!PosCartService.IsPositiveIntegerQuantity(value))
+        {
+            SetStatus("cart.status.quantityMustBeInteger");
             return;
         }
 
@@ -742,13 +768,30 @@ public sealed partial class PosTerminalViewModel : ObservableObject, IDisposable
         SetStatus("pos.status.lineDiscountUpdated");
     }
 
-    private void AddItem(SellableItemDto item)
+    private bool AddItem(SellableItemDto item)
     {
-        var line = _cart.AddItem(item);
+        if (!PosCartService.IsPositiveIntegerQuantity(item.QuantityFactor))
+        {
+            SetStatus("cart.status.quantityMustBeInteger");
+            return false;
+        }
+
+        CartLine line;
+        try
+        {
+            line = _cart.AddItem(item);
+        }
+        catch (InvalidOperationException)
+        {
+            SetStatus("cart.status.quantityMustBeInteger");
+            return false;
+        }
+
         SelectCartLine(line);
         IsTouchKeyboardOpen = false;
         SetStatus("pos.status.added", item.DisplayName);
         BeginRemoteLookup(line, item);
+        return true;
     }
 
     private void SelectCartLine(CartLine line)
@@ -829,8 +872,28 @@ public sealed partial class PosTerminalViewModel : ObservableObject, IDisposable
 
     private void OpenPayment()
     {
+        if (_cart.HasNonIntegerQuantity)
+        {
+            SetStatus("cart.status.quantityMustBeInteger");
+            return;
+        }
+
+        if (_cart.HasZeroPriceLine)
+        {
+            SetStatus("cart.status.zeroPriceItem");
+            return;
+        }
+
         PaymentRequested?.Invoke(this, EventArgs.Empty);
         _onOpenPayment?.Invoke();
+    }
+
+    private async Task OpenSpecialProductsAsync()
+    {
+        if (_onOpenSpecialProductsAsync is not null)
+        {
+            await _onOpenSpecialProductsAsync();
+        }
     }
 
     private void BeginRemoteLookup(CartLine line, SellableItemDto item)

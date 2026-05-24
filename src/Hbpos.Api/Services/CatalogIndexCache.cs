@@ -10,6 +10,8 @@ public interface ICatalogIndexCache
         DateTimeOffset? since,
         Func<CancellationToken, Task<CatalogIndexBuildResult?>> buildAsync,
         CancellationToken cancellationToken);
+
+    void InvalidateStore(string storeCode);
 }
 
 public sealed record CatalogIndexBuildResult(
@@ -81,6 +83,18 @@ public sealed class CatalogIndexCache : ICatalogIndexCache
                 return await AwaitEntryAsync(key, newEntry, cancellationToken);
             }
         }
+    }
+
+    public void InvalidateStore(string storeCode)
+    {
+        var normalizedStoreCode = NormalizeStoreCode(storeCode);
+        foreach (var key in _entries.Keys.Where(key =>
+            string.Equals(key.StoreCode, normalizedStoreCode, StringComparison.OrdinalIgnoreCase)))
+        {
+            _entries.TryRemove(key, out _);
+        }
+
+        Log($"cache invalidated store={normalizedStoreCode}");
     }
 
     private async Task<CatalogIndexBuildResult?> AwaitEntryAsync(

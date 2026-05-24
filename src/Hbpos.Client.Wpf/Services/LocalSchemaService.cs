@@ -86,6 +86,11 @@ public sealed class LocalSchemaService(LocalSqliteStore store) : ILocalSchemaSer
             await ExecuteAsync(connection, "ALTER TABLE LocalSellableItemIndex ADD COLUMN DiscountRate TEXT NULL;", cancellationToken);
         }
 
+        if (!columns.Contains("IsSpecialProduct"))
+        {
+            await ExecuteAsync(connection, "ALTER TABLE LocalSellableItemIndex ADD COLUMN IsSpecialProduct INTEGER NOT NULL DEFAULT 0;", cancellationToken);
+        }
+
         await ExecuteAsync(
             connection,
             """
@@ -112,7 +117,8 @@ public sealed class LocalSchemaService(LocalSqliteStore store) : ILocalSchemaSer
                 PriceSourceLabel || '|' ||
                 QuantityFactor || '|' ||
                 IFNULL(ProductImage, '') || '|' ||
-                IFNULL(DiscountRate, '')
+                IFNULL(DiscountRate, '') || '|' ||
+                IsSpecialProduct
             WHERE ContentHash IS NULL OR TRIM(ContentHash) = '';
             """,
             cancellationToken);
@@ -192,6 +198,7 @@ public sealed class LocalSchemaService(LocalSqliteStore store) : ILocalSchemaSer
             Barcode TEXT NULL,
             ProductImage TEXT NULL,
             DiscountRate TEXT NULL,
+            IsSpecialProduct INTEGER NOT NULL DEFAULT 0,
             RetailPrice TEXT NOT NULL,
             PriceSource INTEGER NOT NULL,
             PriceSourceLabel TEXT NOT NULL,
@@ -268,6 +275,15 @@ public sealed class LocalSchemaService(LocalSqliteStore store) : ILocalSchemaSer
             Value TEXT NOT NULL,
             UpdatedAt TEXT NOT NULL
         );
+        """,
+        """
+        CREATE TABLE IF NOT EXISTS LocalSpecialProductSortOrder (
+            StoreCode TEXT NOT NULL,
+            ProductCode TEXT NOT NULL,
+            SortOrder INTEGER NOT NULL,
+            UpdatedAt TEXT NOT NULL,
+            PRIMARY KEY (StoreCode, ProductCode)
+        );
         """
     ];
 
@@ -280,6 +296,10 @@ public sealed class LocalSchemaService(LocalSqliteStore store) : ILocalSchemaSer
         """
         CREATE INDEX IF NOT EXISTS IX_LocalSellableItemIndex_Lookup
         ON LocalSellableItemIndex (StoreCode, LookupCode, Barcode, ItemNumber);
+        """,
+        """
+        CREATE INDEX IF NOT EXISTS IX_LocalSellableItemIndex_Store_Special_Product
+        ON LocalSellableItemIndex (StoreCode, IsSpecialProduct, ProductCode);
         """
     ];
 }

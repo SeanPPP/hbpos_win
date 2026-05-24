@@ -23,11 +23,12 @@
 
     <Grid Background="{StaticResource PosScreenBackgroundBrush}">
         <Grid.RowDefinitions>
-            <RowDefinition Height="44" />
+            <RowDefinition x:Name="TitleBarRow" Height="44" />
             <RowDefinition Height="*" />
         </Grid.RowDefinitions>
 
-        <Border Grid.Row="0"
+        <Border x:Name="TitleBar"
+                Grid.Row="0"
                 Background="White"
                 BorderBrush="#FFE7E8EB"
                 BorderThickness="0,0,0,1"

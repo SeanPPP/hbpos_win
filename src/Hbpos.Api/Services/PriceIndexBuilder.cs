@@ -12,7 +12,7 @@ public sealed class PriceIndexBuilder : IPriceIndexBuilder
     public IReadOnlyList<SellableItemDto> Build(string storeCode, PriceIndexInput input)
     {
         var storePrices = input.StoreRetailPrices
-            .Where(x => HasText(x.ProductCode) && x.StoreRetailPriceValue.HasValue)
+            .Where(x => HasText(x.ProductCode))
             .GroupBy(x => x.ProductCode!, StringComparer.OrdinalIgnoreCase)
             .ToDictionary(x => x.Key, x => x.OrderByDescending(p => p.UpdatedAt).First(), StringComparer.OrdinalIgnoreCase);
 
@@ -41,7 +41,8 @@ public sealed class PriceIndexBuilder : IPriceIndexBuilder
                 "clearance",
                 clearance.UpdatedAt,
                 clearance.ReferenceCode,
-                discountRate: null));
+                discountRate: null,
+                isSpecialProduct: false));
         }
 
         foreach (var multi in input.StoreMultiCodeProducts.Where(x => HasText(x.MultiBarcode) && x.MultiCodeRetailPrice.HasValue))
@@ -57,7 +58,8 @@ public sealed class PriceIndexBuilder : IPriceIndexBuilder
                 "multi-code",
                 multi.UpdatedAt,
                 multi.ReferenceCode,
-                multi.DiscountRate));
+                multi.DiscountRate,
+                isSpecialProduct: false));
         }
 
         foreach (var set in input.ProductSetCodes.Where(x => HasText(x.SetBarcode)))
@@ -88,7 +90,8 @@ public sealed class PriceIndexBuilder : IPriceIndexBuilder
                 hasStoreMultiPrice ? "set-store-multi-code" : "set",
                 updatedAt,
                 referenceCode,
-                discountRate));
+                discountRate,
+                isSpecialProduct: false));
         }
 
         foreach (var product in input.Products.Where(x => HasText(x.ProductCode)))
@@ -105,11 +108,12 @@ public sealed class PriceIndexBuilder : IPriceIndexBuilder
             var discountRate = source == PriceSourceKind.StoreRetailPrice
                 ? storePrice?.DiscountRate
                 : null;
+            var isSpecialProduct = storePrice?.IsSpecialProduct ?? false;
 
-            AddProductLookup(items, storeCode, product, product.Barcode, price, source, updatedAt, referenceCode, discountRate);
+            AddProductLookup(items, storeCode, product, product.Barcode, price, source, updatedAt, referenceCode, discountRate, isSpecialProduct);
             if (!StringComparer.OrdinalIgnoreCase.Equals(product.Barcode, product.ItemNumber))
             {
-                AddProductLookup(items, storeCode, product, product.ItemNumber, price, source, updatedAt, referenceCode, discountRate);
+                AddProductLookup(items, storeCode, product, product.ItemNumber, price, source, updatedAt, referenceCode, discountRate, isSpecialProduct);
             }
         }
 
@@ -133,7 +137,8 @@ public sealed class PriceIndexBuilder : IPriceIndexBuilder
         PriceSourceKind source,
         DateTimeOffset? updatedAt,
         string? referenceCode,
-        decimal? discountRate)
+        decimal? discountRate,
+        bool isSpecialProduct)
     {
         if (!HasText(lookupCode))
         {
@@ -150,7 +155,8 @@ public sealed class PriceIndexBuilder : IPriceIndexBuilder
             source == PriceSourceKind.StoreRetailPrice ? "store-retail" : "product",
             updatedAt,
             referenceCode,
-            discountRate));
+            discountRate,
+            isSpecialProduct));
     }
 
     private static SellableItemDto CreateItem(
@@ -163,7 +169,8 @@ public sealed class PriceIndexBuilder : IPriceIndexBuilder
         string label,
         DateTimeOffset? updatedAt,
         string? referenceCode,
-        decimal? discountRate)
+        decimal? discountRate,
+        bool isSpecialProduct)
     {
         var trimmedLookupCode = lookupCode.Trim();
 
@@ -181,7 +188,8 @@ public sealed class PriceIndexBuilder : IPriceIndexBuilder
             1m,
             updatedAt,
             product?.ProductImage,
-            NormalizeDiscountRate(discountRate));
+            NormalizeDiscountRate(discountRate),
+            isSpecialProduct);
     }
 
     private static bool HasText(string? value) => !string.IsNullOrWhiteSpace(value);
@@ -244,7 +252,8 @@ public sealed record StoreRetailPriceRecord(
     decimal? StoreRetailPriceValue,
     DateTimeOffset? UpdatedAt,
     string? ReferenceCode = null,
-    decimal? DiscountRate = null);
+    decimal? DiscountRate = null,
+    bool IsSpecialProduct = false);
 
 public sealed record StoreMultiCodeProductRecord(
     string? ProductCode,

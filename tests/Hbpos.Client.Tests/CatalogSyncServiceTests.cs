@@ -439,6 +439,30 @@ public sealed class CatalogSyncServiceTests
             return Task.FromResult<SellableItemDto?>(null);
         }
 
+        public Task<IReadOnlyList<SellableItemDto>> LoadSpecialProductItemsAsync(
+            string storeCode,
+            CancellationToken cancellationToken = default)
+        {
+            return Task.FromResult<IReadOnlyList<SellableItemDto>>([]);
+        }
+
+        public Task SaveSpecialProductOrderAsync(
+            string storeCode,
+            IEnumerable<string> productCodes,
+            CancellationToken cancellationToken = default)
+        {
+            return Task.CompletedTask;
+        }
+
+        public Task<int> UpdateSpecialProductFlagAsync(
+            string storeCode,
+            string productCode,
+            bool isSpecialProduct,
+            CancellationToken cancellationToken = default)
+        {
+            return Task.FromResult(0);
+        }
+
         public Task<IReadOnlyList<LocalSellableItemCompareRow>> LoadSellableItemComparePageAsync(
             string storeCode,
             string? afterLookupCodeNormalized,
@@ -498,6 +522,18 @@ public sealed class CatalogSyncServiceTests
             return LookupException is not null
                 ? Task.FromException<CatalogLookupResponse?>(LookupException)
                 : Task.FromResult(LookupResponse);
+        }
+
+        public Task<CatalogSpecialProductMarkResponse> MarkSpecialProductAsync(
+            CatalogSpecialProductMarkRequest request,
+            CancellationToken cancellationToken = default)
+        {
+            return Task.FromResult(new CatalogSpecialProductMarkResponse(
+                request.StoreCode,
+                request.ProductCode,
+                request.IsSpecialProduct,
+                DateTimeOffset.UtcNow,
+                []));
         }
     }
 

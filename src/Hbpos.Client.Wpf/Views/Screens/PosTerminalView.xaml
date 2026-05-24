@@ -49,6 +49,11 @@
                     <Setter Property="BorderBrush" Value="{StaticResource PosPrimaryBrush}" />
                     <Setter Property="BorderThickness" Value="4,0,0,1" />
                 </Trigger>
+                <DataTrigger Binding="{Binding HasZeroUnitPrice}" Value="True">
+                    <Setter Property="Background" Value="#FFFFEEF0" />
+                    <Setter Property="Foreground" Value="{StaticResource PosDangerBrush}" />
+                    <Setter Property="BorderBrush" Value="{StaticResource PosDangerBrush}" />
+                </DataTrigger>
             </Style.Triggers>
         </Style>
 
@@ -61,6 +66,14 @@
                     <Setter Property="Background" Value="Transparent" />
                     <Setter Property="Foreground" Value="{StaticResource PosTextBrush}" />
                 </Trigger>
+            </Style.Triggers>
+        </Style>
+
+        <Style x:Key="CartZeroPriceAmountTextStyle" TargetType="TextBlock">
+            <Style.Triggers>
+                <DataTrigger Binding="{Binding HasZeroUnitPrice}" Value="True">
+                    <Setter Property="Foreground" Value="{StaticResource PosDangerBrush}" />
+                </DataTrigger>
             </Style.Triggers>
         </Style>
 
@@ -527,7 +540,7 @@
                             <DataGridTemplateColumn.CellTemplate>
                                 <DataTemplate>
                                     <StackPanel VerticalAlignment="Center" HorizontalAlignment="Stretch" Margin="0,6,10,6">
-                                        <TextBlock Text="{Binding UnitPrice, StringFormat={}{0:C2}}" FontSize="13" FontWeight="Black" TextAlignment="Right" HorizontalAlignment="Stretch" />
+                                        <TextBlock Text="{Binding UnitPrice, StringFormat={}{0:C2}}" Style="{StaticResource CartZeroPriceAmountTextStyle}" FontSize="13" FontWeight="Black" TextAlignment="Right" HorizontalAlignment="Stretch" />
                                         <TextBlock Text="{Binding DiscountRateText}"
                                                    Visibility="{Binding HasDiscount, Converter={StaticResource BoolToVis}}"
                                                    FontSize="10"
@@ -577,7 +590,7 @@
                             <DataGridTemplateColumn.CellTemplate>
                                 <DataTemplate>
                                     <StackPanel VerticalAlignment="Center" HorizontalAlignment="Stretch" Margin="0,6,10,6">
-                                        <TextBlock Text="{Binding GrossAmount, StringFormat={}{0:C2}}" FontSize="13" FontWeight="Black" TextAlignment="Right" HorizontalAlignment="Stretch" />
+                                        <TextBlock Text="{Binding GrossAmount, StringFormat={}{0:C2}}" Style="{StaticResource CartZeroPriceAmountTextStyle}" FontSize="13" FontWeight="Black" TextAlignment="Right" HorizontalAlignment="Stretch" />
                                         <TextBlock Text="{Binding ActualAmount, StringFormat={}{0:C2}}"
                                                    Visibility="{Binding HasDiscount, Converter={StaticResource BoolToVis}}"
                                                    FontSize="10"
@@ -689,7 +702,7 @@
                 <RowDefinition Height="Auto" />
                 <RowDefinition Height="Auto" />
                 <RowDefinition Height="Auto" />
-                <RowDefinition Height="*" />
+                <RowDefinition Height="Auto" />
             </Grid.RowDefinitions>
 
             <Border Grid.Row="0" Margin="12,8,12,6" Padding="10,8" Background="#FFE2E2E6" BorderBrush="#80C3C6D6" BorderThickness="1" CornerRadius="14">
@@ -735,7 +748,7 @@
                 </StackPanel>
             </Button>
 
-            <Grid Grid.Row="3" Margin="10,0,10,10" VerticalAlignment="Top">
+            <Grid Grid.Row="3" Margin="10,0,10,0" VerticalAlignment="Top">
                 <Grid.RowDefinitions>
                     <RowDefinition Height="Auto" />
                     <RowDefinition Height="Auto" />
@@ -806,7 +819,7 @@
             </Grid.RowDefinitions>
 
             <UniformGrid Grid.Row="0" Columns="2" Margin="12,12,12,8">
-                <Button IsEnabled="False" Style="{StaticResource PosStitchActionButtonStyle}">
+                <Button Command="{Binding OpenSpecialProductsCommand}" Style="{StaticResource PosStitchActionButtonStyle}">
                     <StackPanel>
                         <Border Style="{StaticResource PosStitchActionIconCircleStyle}">
                             <materialDesign:PackIcon Kind="Star" Width="18" Height="18" Foreground="{StaticResource PosPrimaryBrush}" HorizontalAlignment="Center" VerticalAlignment="Center" />

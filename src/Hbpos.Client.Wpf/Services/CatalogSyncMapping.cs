@@ -24,7 +24,8 @@ internal static class CatalogSyncMapping
             item.QuantityFactor,
             item.UpdatedAt,
             item.ProductImage,
-            item.DiscountRate);
+            item.DiscountRate,
+            item.IsSpecialProduct);
     }
 
     public static CatalogLocalLookupVersionDto ToCompareVersion(this LocalSellableItemCompareRow row)

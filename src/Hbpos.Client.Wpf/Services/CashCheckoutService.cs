@@ -12,6 +12,16 @@ public sealed class CashCheckoutService
             throw new InvalidOperationException("购物车为空，不能收款。");
         }
 
+        if (cart.HasNonIntegerQuantity)
+        {
+            throw new InvalidOperationException("商品数量必须为正整数。");
+        }
+
+        if (cart.HasZeroPriceLine)
+        {
+            throw new InvalidOperationException("购物车存在价格为 0 的商品，不能收款。");
+        }
+
         if (tenderedAmount < cart.ActualAmount)
         {
             throw new InvalidOperationException("实收金额不能小于应收金额。");

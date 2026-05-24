@@ -25,6 +25,10 @@ public interface ICatalogApiClient
         string storeCode,
         string lookupCode,
         CancellationToken cancellationToken = default);
+
+    Task<CatalogSpecialProductMarkResponse> MarkSpecialProductAsync(
+        CatalogSpecialProductMarkRequest request,
+        CancellationToken cancellationToken = default);
 }
 
 public sealed class CatalogApiClient(HttpClient httpClient) : ICatalogApiClient
@@ -128,6 +132,34 @@ public sealed class CatalogApiClient(HttpClient httpClient) : ICatalogApiClient
         {
             stopwatch.Stop();
             Log($"GET {requestUri} failed storeCode={storeCode} lookupCode={lookupCode} elapsedMs={stopwatch.ElapsedMilliseconds} error={ex.Message}");
+            throw;
+        }
+    }
+
+    public async Task<CatalogSpecialProductMarkResponse> MarkSpecialProductAsync(
+        CatalogSpecialProductMarkRequest request,
+        CancellationToken cancellationToken = default)
+    {
+        const string requestUri = "api/v1/catalog/special-products/mark";
+        var stopwatch = Stopwatch.StartNew();
+        Log($"POST {requestUri} start base={httpClient.BaseAddress} store={request.StoreCode} product={request.ProductCode} isSpecial={request.IsSpecialProduct}");
+        try
+        {
+            using var response = await httpClient.PostAsJsonAsync(
+                requestUri,
+                request,
+                JsonOptions,
+                cancellationToken);
+
+            var result = await ReadApiResultAsync<CatalogSpecialProductMarkResponse>(response, cancellationToken);
+            stopwatch.Stop();
+            Log($"POST {requestUri} completed status={(int)response.StatusCode} store={result.StoreCode} product={result.ProductCode} items={result.Items.Count} elapsedMs={stopwatch.ElapsedMilliseconds}");
+            return result;
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            Log($"POST {requestUri} failed store={request.StoreCode} product={request.ProductCode} elapsedMs={stopwatch.ElapsedMilliseconds} error={ex.Message}");
             throw;
         }
     }

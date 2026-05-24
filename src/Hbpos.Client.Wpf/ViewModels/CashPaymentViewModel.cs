@@ -127,6 +127,7 @@ public sealed partial class CashPaymentViewModel : ObservableObject
         OnPropertyChanged(nameof(ActualAmount));
         OnPropertyChanged(nameof(QuickCashAmounts));
         RecalculateChange();
+        RefreshCartValidationStatus();
         ConfirmPaymentCommand.NotifyCanExecuteChanged();
     }
 
@@ -159,6 +160,12 @@ public sealed partial class CashPaymentViewModel : ObservableObject
 
     private async Task ConfirmPaymentAsync()
     {
+        if (TrySetBlockingCartIssueStatus())
+        {
+            ConfirmPaymentCommand.NotifyCanExecuteChanged();
+            return;
+        }
+
         if (!decimal.TryParse(AmountTenderedText, out var tendered))
         {
             SetStatus("payment.cash.status.invalidTendered");
@@ -179,8 +186,40 @@ public sealed partial class CashPaymentViewModel : ObservableObject
     private bool CanConfirmPayment()
     {
         return !_cart.IsEmpty &&
+            !_cart.HasNonIntegerQuantity &&
+            !_cart.HasZeroPriceLine &&
             decimal.TryParse(AmountTenderedText, out var tendered) &&
             tendered >= ActualAmount;
+    }
+
+    private void RefreshCartValidationStatus()
+    {
+        if (TrySetBlockingCartIssueStatus())
+        {
+            return;
+        }
+
+        if (_statusKey is "cart.status.quantityMustBeInteger" or "cart.status.zeroPriceItem")
+        {
+            SetStatus("payment.cash.status.ready");
+        }
+    }
+
+    private bool TrySetBlockingCartIssueStatus()
+    {
+        if (_cart.HasNonIntegerQuantity)
+        {
+            SetStatus("cart.status.quantityMustBeInteger");
+            return true;
+        }
+
+        if (_cart.HasZeroPriceLine)
+        {
+            SetStatus("cart.status.zeroPriceItem");
+            return true;
+        }
+
+        return false;
     }
 
     private void RecalculateChange()

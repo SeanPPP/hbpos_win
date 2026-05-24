@@ -84,6 +84,33 @@ public sealed class PosCoreTests
     }
 
     [Fact]
+    public void Cash_checkout_rejects_zero_price_cart_lines()
+    {
+        var cart = new PosCartService();
+        var checkout = new CashCheckoutService();
+        cart.AddItem(CreateItem("SKU-ZERO", "Zero Tea", "690099", PriceSourceKind.StoreRetailPrice, 0m));
+
+        Assert.Throws<InvalidOperationException>(() => checkout.CreateCashOrder(
+            cart,
+            new PosSessionState("HB POS", "S001", "Main Store", "POS-01", "C001", "Alice", true, 0),
+            tenderedAmount: 0m));
+    }
+
+    [Fact]
+    public void Cash_checkout_rejects_non_integer_cart_quantities()
+    {
+        var cart = new PosCartService();
+        var checkout = new CashCheckoutService();
+        var line = cart.AddItem(CreateItem("SKU-FRACTION", "Fraction Tea", "690098", PriceSourceKind.StoreRetailPrice, 4m));
+        SetUnsafeQuantity(line, 1.5m);
+
+        Assert.Throws<InvalidOperationException>(() => checkout.CreateCashOrder(
+            cart,
+            new PosSessionState("HB POS", "S001", "Main Store", "POS-01", "C001", "Alice", true, 0),
+            tenderedAmount: 10m));
+    }
+
+    [Fact]
     public async Task Pos_terminal_sync_refreshes_online_state_before_syncing()
     {
         var index = new LocalSellableItemIndex();
@@ -258,6 +285,13 @@ public sealed class PosCoreTests
             PriceSourceLabel: priceSource.ToString(),
             QuantityFactor: 1m,
             UpdatedAt: DateTimeOffset.UtcNow);
+    }
+
+    private static void SetUnsafeQuantity(CartLine line, decimal quantity)
+    {
+        var field = typeof(CartLine).GetField("_quantity", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic);
+        Assert.NotNull(field);
+        field.SetValue(line, quantity);
     }
 
     private static LocalOrder CreateLocalOrder()

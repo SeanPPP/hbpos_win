@@ -29,6 +29,13 @@ public partial class CustomerDisplayWindow : Window
         Close();
     }
 
+    public void SetTitleBarVisible(bool isVisible)
+    {
+        TitleBar.Visibility = isVisible ? Visibility.Visible : Visibility.Collapsed;
+        TitleBarRow.Height = isVisible ? new GridLength(44) : new GridLength(0);
+        ResizeMode = isVisible ? ResizeMode.CanResize : ResizeMode.NoResize;
+    }
+
     private void ToggleWindowState()
     {
         WindowState = WindowState == WindowState.Maximized

@@ -28,7 +28,8 @@ public sealed record SellableItemDto(
     decimal QuantityFactor,
     DateTimeOffset? UpdatedAt,
     string? ProductImage = null,
-    decimal? DiscountRate = null);
+    decimal? DiscountRate = null,
+    bool IsSpecialProduct = false);
 
 public sealed record SellableItemsResponse(
     string StoreCode,
@@ -56,7 +57,8 @@ public sealed record CatalogLookupItemDto(
     DateTimeOffset? UpdatedAt,
     string? RowVersion,
     string? ProductImage = null,
-    decimal? DiscountRate = null);
+    decimal? DiscountRate = null,
+    bool IsSpecialProduct = false);
 
 public sealed record CatalogLocalLookupVersionDto(
     string StoreCode,
@@ -102,3 +104,15 @@ public sealed record CatalogLookupResponse(
     string LookupCodeNormalized,
     bool Found,
     CatalogLookupItemDto? Item);
+
+public sealed record CatalogSpecialProductMarkRequest(
+    string StoreCode,
+    string ProductCode,
+    bool IsSpecialProduct);
+
+public sealed record CatalogSpecialProductMarkResponse(
+    string StoreCode,
+    string ProductCode,
+    bool IsSpecialProduct,
+    DateTimeOffset GeneratedAt,
+    IReadOnlyList<CatalogLookupItemDto> Items);

@@ -1,8 +1,10 @@
 using System.Diagnostics;
+using System.Security.Claims;
 using Hbpos.Api.Auth;
 using Hbpos.Api.Services;
 using Hbpos.Contracts.Catalog;
 using Hbpos.Contracts.Common;
+using Hbpos.Contracts.Devices;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 
@@ -156,6 +158,48 @@ public sealed class CatalogController(ICatalogService catalogService) : Controll
         return response is null
             ? NotFound(ApiResult<CatalogLookupResponse>.Fail("STORE_NOT_FOUND", "store was not found or inactive"))
             : Ok(ApiResult<CatalogLookupResponse>.Ok(response));
+    }
+
+    [HttpPost("special-products/mark")]
+    public async Task<ActionResult<ApiResult<CatalogSpecialProductMarkResponse>>> MarkSpecialProduct(
+        [FromBody] CatalogSpecialProductMarkRequest? request,
+        CancellationToken cancellationToken)
+    {
+        if (request is null)
+        {
+            return BadRequest(ApiResult<CatalogSpecialProductMarkResponse>.Fail("MARK_REQUEST_REQUIRED", "request body is required"));
+        }
+
+        if (string.IsNullOrWhiteSpace(request.StoreCode))
+        {
+            return BadRequest(ApiResult<CatalogSpecialProductMarkResponse>.Fail("STORE_CODE_REQUIRED", "storeCode is required"));
+        }
+
+        if (string.IsNullOrWhiteSpace(request.ProductCode))
+        {
+            return BadRequest(ApiResult<CatalogSpecialProductMarkResponse>.Fail("PRODUCT_CODE_REQUIRED", "productCode is required"));
+        }
+
+        if (!this.IsDeviceScopeAllowed(request.StoreCode))
+        {
+            return DeviceAuthorizationExtensions.DeviceScopeForbidden<CatalogSpecialProductMarkResponse>("Device is not authorized for this store.");
+        }
+
+        var updatedBy = User.FindFirstValue(DeviceAuthConstants.DeviceCodeClaim)
+            ?? User.Identity?.Name
+            ?? "pos-device";
+        var response = await catalogService.MarkSpecialProductAsync(request, updatedBy, cancellationToken);
+        if (response.Success && response.Response is not null)
+        {
+            return Ok(ApiResult<CatalogSpecialProductMarkResponse>.Ok(response.Response));
+        }
+
+        var failed = ApiResult<CatalogSpecialProductMarkResponse>.Fail(
+            response.ErrorCode ?? "SPECIAL_PRODUCT_MARK_FAILED",
+            response.Message ?? "failed to update special product");
+        return response.ErrorCode is "STORE_NOT_FOUND" or "PRODUCT_NOT_FOUND"
+            ? NotFound(failed)
+            : BadRequest(failed);
     }
 
     private static void Log(string message)

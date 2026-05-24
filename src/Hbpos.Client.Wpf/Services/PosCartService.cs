@@ -17,14 +17,28 @@ public sealed class PosCartService
 
     public bool IsEmpty => _lines.Count == 0;
 
+    public bool HasZeroPriceLine => _lines.Any(line => line.HasZeroUnitPrice);
+
+    public bool HasNonIntegerQuantity => _lines.Any(line => !IsPositiveIntegerQuantity(line.Quantity));
+
     public event EventHandler? CartChanged;
 
     public CartLine AddItem(SellableItemDto item)
     {
+        if (!IsPositiveIntegerQuantity(item.QuantityFactor))
+        {
+            throw new InvalidOperationException("Cart item quantity must be a positive integer.");
+        }
+
         var existing = FindLineByLookupCode(item.StoreCode, item.LookupCode);
 
         if (existing is not null)
         {
+            if (!IsPositiveIntegerQuantity(existing.Quantity))
+            {
+                throw new InvalidOperationException("Cart line quantity must be a positive integer.");
+            }
+
             existing.Increase(item.QuantityFactor);
             OnCartChanged();
             return existing;
@@ -102,7 +116,7 @@ public sealed class PosCartService
 
     public bool IncreaseLine(CartLine? line)
     {
-        if (line is null || !_lines.Contains(line))
+        if (line is null || !_lines.Contains(line) || !IsPositiveIntegerQuantity(line.Quantity))
         {
             return false;
         }
@@ -114,7 +128,7 @@ public sealed class PosCartService
 
     public bool DecreaseLine(CartLine? line)
     {
-        if (line is null || !_lines.Contains(line))
+        if (line is null || !_lines.Contains(line) || !IsPositiveIntegerQuantity(line.Quantity))
         {
             return false;
         }
@@ -130,7 +144,7 @@ public sealed class PosCartService
 
     public bool SetLineQuantity(CartLine? line, decimal quantity)
     {
-        if (line is null || !_lines.Contains(line) || quantity <= 0m)
+        if (line is null || !_lines.Contains(line) || !IsPositiveIntegerQuantity(quantity))
         {
             return false;
         }
@@ -215,6 +229,11 @@ public sealed class PosCartService
     private void OnCartChanged()
     {
         CartChanged?.Invoke(this, EventArgs.Empty);
+    }
+
+    public static bool IsPositiveIntegerQuantity(decimal quantity)
+    {
+        return quantity > 0m && decimal.Truncate(quantity) == quantity;
     }
 
     private void ApplyOrderDiscountAmount(decimal discountAmount)

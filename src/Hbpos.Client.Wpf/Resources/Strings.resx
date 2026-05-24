@@ -133,6 +133,8 @@
   <data name="pos.status.multipleMatches" xml:space="preserve"><value>Found {0} items. Select one to add.</value></data>
   <data name="pos.status.added" xml:space="preserve"><value>Added {0}</value></data>
   <data name="pos.status.cartCleared" xml:space="preserve"><value>Cart cleared.</value></data>
+  <data name="cart.status.zeroPriceItem" xml:space="preserve"><value>Cart contains a zero-price item. Update the price before checkout.</value></data>
+  <data name="cart.status.quantityMustBeInteger" xml:space="preserve"><value>Item quantity must be a positive integer.</value></data>
   <data name="pos.status.selectCartLine" xml:space="preserve"><value>Select a cart line first.</value></data>
   <data name="pos.status.invalidKeypadValue" xml:space="preserve"><value>Enter a valid keypad value.</value></data>
   <data name="pos.status.quantityMustBePositive" xml:space="preserve"><value>Quantity must be greater than 0.</value></data>
@@ -189,8 +191,14 @@
   <data name="customer.promotionSubtitle" xml:space="preserve"><value>Organic Produce Up to 30% Off</value></data>
   <data name="customer.promotionBody" xml:space="preserve"><value>Fresh market selection this weekend and member-only savings.</value></data>
   <data name="customerDisplay.window.opened" xml:space="preserve"><value>Customer display opened on the second display.</value></data>
+  <data name="customerDisplay.window.openedNormal" xml:space="preserve"><value>Customer display opened in a normal window on the second display.</value></data>
+  <data name="customerDisplay.window.openedFullscreen" xml:space="preserve"><value>Customer display opened full screen on the second display.</value></data>
+  <data name="customerDisplay.window.closed" xml:space="preserve"><value>Customer display closed.</value></data>
   <data name="customerDisplay.window.noSecondDisplay" xml:space="preserve"><value>No second display detected. Customer display was not opened.</value></data>
   <data name="shell.customerDisplayWindow" xml:space="preserve"><value>Customer display window</value></data>
+  <data name="shell.customerDisplay.off" xml:space="preserve"><value>Off</value></data>
+  <data name="shell.customerDisplay.normal" xml:space="preserve"><value>Normal</value></data>
+  <data name="shell.customerDisplay.fullscreen" xml:space="preserve"><value>Full</value></data>
   <data name="shell.window.minimize" xml:space="preserve"><value>Minimize</value></data>
   <data name="shell.window.maximize" xml:space="preserve"><value>Maximize</value></data>
   <data name="shell.window.close" xml:space="preserve"><value>Close</value></data>
@@ -222,4 +230,29 @@
   <data name="success.syncQueued" xml:space="preserve"><value>Order saved locally and queued for upload.</value></data>
   <data name="history.dateRangeLabel" xml:space="preserve"><value>DATE RANGE</value></data>
   <data name="history.searchLabel" xml:space="preserve"><value>ORDER LOOKUP</value></data>
+  <data name="specialProducts.title" xml:space="preserve"><value>Special Products</value></data>
+  <data name="specialProducts.subtitle" xml:space="preserve"><value>{0} ({1}) local special shelf</value></data>
+  <data name="specialProducts.back" xml:space="preserve"><value>Back to POS</value></data>
+  <data name="specialProducts.search.placeholder" xml:space="preserve"><value>Search non-special products to add...</value></data>
+  <data name="specialProducts.search.action" xml:space="preserve"><value>Search</value></data>
+  <data name="specialProducts.refresh" xml:space="preserve"><value>Refresh</value></data>
+  <data name="specialProducts.add" xml:space="preserve"><value>Add Special</value></data>
+  <data name="specialProducts.remove" xml:space="preserve"><value>Remove</value></data>
+  <data name="specialProducts.moveUp" xml:space="preserve"><value>Move Up</value></data>
+  <data name="specialProducts.moveDown" xml:space="preserve"><value>Move Down</value></data>
+  <data name="specialProducts.tapToAdd" xml:space="preserve"><value>Tap to add to cart</value></data>
+  <data name="specialProducts.search.results" xml:space="preserve"><value>Search results</value></data>
+  <data name="specialProducts.empty" xml:space="preserve"><value>No special products cached for this store.</value></data>
+  <data name="specialProducts.search.empty" xml:space="preserve"><value>No matching non-special products.</value></data>
+  <data name="specialProducts.status.ready" xml:space="preserve"><value>Special products ready.</value></data>
+  <data name="specialProducts.status.loaded" xml:space="preserve"><value>Loaded {0} special products from local cache.</value></data>
+  <data name="specialProducts.status.loadFailed" xml:space="preserve"><value>Failed to load special products: {0}</value></data>
+  <data name="specialProducts.status.noSearchResults" xml:space="preserve"><value>No matching non-special products.</value></data>
+  <data name="specialProducts.status.searchResults" xml:space="preserve"><value>Found {0} products that can be marked special.</value></data>
+  <data name="specialProducts.status.addedToCart" xml:space="preserve"><value>Added {0} to cart.</value></data>
+  <data name="specialProducts.status.marked" xml:space="preserve"><value>{0} is now a special product.</value></data>
+  <data name="specialProducts.status.unmarked" xml:space="preserve"><value>{0} removed from special products.</value></data>
+  <data name="specialProducts.status.markFailed" xml:space="preserve"><value>Special product update failed: {0}</value></data>
+  <data name="specialProducts.status.orderSaved" xml:space="preserve"><value>Local special product order saved.</value></data>
+  <data name="specialProducts.status.onlineRequired" xml:space="preserve"><value>Go online to add or remove special product marks.</value></data>
 </root>

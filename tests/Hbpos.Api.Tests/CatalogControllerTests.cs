@@ -19,6 +19,7 @@ public sealed class CatalogControllerTests
         Assert.Equal("sellable-items/page", GetHttpGetTemplate(nameof(CatalogController.GetSellableItemsPage)));
         Assert.Equal("sellable-items/lookup", GetHttpGetTemplate(nameof(CatalogController.LookupSellableItem)));
         Assert.Equal("sellable-items/compare", GetHttpPostTemplate(nameof(CatalogController.CompareSellableItems)));
+        Assert.Equal("special-products/mark", GetHttpPostTemplate(nameof(CatalogController.MarkSpecialProduct)));
         Assert.Equal("sellable-items", GetHttpGetTemplate(nameof(CatalogController.GetSellableItems)));
     }
 
@@ -136,6 +137,61 @@ public sealed class CatalogControllerTests
         Assert.Equal("DEVICE_SCOPE_FORBIDDEN", apiResult.ErrorCode);
     }
 
+    [Fact]
+    public async Task MarkSpecialProduct_ReturnsBadRequestWhenProductCodeMissing()
+    {
+        var controller = new CatalogController(new FakeCatalogService());
+        SetAuthenticatedDevice(controller, storeCode: "S01", deviceCode: "POS-01");
+
+        var result = await controller.MarkSpecialProduct(
+            new CatalogSpecialProductMarkRequest("S01", "", true),
+            CancellationToken.None);
+
+        var badRequest = Assert.IsType<BadRequestObjectResult>(result.Result);
+        var apiResult = Assert.IsType<ApiResult<CatalogSpecialProductMarkResponse>>(badRequest.Value);
+        Assert.False(apiResult.Success);
+        Assert.Equal("PRODUCT_CODE_REQUIRED", apiResult.ErrorCode);
+    }
+
+    [Fact]
+    public async Task MarkSpecialProduct_ReturnsForbiddenWhenDeviceStoreDoesNotMatch()
+    {
+        var controller = new CatalogController(new FakeCatalogService());
+        SetAuthenticatedDevice(controller, storeCode: "S02", deviceCode: "POS-02");
+
+        var result = await controller.MarkSpecialProduct(
+            new CatalogSpecialProductMarkRequest("S01", "P01", true),
+            CancellationToken.None);
+
+        var forbidden = Assert.IsType<ObjectResult>(result.Result);
+        Assert.Equal(StatusCodes.Status403Forbidden, forbidden.StatusCode);
+        var apiResult = Assert.IsType<ApiResult<CatalogSpecialProductMarkResponse>>(forbidden.Value);
+        Assert.False(apiResult.Success);
+        Assert.Equal("DEVICE_SCOPE_FORBIDDEN", apiResult.ErrorCode);
+    }
+
+    [Fact]
+    public async Task MarkSpecialProduct_ReturnsWrappedServiceResponse()
+    {
+        var service = new FakeCatalogService();
+        var controller = new CatalogController(service);
+        SetAuthenticatedDevice(controller, storeCode: "S01", deviceCode: "POS-01");
+
+        var result = await controller.MarkSpecialProduct(
+            new CatalogSpecialProductMarkRequest("S01", "P01", true),
+            CancellationToken.None);
+
+        var ok = Assert.IsType<OkObjectResult>(result.Result);
+        var apiResult = Assert.IsType<ApiResult<CatalogSpecialProductMarkResponse>>(ok.Value);
+        Assert.True(apiResult.Success);
+        Assert.NotNull(apiResult.Data);
+        Assert.Equal("S01", apiResult.Data.StoreCode);
+        Assert.Equal("P01", apiResult.Data.ProductCode);
+        Assert.True(apiResult.Data.IsSpecialProduct);
+        Assert.Equal("POS-01", service.LastSpecialProductUpdatedBy);
+        Assert.Equal(new CatalogSpecialProductMarkRequest("S01", "P01", true), service.LastSpecialProductRequest);
+    }
+
     private static string? GetHttpGetTemplate(string methodName)
     {
         return typeof(CatalogController)
@@ -191,6 +247,10 @@ public sealed class CatalogControllerTests
 
         public (string StoreCode, string? LookupCode, string? LookupCodeNormalized)? LastLookupRequest { get; private set; }
 
+        public CatalogSpecialProductMarkRequest? LastSpecialProductRequest { get; private set; }
+
+        public string? LastSpecialProductUpdatedBy { get; private set; }
+
         public Task<IReadOnlyList<StoreDto>> GetStoresAsync(CancellationToken cancellationToken)
         {
             return Task.FromResult<IReadOnlyList<StoreDto>>([]);
@@ -231,6 +291,21 @@ public sealed class CatalogControllerTests
         {
             LastLookupRequest = (storeCode, lookupCode, lookupCodeNormalized);
             return Task.FromResult(LookupResponse);
+        }
+
+        public Task<CatalogSpecialProductMarkServiceResult> MarkSpecialProductAsync(
+            CatalogSpecialProductMarkRequest request,
+            string updatedBy,
+            CancellationToken cancellationToken)
+        {
+            LastSpecialProductRequest = request;
+            LastSpecialProductUpdatedBy = updatedBy;
+            return Task.FromResult(CatalogSpecialProductMarkServiceResult.Ok(new CatalogSpecialProductMarkResponse(
+                request.StoreCode,
+                request.ProductCode,
+                request.IsSpecialProduct,
+                DateTimeOffset.UnixEpoch,
+                [])));
         }
     }
 }

@@ -80,6 +80,7 @@ public partial class App : Application
                     services.AddSingleton<IDeviceFingerprintService, DeviceFingerprintService>();
                     services.AddSingleton<ILocalCatalogSyncService, LocalCatalogSyncService>();
                     services.AddSingleton<IRemoteLookupRefreshService, RemoteLookupRefreshService>();
+                    services.AddSingleton<ISpecialProductService, SpecialProductService>();
                     services.AddSingleton<IDisplayTopologyService, DisplayTopologyService>();
                     services.AddSingleton<ICustomerDisplayWindowService, CustomerDisplayWindowService>();
                     services.AddSingleton<RawScannerInputProcessor>();

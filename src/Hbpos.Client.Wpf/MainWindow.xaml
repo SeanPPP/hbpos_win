@@ -5,6 +5,7 @@
         xmlns:loc="clr-namespace:Hbpos.Client.Wpf.Localization"
         xmlns:materialDesign="http://materialdesigninxaml.net/winfx/xaml/themes"
         xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+        xmlns:services="clr-namespace:Hbpos.Client.Wpf.Services"
         xmlns:views="clr-namespace:Hbpos.Client.Wpf.Views.Screens"
         xmlns:vm="clr-namespace:Hbpos.Client.Wpf.ViewModels"
         mc:Ignorable="d"
@@ -21,8 +22,90 @@
     <Window.Resources>
         <BooleanToVisibilityConverter x:Key="BoolToVis" />
 
+        <Style x:Key="CustomerDisplayModeButtonBaseStyle" TargetType="Button">
+            <Setter Property="MinWidth" Value="44" />
+            <Setter Property="Height" Value="30" />
+            <Setter Property="Margin" Value="1,0" />
+            <Setter Property="Padding" Value="8,0" />
+            <Setter Property="Background" Value="#FFF4F5F7" />
+            <Setter Property="BorderBrush" Value="#FFD9DCE5" />
+            <Setter Property="Foreground" Value="{StaticResource PosMutedForegroundBrush}" />
+            <Setter Property="FontSize" Value="11" />
+            <Setter Property="FontWeight" Value="Black" />
+            <Setter Property="Cursor" Value="Hand" />
+            <Setter Property="Focusable" Value="False" />
+            <Setter Property="IsTabStop" Value="False" />
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="{x:Type Button}">
+                        <Border x:Name="Root"
+                                Background="{TemplateBinding Background}"
+                                BorderBrush="{TemplateBinding BorderBrush}"
+                                BorderThickness="1"
+                                CornerRadius="7"
+                                SnapsToDevicePixels="True">
+                            <ContentPresenter HorizontalAlignment="Center"
+                                              VerticalAlignment="Center"
+                                              RecognizesAccessKey="True"
+                                              TextBlock.Foreground="{TemplateBinding Foreground}" />
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="Root" Property="Opacity" Value="0.88" />
+                            </Trigger>
+                            <Trigger Property="IsPressed" Value="True">
+                                <Setter TargetName="Root" Property="Opacity" Value="0.76" />
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <Style x:Key="CustomerDisplayClosedButtonStyle" TargetType="Button" BasedOn="{StaticResource CustomerDisplayModeButtonBaseStyle}">
+            <Setter Property="Background" Value="#FFF4F5F7" />
+            <Setter Property="BorderBrush" Value="#FFD1D5DB" />
+            <Setter Property="Foreground" Value="#FF4B5563" />
+            <Style.Triggers>
+                <DataTrigger Binding="{Binding CustomerDisplayWindowMode}" Value="{x:Static services:CustomerDisplayWindowMode.Closed}">
+                    <Setter Property="Background" Value="#FF4B5563" />
+                    <Setter Property="BorderBrush" Value="#FF4B5563" />
+                    <Setter Property="Foreground" Value="White" />
+                </DataTrigger>
+            </Style.Triggers>
+        </Style>
+
+        <Style x:Key="CustomerDisplayNormalButtonStyle" TargetType="Button" BasedOn="{StaticResource CustomerDisplayModeButtonBaseStyle}">
+            <Setter Property="Background" Value="#FFE0F2FE" />
+            <Setter Property="BorderBrush" Value="#FF93C5FD" />
+            <Setter Property="Foreground" Value="#FF075985" />
+            <Style.Triggers>
+                <DataTrigger Binding="{Binding CustomerDisplayWindowMode}" Value="{x:Static services:CustomerDisplayWindowMode.Normal}">
+                    <Setter Property="Background" Value="#FF2563EB" />
+                    <Setter Property="BorderBrush" Value="#FF2563EB" />
+                    <Setter Property="Foreground" Value="White" />
+                </DataTrigger>
+            </Style.Triggers>
+        </Style>
+
+        <Style x:Key="CustomerDisplayFullscreenButtonStyle" TargetType="Button" BasedOn="{StaticResource CustomerDisplayModeButtonBaseStyle}">
+            <Setter Property="Background" Value="#FFCCFBF1" />
+            <Setter Property="BorderBrush" Value="#FF5EEAD4" />
+            <Setter Property="Foreground" Value="#FF0F766E" />
+            <Style.Triggers>
+                <DataTrigger Binding="{Binding CustomerDisplayWindowMode}" Value="{x:Static services:CustomerDisplayWindowMode.Fullscreen}">
+                    <Setter Property="Background" Value="#FF0F766E" />
+                    <Setter Property="BorderBrush" Value="#FF0F766E" />
+                    <Setter Property="Foreground" Value="White" />
+                </DataTrigger>
+            </Style.Triggers>
+        </Style>
+
         <DataTemplate DataType="{x:Type vm:PosTerminalViewModel}">
             <views:PosTerminalView />
+        </DataTemplate>
+        <DataTemplate DataType="{x:Type vm:SpecialProductsViewModel}">
+            <views:SpecialProductsView />
         </DataTemplate>
         <DataTemplate DataType="{x:Type vm:CashPaymentViewModel}">
             <views:CashPaymentView />
@@ -80,24 +163,25 @@
                 </StackPanel>
 
                 <StackPanel Grid.Column="1" Orientation="Horizontal" HorizontalAlignment="Center" VerticalAlignment="Center">
-                    <Button Command="{Binding ToggleCustomerDisplayWindowCommand}"
-                            Style="{StaticResource TitleBarButtonStyle}"
+                    <Border Background="#FFF8FAFD"
+                            BorderBrush="#FFE1E5EC"
+                            BorderThickness="1"
+                            CornerRadius="9"
+                            Padding="2"
+                            Margin="0,0,6,0"
                             ToolTip="{loc:Loc shell.customerDisplayWindow}">
-                        <materialDesign:PackIcon Kind="Monitor"
-                                                 Width="18"
-                                                 Height="18">
-                            <materialDesign:PackIcon.Style>
-                                <Style TargetType="materialDesign:PackIcon">
-                                    <Setter Property="Foreground" Value="{StaticResource PosMutedForegroundBrush}" />
-                                    <Style.Triggers>
-                                        <DataTrigger Binding="{Binding IsCustomerDisplayOpen}" Value="True">
-                                            <Setter Property="Foreground" Value="{StaticResource PosPrimaryBrush}" />
-                                        </DataTrigger>
-                                    </Style.Triggers>
-                                </Style>
-                            </materialDesign:PackIcon.Style>
-                        </materialDesign:PackIcon>
-                    </Button>
+                        <StackPanel Orientation="Horizontal">
+                            <Button Content="{loc:Loc shell.customerDisplay.off}"
+                                    Command="{Binding CloseCustomerDisplayWindowCommand}"
+                                    Style="{StaticResource CustomerDisplayClosedButtonStyle}" />
+                            <Button Content="{loc:Loc shell.customerDisplay.normal}"
+                                    Command="{Binding ShowCustomerDisplayNormalCommand}"
+                                    Style="{StaticResource CustomerDisplayNormalButtonStyle}" />
+                            <Button Content="{loc:Loc shell.customerDisplay.fullscreen}"
+                                    Command="{Binding ShowCustomerDisplayFullscreenCommand}"
+                                    Style="{StaticResource CustomerDisplayFullscreenButtonStyle}" />
+                        </StackPanel>
+                    </Border>
                     <Button Content="{loc:Loc NavPos}"
                             Command="{Binding ShowPosCommand}"
                             Style="{StaticResource PosShellNavButtonStyle}"

@@ -22,7 +22,12 @@ public sealed class CartLine : ObservableObject
 
     public CartLine(SellableItemDto item)
     {
-        Quantity = Math.Max(1m, item.QuantityFactor);
+        if (!IsPositiveIntegerQuantity(item.QuantityFactor))
+        {
+            throw new InvalidOperationException("Cart line quantity must be a positive integer.");
+        }
+
+        Quantity = item.QuantityFactor;
         UpdateFrom(item);
     }
 
@@ -96,6 +101,7 @@ public sealed class CartLine : ObservableObject
             {
                 RefreshDiscountForGrossChange();
                 OnAmountPropertiesChanged();
+                OnPropertyChanged(nameof(HasZeroUnitPrice));
             }
         }
     }
@@ -117,6 +123,8 @@ public sealed class CartLine : ObservableObject
     public decimal ActualAmount => decimal.Round((Quantity * UnitPrice) - DiscountAmount, 2, MidpointRounding.AwayFromZero);
 
     public bool HasDiscount => DiscountAmount > 0m && GrossAmount > 0m;
+
+    public bool HasZeroUnitPrice => UnitPrice == 0m;
 
     public string DiscountRateText
     {
@@ -163,6 +171,11 @@ public sealed class CartLine : ObservableObject
 
     public void SetQuantity(decimal quantity)
     {
+        if (!IsPositiveIntegerQuantity(quantity))
+        {
+            throw new InvalidOperationException("Cart line quantity must be a positive integer.");
+        }
+
         Quantity = quantity;
     }
 
@@ -201,6 +214,11 @@ public sealed class CartLine : ObservableObject
     public static string NormalizeLookupCode(string? lookupCode)
     {
         return (lookupCode ?? string.Empty).Trim().ToUpperInvariant();
+    }
+
+    private static bool IsPositiveIntegerQuantity(decimal quantity)
+    {
+        return quantity > 0m && decimal.Truncate(quantity) == quantity;
     }
 
     private void OnAmountPropertiesChanged()

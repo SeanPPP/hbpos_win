@@ -163,14 +163,51 @@ public sealed class PosCartServiceTests
         var cart = new PosCartService();
         var line = cart.AddItem(CreateItem(price: 10m));
 
-        Assert.True(cart.SetLineQuantity(line, 2.5m));
+        Assert.True(cart.SetLineQuantity(line, 2m));
         Assert.True(cart.SetLineUnitPrice(line, 4.2m));
 
-        Assert.Equal(2.5m, line.Quantity);
+        Assert.Equal(2m, line.Quantity);
         Assert.Equal(4.2m, line.UnitPrice);
-        Assert.Equal(10.5m, line.GrossAmount);
-        Assert.Equal(10.5m, cart.TotalAmount);
-        Assert.Equal(10.5m, cart.ActualAmount);
+        Assert.Equal(8.4m, line.GrossAmount);
+        Assert.Equal(8.4m, cart.TotalAmount);
+        Assert.Equal(8.4m, cart.ActualAmount);
+    }
+
+    [Fact]
+    public void Cart_detects_zero_price_lines_and_updates_after_price_edit()
+    {
+        var cart = new PosCartService();
+        var line = cart.AddItem(CreateItem(price: 0m));
+
+        Assert.True(line.HasZeroUnitPrice);
+        Assert.True(cart.HasZeroPriceLine);
+
+        Assert.True(cart.SetLineUnitPrice(line, 4.2m));
+
+        Assert.False(line.HasZeroUnitPrice);
+        Assert.False(cart.HasZeroPriceLine);
+    }
+
+    [Fact]
+    public void SetLineQuantity_rejects_non_integer_quantity()
+    {
+        var cart = new PosCartService();
+        var line = cart.AddItem(CreateItem(price: 10m));
+
+        Assert.False(cart.SetLineQuantity(line, 2.5m));
+
+        Assert.Equal(1m, line.Quantity);
+        Assert.False(cart.HasNonIntegerQuantity);
+    }
+
+    [Fact]
+    public void AddItem_rejects_non_integer_quantity_factor()
+    {
+        var cart = new PosCartService();
+
+        Assert.Throws<InvalidOperationException>(() => cart.AddItem(CreateItem(quantityFactor: 1.5m)));
+
+        Assert.Empty(cart.Lines);
     }
 
     [Fact]
@@ -287,7 +324,8 @@ public sealed class PosCartServiceTests
         string? itemNumber = null,
         decimal price = 10m,
         PriceSourceKind priceSource = PriceSourceKind.StoreRetailPrice,
-        string? productImage = null)
+        string? productImage = null,
+        decimal quantityFactor = 1m)
     {
         return new SellableItemDto(
             StoreCode: storeCode,
@@ -300,7 +338,7 @@ public sealed class PosCartServiceTests
             RetailPrice: price,
             PriceSource: priceSource,
             PriceSourceLabel: priceSource.ToString(),
-            QuantityFactor: 1m,
+            QuantityFactor: quantityFactor,
             UpdatedAt: DateTimeOffset.UtcNow,
             ProductImage: productImage);
     }

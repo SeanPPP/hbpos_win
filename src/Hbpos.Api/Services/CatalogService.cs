@@ -2,6 +2,7 @@ using System.Diagnostics;
 using System.Globalization;
 using System.Security.Cryptography;
 using System.Text;
+using BlazorApp.Shared.Helper;
 using BlazorApp.Shared.Models;
 using Hbpos.Api.Data;
 using Hbpos.Contracts.Catalog;
@@ -33,6 +34,24 @@ public interface ICatalogService
         string? lookupCode,
         string? lookupCodeNormalized,
         CancellationToken cancellationToken);
+
+    Task<CatalogSpecialProductMarkServiceResult> MarkSpecialProductAsync(
+        CatalogSpecialProductMarkRequest request,
+        string updatedBy,
+        CancellationToken cancellationToken);
+}
+
+public sealed record CatalogSpecialProductMarkServiceResult(
+    bool Success,
+    CatalogSpecialProductMarkResponse? Response,
+    string? ErrorCode,
+    string? Message)
+{
+    public static CatalogSpecialProductMarkServiceResult Ok(CatalogSpecialProductMarkResponse response) =>
+        new(true, response, null, null);
+
+    public static CatalogSpecialProductMarkServiceResult Fail(string errorCode, string message) =>
+        new(false, null, errorCode, message);
 }
 
 public sealed class CatalogService(
@@ -91,6 +110,103 @@ public sealed class CatalogService(
     {
         var index = await BuildSellableIndexAsync(storeCode, since: null, cancellationToken);
         return index?.CatalogIndex.Lookup(lookupCode, lookupCodeNormalized);
+    }
+
+    public async Task<CatalogSpecialProductMarkServiceResult> MarkSpecialProductAsync(
+        CatalogSpecialProductMarkRequest request,
+        string updatedBy,
+        CancellationToken cancellationToken)
+    {
+        var normalizedStoreCode = NormalizeStoreCode(request.StoreCode);
+        var normalizedProductCode = NormalizeProductCode(request.ProductCode);
+        if (string.IsNullOrEmpty(normalizedStoreCode))
+        {
+            return CatalogSpecialProductMarkServiceResult.Fail("STORE_CODE_REQUIRED", "storeCode is required");
+        }
+
+        if (string.IsNullOrEmpty(normalizedProductCode))
+        {
+            return CatalogSpecialProductMarkServiceResult.Fail("PRODUCT_CODE_REQUIRED", "productCode is required");
+        }
+
+        var store = await dbContext.MainDb.Queryable<Store>()
+            .FirstAsync(x => x.StoreCode == normalizedStoreCode && x.IsActive && !x.IsDeleted, cancellationToken);
+        if (store is null)
+        {
+            return CatalogSpecialProductMarkServiceResult.Fail("STORE_NOT_FOUND", "store was not found or inactive");
+        }
+
+        var product = await dbContext.MainDb.Queryable<Product>()
+            .FirstAsync(x => x.ProductCode == normalizedProductCode && x.IsActive && !x.IsDeleted, cancellationToken);
+        if (product is null)
+        {
+            return CatalogSpecialProductMarkServiceResult.Fail("PRODUCT_NOT_FOUND", "product was not found or inactive");
+        }
+
+        var now = DateTime.UtcNow;
+        var actor = string.IsNullOrWhiteSpace(updatedBy) ? "pos-device" : updatedBy.Trim();
+
+        await dbContext.MainDb.Ado.BeginTranAsync();
+        try
+        {
+            var storeRetailPrice = await dbContext.MainDb.Queryable<StoreRetailPrice>()
+                .FirstAsync(x =>
+                    x.StoreCode == normalizedStoreCode &&
+                    x.ProductCode == normalizedProductCode &&
+                    !x.IsDeleted,
+                    cancellationToken);
+
+            if (storeRetailPrice is null)
+            {
+                storeRetailPrice = new StoreRetailPrice
+                {
+                    UUID = UuidHelper.GenerateUuid7(),
+                    StoreCode = normalizedStoreCode,
+                    ProductCode = normalizedProductCode,
+                    StoreProductCode = UuidHelper.GenerateUuid7(),
+                    SupplierCode = product.LocalSupplierCode,
+                    PurchasePrice = product.PurchasePrice,
+                    StoreRetailPriceValue = product.RetailPrice,
+                    IsActive = true,
+                    IsAutoPricing = product.IsAutoPricing,
+                    IsSpecialProduct = request.IsSpecialProduct,
+                    CreatedAt = now,
+                    UpdatedAt = now,
+                    CreatedBy = actor,
+                    UpdatedBy = actor,
+                    IsDeleted = false
+                };
+
+                await dbContext.MainDb.Insertable(storeRetailPrice).ExecuteCommandAsync();
+            }
+            else
+            {
+                storeRetailPrice.IsSpecialProduct = request.IsSpecialProduct;
+                storeRetailPrice.UpdatedAt = now;
+                storeRetailPrice.UpdatedBy = actor;
+                await dbContext.MainDb.Updateable(storeRetailPrice).ExecuteCommandAsync();
+            }
+
+            await dbContext.MainDb.Ado.CommitTranAsync();
+        }
+        catch
+        {
+            await dbContext.MainDb.Ado.RollbackTranAsync();
+            throw;
+        }
+
+        catalogIndexCache.InvalidateStore(normalizedStoreCode);
+        var index = await BuildSellableIndexAsync(normalizedStoreCode, since: null, cancellationToken);
+        var items = index?.CatalogIndex.Items
+            .Where(x => string.Equals(x.ProductCode, normalizedProductCode, StringComparison.OrdinalIgnoreCase))
+            .ToArray() ?? [];
+
+        return CatalogSpecialProductMarkServiceResult.Ok(new CatalogSpecialProductMarkResponse(
+            normalizedStoreCode,
+            normalizedProductCode,
+            request.IsSpecialProduct,
+            index?.GeneratedAt ?? DateTimeOffset.UtcNow,
+            items));
     }
 
     private async Task<CatalogIndexBuildResult?> BuildSellableIndexAsync(
@@ -157,7 +273,8 @@ public sealed class CatalogService(
                 x.StoreRetailPriceValue,
                 ToOffset(x.UpdatedAt ?? x.CreatedAt),
                 x.UUID,
-                x.DiscountRate))
+                x.DiscountRate,
+                x.IsSpecialProduct))
             .ToList();
 
         stepStopwatch.Restart();
@@ -237,6 +354,11 @@ public sealed class CatalogService(
     }
 
     private static string NormalizeStoreCode(string? value)
+    {
+        return (value ?? string.Empty).Trim();
+    }
+
+    private static string NormalizeProductCode(string? value)
     {
         return (value ?? string.Empty).Trim();
     }

@@ -351,13 +351,11 @@ public sealed class PosTerminalCashPaymentViewModelTests
         var line = Assert.Single(viewModel.CartLines);
 
         viewModel.KeypadInputCommand.Execute("2");
-        viewModel.KeypadInputCommand.Execute(".");
-        viewModel.KeypadInputCommand.Execute("5");
         viewModel.ModifySelectedLineQuantityCommand.Execute(null);
 
         Assert.Empty(viewModel.KeypadBuffer);
-        Assert.Equal(2.5m, line.Quantity);
-        Assert.Equal(5m, viewModel.ActualAmount);
+        Assert.Equal(2m, line.Quantity);
+        Assert.Equal(4m, viewModel.ActualAmount);
         Assert.Same(line, viewModel.SelectedCartLine);
 
         viewModel.KeypadInputCommand.Execute("3");
@@ -365,8 +363,35 @@ public sealed class PosTerminalCashPaymentViewModelTests
 
         Assert.Empty(viewModel.KeypadBuffer);
         Assert.Equal(3m, line.UnitPrice);
-        Assert.Equal(7.5m, viewModel.ActualAmount);
+        Assert.Equal(6m, viewModel.ActualAmount);
         Assert.Same(line, viewModel.SelectedCartLine);
+    }
+
+    [Fact]
+    public void Pos_terminal_keypad_rejects_decimal_quantity_updates()
+    {
+        var cart = new PosCartService();
+        var index = new LocalSellableItemIndex();
+        index.ReplaceAll([CreateItem("SKU-136", "Integer Tea", "930136", PriceSourceKind.StoreRetailPrice, 2m)]);
+        var viewModel = new PosTerminalViewModel(
+            index,
+            cart,
+            Session,
+            onOpenPayment: null);
+
+        viewModel.ScanText = "930136";
+        viewModel.ScanCommand.Execute(null);
+        var line = Assert.Single(viewModel.CartLines);
+
+        viewModel.KeypadInputCommand.Execute("2");
+        viewModel.KeypadInputCommand.Execute(".");
+        viewModel.KeypadInputCommand.Execute("5");
+        viewModel.ModifySelectedLineQuantityCommand.Execute(null);
+
+        Assert.Equal("2.5", viewModel.KeypadBuffer);
+        Assert.Equal(1m, line.Quantity);
+        Assert.Equal(2m, viewModel.ActualAmount);
+        Assert.Equal("cart.status.quantityMustBeInteger", viewModel.StatusMessage);
     }
 
     [Fact]
@@ -550,6 +575,37 @@ public sealed class PosTerminalCashPaymentViewModelTests
         Assert.Equal(4m, viewModel.DiscountAmount);
         Assert.Equal(36m, viewModel.ActualAmount);
         Assert.Equal("pos.status.orderDiscountUpdated", viewModel.StatusMessage);
+    }
+
+    [Fact]
+    public void Pos_terminal_blocks_payment_until_zero_price_line_is_fixed()
+    {
+        var cart = new PosCartService();
+        var index = new LocalSellableItemIndex();
+        var openedPayment = false;
+        index.ReplaceAll([CreateItem("SKU-140", "Zero Price Tea", "930140", PriceSourceKind.StoreRetailPrice, 0m)]);
+        var viewModel = new PosTerminalViewModel(
+            index,
+            cart,
+            Session,
+            onOpenPayment: () => openedPayment = true);
+
+        viewModel.ScanText = "930140";
+        viewModel.ScanCommand.Execute(null);
+        var line = Assert.Single(viewModel.CartLines);
+
+        viewModel.OpenPaymentCommand.Execute(null);
+
+        Assert.False(openedPayment);
+        Assert.True(line.HasZeroUnitPrice);
+        Assert.Equal("cart.status.zeroPriceItem", viewModel.StatusMessage);
+
+        viewModel.KeypadInputCommand.Execute("2");
+        viewModel.ModifySelectedLinePriceCommand.Execute(null);
+        viewModel.OpenPaymentCommand.Execute(null);
+
+        Assert.True(openedPayment);
+        Assert.False(line.HasZeroUnitPrice);
     }
 
     [Fact]
@@ -1027,6 +1083,60 @@ public sealed class PosTerminalCashPaymentViewModelTests
     }
 
     [Fact]
+    public async Task Cash_payment_blocks_zero_price_cart_without_saving_or_clearing()
+    {
+        var cart = new PosCartService();
+        cart.AddItem(CreateItem("SKU-141", "Zero Payment Tea", "930141", PriceSourceKind.StoreRetailPrice, 0m));
+        var orders = new InMemoryOrderRepository();
+        var viewModel = new CashPaymentViewModel(
+            cart,
+            new CashCheckoutService(),
+            orders,
+            new InMemorySyncQueueRepository(),
+            Session)
+        {
+            AmountTenderedText = "0"
+        };
+
+        Assert.False(viewModel.ConfirmPaymentCommand.CanExecute(null));
+        Assert.Equal("cart.status.zeroPriceItem", viewModel.StatusMessage);
+
+        await viewModel.ConfirmPaymentCommand.ExecuteAsync(null);
+
+        Assert.Null(orders.LastOrder);
+        Assert.Single(cart.Lines);
+        Assert.Equal("cart.status.zeroPriceItem", viewModel.StatusMessage);
+    }
+
+    [Fact]
+    public async Task Cash_payment_blocks_non_integer_quantity_cart_without_saving_or_clearing()
+    {
+        var cart = new PosCartService();
+        var line = cart.AddItem(CreateItem("SKU-142", "Fractional Tea", "930142", PriceSourceKind.StoreRetailPrice, 5m));
+        SetUnsafeQuantity(line, 1.5m);
+        var orders = new InMemoryOrderRepository();
+        var viewModel = new CashPaymentViewModel(
+            cart,
+            new CashCheckoutService(),
+            orders,
+            new InMemorySyncQueueRepository(),
+            Session)
+        {
+            AmountTenderedText = "10"
+        };
+
+        Assert.False(viewModel.ConfirmPaymentCommand.CanExecute(null));
+        Assert.Equal("cart.status.quantityMustBeInteger", viewModel.StatusMessage);
+
+        await viewModel.ConfirmPaymentCommand.ExecuteAsync(null);
+
+        Assert.Null(orders.LastOrder);
+        Assert.Single(cart.Lines);
+        Assert.Equal(1.5m, line.Quantity);
+        Assert.Equal("cart.status.quantityMustBeInteger", viewModel.StatusMessage);
+    }
+
+    [Fact]
     public async Task Cash_payment_confirmation_saves_order_snapshot_and_refreshes_pending_sync()
     {
         var databasePath = Path.Combine(Path.GetTempPath(), $"hbpos-cash-vm-{Guid.NewGuid():N}.db");
@@ -1090,6 +1200,13 @@ public sealed class PosTerminalCashPaymentViewModelTests
             QuantityFactor: 1m,
             UpdatedAt: DateTimeOffset.UtcNow,
             ProductImage: productImage);
+    }
+
+    private static void SetUnsafeQuantity(CartLine line, decimal quantity)
+    {
+        var field = typeof(CartLine).GetField("_quantity", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic);
+        Assert.NotNull(field);
+        field.SetValue(line, quantity);
     }
 
     private static async Task WaitUntilAsync(Func<bool> condition)

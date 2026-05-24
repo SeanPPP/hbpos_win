@@ -24,6 +24,7 @@ public sealed partial class MainViewModel : ObservableObject
     private readonly ILocalCatalogRepository _catalogRepository;
     private readonly ILocalCatalogSyncService _catalogSync;
     private readonly IRemoteLookupRefreshService _remoteLookupRefresh;
+    private readonly ISpecialProductService _specialProductService;
     private readonly IConnectivityApiClient _connectivityApiClient;
     private readonly ILocalDeviceRepository _deviceRepository;
     private readonly IDeviceApiClient _deviceApiClient;
@@ -95,6 +96,9 @@ public sealed partial class MainViewModel : ObservableObject
     private bool _isCustomerDisplayOpen;
 
     [ObservableProperty]
+    private CustomerDisplayWindowMode _customerDisplayWindowMode = CustomerDisplayWindowMode.Closed;
+
+    [ObservableProperty]
     private int _pendingUploadCount;
 
     [ObservableProperty]
@@ -127,6 +131,7 @@ public sealed partial class MainViewModel : ObservableObject
         ILocalCatalogRepository catalogRepository,
         ILocalCatalogSyncService catalogSync,
         IRemoteLookupRefreshService remoteLookupRefresh,
+        ISpecialProductService specialProductService,
         IConnectivityApiClient connectivityApiClient,
         ILocalDeviceRepository deviceRepository,
         IDeviceApiClient deviceApiClient,
@@ -146,6 +151,7 @@ public sealed partial class MainViewModel : ObservableObject
         _catalogRepository = catalogRepository;
         _catalogSync = catalogSync;
         _remoteLookupRefresh = remoteLookupRefresh;
+        _specialProductService = specialProductService;
         _connectivityApiClient = connectivityApiClient;
         _deviceRepository = deviceRepository;
         _deviceApiClient = deviceApiClient;
@@ -166,12 +172,15 @@ public sealed partial class MainViewModel : ObservableObject
         ShowCustomerDisplayCommand = new RelayCommand(ShowCustomerDisplay);
         ToggleSyncCenterCommand = new AsyncRelayCommand(ToggleSyncCenterAsync);
         ToggleCustomerDisplayWindowCommand = new RelayCommand(ToggleCustomerDisplayWindow);
+        CloseCustomerDisplayWindowCommand = new RelayCommand(CloseCustomerDisplayWindow);
+        ShowCustomerDisplayNormalCommand = new RelayCommand(ShowCustomerDisplayNormal);
+        ShowCustomerDisplayFullscreenCommand = new RelayCommand(ShowCustomerDisplayFullscreen);
         ToggleCultureCommand = new AsyncRelayCommand(ToggleCultureAsync);
         ResetScannerBindingCommand = new AsyncRelayCommand(ResetScannerBindingAsync);
 
         _cart.CartChanged += OnCartChanged;
         _localization.CultureChanged += OnCultureChanged;
-        _customerDisplayWindowService.Closed += (_, _) => IsCustomerDisplayOpen = false;
+        _customerDisplayWindowService.Closed += (_, _) => CustomerDisplayWindowMode = CustomerDisplayWindowMode.Closed;
         _clockTimer.Tick += (_, _) => RefreshClock();
         _connectivityTimer.Tick += async (_, _) => await RefreshOnlineStateAsync(CancellationToken.None);
         _catalogDownloadHideTimer.Tick += (_, _) =>
@@ -183,6 +192,8 @@ public sealed partial class MainViewModel : ObservableObject
     }
 
     public PosTerminalViewModel? PosTerminal { get; private set; }
+
+    public SpecialProductsViewModel? SpecialProducts { get; private set; }
 
     public CashPaymentViewModel? CashPayment { get; private set; }
 
@@ -209,6 +220,12 @@ public sealed partial class MainViewModel : ObservableObject
     public IAsyncRelayCommand ToggleSyncCenterCommand { get; }
 
     public IRelayCommand ToggleCustomerDisplayWindowCommand { get; }
+
+    public IRelayCommand CloseCustomerDisplayWindowCommand { get; }
+
+    public IRelayCommand ShowCustomerDisplayNormalCommand { get; }
+
+    public IRelayCommand ShowCustomerDisplayFullscreenCommand { get; }
 
     public IAsyncRelayCommand ToggleCultureCommand { get; }
 
@@ -328,12 +345,21 @@ public sealed partial class MainViewModel : ObservableObject
             _cart,
             Session,
             ShowCashPayment,
+            ShowSpecialProductsAsync,
             _localization,
             RefreshRemoteLookupAsync,
             ReloadCatalogIndexAsync,
             SyncCatalogAndReloadAsync,
             RefreshOnlineStateAsync,
             _rawScannerService);
+        SpecialProducts = new SpecialProductsViewModel(
+            _priceIndex,
+            _cart,
+            _catalogRepository,
+            _specialProductService,
+            Session,
+            _localization,
+            ShowPos);
         if (cachedItems.Count > 0)
         {
             PosTerminal.LoadMatches(cachedItems);
@@ -408,6 +434,11 @@ public sealed partial class MainViewModel : ObservableObject
     partial void OnCurrentScreenChanged(object? value)
     {
         _rawScannerService.SetActivePage(value == PosTerminal ? PosTerminalViewModel.PageId : null);
+    }
+
+    partial void OnCustomerDisplayWindowModeChanged(CustomerDisplayWindowMode value)
+    {
+        IsCustomerDisplayOpen = value != CustomerDisplayWindowMode.Closed;
     }
 
     partial void OnSelectedCultureNameChanged(string value)
@@ -531,6 +562,11 @@ public sealed partial class MainViewModel : ObservableObject
         if (CashPayment is not null)
         {
             CashPayment.Session = Session;
+        }
+
+        if (SpecialProducts is not null)
+        {
+            SpecialProducts.Session = Session;
         }
     }
 
@@ -678,6 +714,18 @@ public sealed partial class MainViewModel : ObservableObject
         CurrentScreen = PosTerminal;
     }
 
+    private async Task ShowSpecialProductsAsync()
+    {
+        if (SpecialProducts is null)
+        {
+            return;
+        }
+
+        SpecialProducts.Session = Session;
+        CurrentScreen = SpecialProducts;
+        await SpecialProducts.LoadAsync(CancellationToken.None);
+    }
+
     private void ShowCashPayment()
     {
         if (_cart.IsEmpty)
@@ -759,7 +807,7 @@ public sealed partial class MainViewModel : ObservableObject
 
     private void ToggleCustomerDisplayWindow()
     {
-        var owner = Application.Current.MainWindow;
+        var owner = Application.Current?.MainWindow;
         if (owner is null)
         {
             return;
@@ -770,19 +818,45 @@ public sealed partial class MainViewModel : ObservableObject
 
     public void ToggleCustomerDisplayWindow(Window? owner)
     {
-        LoadCustomerDisplayFromCart();
-        ApplyCustomerDisplayWindowResult(_customerDisplayWindowService.Toggle(CustomerDisplay, owner));
+        var targetMode = CustomerDisplayWindowMode == CustomerDisplayWindowMode.Closed
+            ? CustomerDisplayWindowMode.Fullscreen
+            : CustomerDisplayWindowMode.Closed;
+        SetCustomerDisplayWindowMode(targetMode, owner);
+    }
+
+    private void CloseCustomerDisplayWindow()
+    {
+        SetCustomerDisplayWindowMode(CustomerDisplayWindowMode.Closed, Application.Current?.MainWindow);
+    }
+
+    private void ShowCustomerDisplayNormal()
+    {
+        SetCustomerDisplayWindowMode(CustomerDisplayWindowMode.Normal, Application.Current?.MainWindow);
+    }
+
+    private void ShowCustomerDisplayFullscreen()
+    {
+        SetCustomerDisplayWindowMode(CustomerDisplayWindowMode.Fullscreen, Application.Current?.MainWindow);
+    }
+
+    public void SetCustomerDisplayWindowMode(CustomerDisplayWindowMode mode, Window? owner)
+    {
+        if (mode != CustomerDisplayWindowMode.Closed)
+        {
+            LoadCustomerDisplayFromCart();
+        }
+
+        ApplyCustomerDisplayWindowResult(_customerDisplayWindowService.SetMode(mode, CustomerDisplay, owner));
     }
 
     private void OpenCustomerDisplayWindow(Window? owner)
     {
-        LoadCustomerDisplayFromCart();
-        ApplyCustomerDisplayWindowResult(_customerDisplayWindowService.Open(CustomerDisplay, owner));
+        SetCustomerDisplayWindowMode(CustomerDisplayWindowMode.Fullscreen, owner);
     }
 
     private void ApplyCustomerDisplayWindowResult(CustomerDisplayWindowResult result)
     {
-        IsCustomerDisplayOpen = result.IsOpen;
+        CustomerDisplayWindowMode = result.Mode;
         if (!string.IsNullOrWhiteSpace(result.StatusMessageKey))
         {
             StatusMessage = _localization.T(result.StatusMessageKey);
