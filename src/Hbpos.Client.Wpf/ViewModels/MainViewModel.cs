@@ -32,6 +32,7 @@ public sealed partial class MainViewModel : ObservableObject
     private readonly ILocalizationService _localization;
     private readonly ICustomerDisplayOrchestrator _customerDisplayOrchestrator;
     private readonly IRawScannerService _rawScannerService;
+    private readonly IUserFeedbackService _userFeedbackService;
     private readonly IReceiptQueryService _receiptQueryService;
     private readonly ISuspendedOrderService? _suspendedOrderService;
     private readonly IRemoteOrderHistoryService? _remoteOrderHistoryService;
@@ -147,7 +148,8 @@ public sealed partial class MainViewModel : ObservableObject
         ISyncQueueRepository syncQueueRepository,
         ILocalizationService localization,
         ICustomerDisplayWindowService customerDisplayWindowService,
-        IRawScannerService rawScannerService)
+        IRawScannerService rawScannerService,
+        IUserFeedbackService? userFeedbackService = null)
         : this(
             priceIndex,
             cart,
@@ -173,7 +175,8 @@ public sealed partial class MainViewModel : ObservableObject
                 priceIndex,
                 cart,
                 remoteLookupRefreshAsync,
-                reloadCatalogAsync))
+                reloadCatalogAsync),
+            userFeedbackService: userFeedbackService ?? NoopUserFeedbackService.Instance)
     {
     }
 
@@ -200,7 +203,8 @@ public sealed partial class MainViewModel : ObservableObject
         ISpecialProductsWorkflowService specialProductsWorkflowService,
         PosTerminalWorkflowFactory posTerminalWorkflowFactory,
         ISuspendedOrderService? suspendedOrderService = null,
-        IRemoteOrderHistoryService? remoteOrderHistoryService = null)
+        IRemoteOrderHistoryService? remoteOrderHistoryService = null,
+        IUserFeedbackService? userFeedbackService = null)
     {
         _priceIndex = priceIndex;
         _cart = cart;
@@ -218,6 +222,7 @@ public sealed partial class MainViewModel : ObservableObject
         _localization = localization;
         _customerDisplayOrchestrator = customerDisplayOrchestrator;
         _rawScannerService = rawScannerService;
+        _userFeedbackService = userFeedbackService ?? NoopUserFeedbackService.Instance;
         _receiptQueryService = receiptQueryService;
         _suspendedOrderService = suspendedOrderService;
         _remoteOrderHistoryService = remoteOrderHistoryService;
@@ -399,6 +404,7 @@ public sealed partial class MainViewModel : ObservableObject
             ShowCashPayment,
             ShowSpecialProductsAsync,
             _localization,
+            userFeedbackService: _userFeedbackService,
             onHoldOrderAsync: SuspendCurrentOrderAsync,
             onRecallOrderAsync: ShowSuspendedHistoryAsync,
             syncCatalogAsync: SyncCatalogAndReloadAsync,

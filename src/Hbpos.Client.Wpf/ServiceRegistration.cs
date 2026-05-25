@@ -73,6 +73,7 @@ public static class ServiceRegistration
         services.AddSingleton<IDeviceRegistrationWorkflowService, DeviceRegistrationWorkflowService>();
         services.AddSingleton<ISpecialProductsWorkflowService, SpecialProductsWorkflowService>();
         services.AddSingleton<ICustomerDisplayOrchestrator, CustomerDisplayOrchestrator>();
+        services.AddSingleton<IUserFeedbackService, WindowsMessageBeepUserFeedbackService>();
         services.AddTransient<IPosTerminalWorkflowService>(sp => new PosTerminalWorkflowService(
             sp.GetRequiredService<LocalSellableItemIndex>(),
             sp.GetRequiredService<PosCartService>(),
@@ -110,6 +111,7 @@ public static class ServiceRegistration
             sp.GetRequiredService<ILocalizationService>(),
             sp.GetRequiredService<ICustomerDisplayOrchestrator>(),
             sp.GetRequiredService<IRawScannerService>(),
+            sp.GetRequiredService<IUserFeedbackService>(),
             sp.GetRequiredService<IReceiptQueryService>(),
             sp.GetRequiredService<ICashPaymentWorkflowService>(),
             sp.GetRequiredService<IDeviceRegistrationWorkflowService>(),
