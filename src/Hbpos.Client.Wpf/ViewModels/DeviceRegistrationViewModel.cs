@@ -3,16 +3,12 @@ using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using Hbpos.Client.Wpf.Models;
 using Hbpos.Client.Wpf.Services;
-using Hbpos.Contracts.Devices;
 
 namespace Hbpos.Client.Wpf.ViewModels;
 
 public sealed partial class DeviceRegistrationViewModel : ObservableObject
 {
-    private const int PendingDeviceStatus = -1;
-    private readonly IDeviceApiClient _deviceApiClient;
-    private readonly ILocalDeviceRepository _deviceRepository;
-    private readonly IDeviceFingerprintService _fingerprintService;
+    private readonly IDeviceRegistrationWorkflowService _workflowService;
     private string? _excludedStoreCode;
 
     [ObservableProperty]
@@ -43,10 +39,13 @@ public sealed partial class DeviceRegistrationViewModel : ObservableObject
         IDeviceApiClient deviceApiClient,
         ILocalDeviceRepository deviceRepository,
         IDeviceFingerprintService fingerprintService)
+        : this(new DeviceRegistrationWorkflowService(deviceApiClient, deviceRepository, fingerprintService))
     {
-        _deviceApiClient = deviceApiClient;
-        _deviceRepository = deviceRepository;
-        _fingerprintService = fingerprintService;
+    }
+
+    public DeviceRegistrationViewModel(IDeviceRegistrationWorkflowService workflowService)
+    {
+        _workflowService = workflowService;
 
         RegisterCommand = new AsyncRelayCommand(RegisterAsync, CanRegister);
         VerifyCommand = new AsyncRelayCommand(VerifyAsync, CanVerify);
@@ -82,7 +81,7 @@ public sealed partial class DeviceRegistrationViewModel : ObservableObject
         IsReregisterMode = false;
         CanCancel = false;
         _excludedStoreCode = null;
-        HardwareId = _fingerprintService.GetHardwareId();
+        HardwareId = _workflowService.GetHardwareId();
         Stores.Clear();
         SelectedStore = null;
 
@@ -97,7 +96,7 @@ public sealed partial class DeviceRegistrationViewModel : ObservableObject
             HasPendingRegistration = false;
         }
 
-        StatusMessage = "Loading stores...";
+        StatusMessage = DeviceRegistrationWorkflowService.LoadingStoresMessage;
         NotifyCommandState();
     }
 
@@ -106,53 +105,24 @@ public sealed partial class DeviceRegistrationViewModel : ObservableObject
         IsReregisterMode = true;
         CanCancel = true;
         _excludedStoreCode = currentStoreCode;
-        HardwareId = _fingerprintService.GetHardwareId();
+        HardwareId = _workflowService.GetHardwareId();
         Stores.Clear();
         SelectedStore = null;
         DeviceCode = string.Empty;
         HasPendingRegistration = false;
-        StatusMessage = "Loading stores...";
-        OnPropertyChanged(nameof(TitleText));
-        OnPropertyChanged(nameof(RegisterButtonText));
+        StatusMessage = DeviceRegistrationWorkflowService.LoadingStoresMessage;
         NotifyCommandState();
     }
 
     public async Task LoadStoresAsync(LocalDeviceCache? cachedDevice, CancellationToken cancellationToken = default)
     {
         IsBusy = true;
-        StatusMessage = "Loading stores...";
+        StatusMessage = DeviceRegistrationWorkflowService.LoadingStoresMessage;
 
         try
         {
-            var stores = await _deviceApiClient.GetStoresAsync(cancellationToken);
-            Stores.Clear();
-            foreach (var store in stores.Where(CanShowStore))
-            {
-                Stores.Add(store);
-            }
-
-            if (cachedDevice is not null)
-            {
-                DeviceCode = cachedDevice.DeviceCode;
-                HasPendingRegistration = !cachedDevice.IsAllowed;
-                StatusMessage = cachedDevice.Message ?? "Device registration is pending approval.";
-                SelectedStore = Stores.FirstOrDefault(x => string.Equals(x.StoreCode, cachedDevice.StoreCode, StringComparison.OrdinalIgnoreCase))
-                    ?? Stores.FirstOrDefault();
-            }
-            else if (IsReregisterMode)
-            {
-                SelectedStore = Stores.FirstOrDefault();
-                StatusMessage = Stores.Count == 0
-                    ? "No other active stores are available."
-                    : "Select a new store and submit device reregistration.";
-            }
-            else
-            {
-                SelectedStore = Stores.FirstOrDefault();
-                StatusMessage = Stores.Count == 0
-                    ? "No active stores are available."
-                    : "Select a store and submit this register for approval.";
-            }
+            var result = await _workflowService.LoadStoresAsync(cachedDevice, IsReregisterMode, _excludedStoreCode, cancellationToken);
+            ApplyLoadResult(result);
         }
         catch (Exception ex)
         {
@@ -209,12 +179,8 @@ public sealed partial class DeviceRegistrationViewModel : ObservableObject
         try
         {
             StatusMessage = "Submitting device registration...";
-            var response = await _deviceApiClient.RegisterAsync(new DeviceRegisterRequest(
-                SelectedStore.StoreCode,
-                HardwareId,
-                Environment.MachineName));
-            await _deviceRepository.SaveAsync(response, HardwareId);
-            ApplyRegisterResponse(response);
+            var result = await _workflowService.RegisterAsync(SelectedStore, HardwareId);
+            ApplyActionResult(result);
         }
         catch (Exception ex)
         {
@@ -237,16 +203,8 @@ public sealed partial class DeviceRegistrationViewModel : ObservableObject
         try
         {
             StatusMessage = "Submitting device reregistration...";
-            var response = await _deviceApiClient.ReregisterAsync(new DeviceReregisterRequest(
-                SelectedStore.StoreCode,
-                HardwareId,
-                Environment.MachineName));
-            if (IsAcceptedReregister(response))
-            {
-                await _deviceRepository.SaveAsync(response, HardwareId);
-            }
-
-            ApplyReregisterResponse(response);
+            var result = await _workflowService.ReregisterAsync(SelectedStore, HardwareId);
+            ApplyActionResult(result);
         }
         catch (Exception ex)
         {
@@ -269,13 +227,8 @@ public sealed partial class DeviceRegistrationViewModel : ObservableObject
         try
         {
             StatusMessage = "Checking device approval...";
-            var response = await _deviceApiClient.VerifyAsync(new DeviceVerifyRequest(
-                DeviceCode,
-                SelectedStore.StoreCode,
-                HardwareId,
-                Environment.MachineName));
-            await _deviceRepository.SaveAsync(response, HardwareId);
-            ApplyVerifyResponse(response);
+            var result = await _workflowService.VerifyAsync(SelectedStore, DeviceCode, HardwareId);
+            ApplyActionResult(result);
         }
         catch (Exception ex)
         {
@@ -287,82 +240,44 @@ public sealed partial class DeviceRegistrationViewModel : ObservableObject
         }
     }
 
-    private void ApplyRegisterResponse(DeviceRegisterResponse response)
+    private void ApplyLoadResult(DeviceRegistrationLoadResult result)
     {
-        DeviceCode = response.DeviceCode;
-        HasPendingRegistration = !response.IsAllowed;
-        StatusMessage = response.Message ?? (response.IsAllowed ? "Device is enabled." : "Device registration is pending approval.");
-        if (response.IsAllowed)
+        Stores.Clear();
+        foreach (var store in result.Stores)
         {
-            if (string.IsNullOrWhiteSpace(response.AuthorizationCode))
-            {
-                StatusMessage = "Device authorization code was not returned. Please verify again.";
-                return;
-            }
-
-            DeviceActivated?.Invoke(
-                this,
-                new DeviceActivatedEventArgs(response.DeviceCode, response.StoreCode, response.StoreName, HardwareId, response.AuthorizationCode));
+            Stores.Add(store);
         }
 
+        DeviceCode = result.DeviceCode;
+        HasPendingRegistration = result.HasPendingRegistration;
+        StatusMessage = result.StatusMessage;
+        SelectedStore = result.SelectedStore;
         NotifyCommandState();
     }
 
-    private void ApplyVerifyResponse(DeviceVerifyResponse response)
+    private void ApplyActionResult(DeviceRegistrationActionResult result)
     {
-        HasPendingRegistration = !response.IsAllowed;
-        StatusMessage = response.Message ?? (response.IsAllowed ? "Device is enabled." : "Device registration is pending approval.");
-        if (response.IsAllowed)
-        {
-            if (string.IsNullOrWhiteSpace(response.AuthorizationCode))
-            {
-                StatusMessage = "Device authorization code was not returned. Please verify again.";
-                return;
-            }
+        DeviceCode = result.DeviceCode;
+        HasPendingRegistration = result.HasPendingRegistration;
+        StatusMessage = result.StatusMessage;
 
-            DeviceActivated?.Invoke(
-                this,
-                new DeviceActivatedEventArgs(response.DeviceCode, response.StoreCode, response.StoreName, HardwareId, response.AuthorizationCode));
-        }
-
-        NotifyCommandState();
-    }
-
-    private void ApplyReregisterResponse(DeviceReregisterResponse response)
-    {
-        DeviceCode = response.DeviceCode;
-        HasPendingRegistration = !response.IsAllowed;
-        StatusMessage = response.Message ?? (response.IsAllowed ? "Device is enabled." : "Device registration is pending approval.");
-        if (IsAcceptedReregister(response))
+        if (result.ShouldRaiseReregistered)
         {
             IsReregisterMode = false;
             CanCancel = false;
             DeviceReregistered?.Invoke(
                 this,
-                new DeviceReregisteredEventArgs(response.DeviceCode, response.StoreCode, response.StoreName, HardwareId));
+                new DeviceReregisteredEventArgs(result.DeviceCode, result.StoreCode, result.StoreName, result.HardwareId));
         }
 
-        if (response.IsAllowed)
+        if (result.ShouldRaiseActivated)
         {
-            if (string.IsNullOrWhiteSpace(response.AuthorizationCode))
-            {
-                StatusMessage = "Device authorization code was not returned. Please verify again.";
-                return;
-            }
-
             DeviceActivated?.Invoke(
                 this,
-                new DeviceActivatedEventArgs(response.DeviceCode, response.StoreCode, response.StoreName, HardwareId, response.AuthorizationCode));
+                new DeviceActivatedEventArgs(result.DeviceCode, result.StoreCode, result.StoreName, result.HardwareId, result.AuthorizationCode ?? string.Empty));
         }
 
         NotifyCommandState();
-    }
-
-    private static bool IsAcceptedReregister(DeviceReregisterResponse response)
-    {
-        return response.DeviceStatus == PendingDeviceStatus
-            && !string.IsNullOrWhiteSpace(response.DeviceCode)
-            && !string.IsNullOrWhiteSpace(response.StoreCode);
     }
 
     private bool CanRegister()
@@ -388,12 +303,6 @@ public sealed partial class DeviceRegistrationViewModel : ObservableObject
         {
             CancelRequested?.Invoke(this, EventArgs.Empty);
         }
-    }
-
-    private bool CanShowStore(StoreSelectionItem store)
-    {
-        return string.IsNullOrWhiteSpace(_excludedStoreCode)
-            || !string.Equals(store.StoreCode, _excludedStoreCode, StringComparison.OrdinalIgnoreCase);
     }
 }
 

@@ -1,7 +1,6 @@
 using Hbpos.Client.Wpf.Models;
 using Hbpos.Client.Wpf.Services;
 using Hbpos.Client.Wpf.ViewModels;
-using Hbpos.Contracts.Devices;
 
 namespace Hbpos.Client.Tests;
 
@@ -20,7 +19,7 @@ public sealed class DeviceRegistrationTests
             await schema.InitializeAsync();
 
             await repository.SaveAsync(
-                new DeviceRegisterResponse("POS-001", "1002", "Lutwyche", 1, true, "Device is enabled.", "AUTH-001"),
+                new Hbpos.Contracts.Devices.DeviceRegisterResponse("POS-001", "1002", "Lutwyche", 1, true, "Device is enabled.", "AUTH-001"),
                 "HW-001");
 
             var cached = await repository.GetLatestAsync();
@@ -42,47 +41,66 @@ public sealed class DeviceRegistrationTests
     }
 
     [Fact]
-    public async Task DeviceRegistrationViewModel_LoadsStoresSortedAndSubmitsPendingRegistration()
+    public async Task DeviceRegistrationViewModel_LoadsStoresAndMapsPendingRegistrationResult()
     {
-        var api = new FakeDeviceApiClient
+        var workflow = new FakeDeviceRegistrationWorkflowService
         {
-            Stores =
-            [
-                new StoreSelectionItem("1003", "Zillmere", true),
-                new StoreSelectionItem("1002", "Lutwyche", true)
-            ],
-            RegisterResponse = new DeviceRegisterResponse("POS-001", "1002", "Lutwyche", -1, false, "Pending approval")
+            HardwareId = "HW-001",
+            LoadResult = new DeviceRegistrationLoadResult(
+                [new StoreSelectionItem("1002", "Lutwyche", true), new StoreSelectionItem("1003", "Zillmere", true)],
+                new StoreSelectionItem("1002", "Lutwyche", true),
+                string.Empty,
+                false,
+                "Select a store and submit this register for approval."),
+            RegisterResult = new DeviceRegistrationActionResult(
+                "POS-001",
+                "1002",
+                "Lutwyche",
+                "HW-001",
+                true,
+                "Pending approval",
+                null,
+                false,
+                false)
         };
-        var repository = new FakeLocalDeviceRepository();
-        var viewModel = new DeviceRegistrationViewModel(
-            api,
-            repository,
-            new FakeFingerprintService("HW-001"));
+        var viewModel = new DeviceRegistrationViewModel(workflow);
 
         await viewModel.InitializeAsync(cachedDevice: null);
         await viewModel.RegisterCommand.ExecuteAsync(null);
 
+        Assert.Equal("HW-001", viewModel.HardwareId);
         Assert.Equal("Lutwyche (1002)", viewModel.SelectedStore?.DisplayName);
         Assert.Equal("POS-001", viewModel.DeviceCode);
         Assert.True(viewModel.HasPendingRegistration);
         Assert.Equal("Pending approval", viewModel.StatusMessage);
-        Assert.Equal("HW-001", repository.LastHardwareId);
-        Assert.NotNull(repository.LastRegisterResponse);
+        Assert.Equal("1002", workflow.LastRegisterStoreCode);
+        Assert.Equal("HW-001", workflow.LastRegisterHardwareId);
     }
 
     [Fact]
-    public async Task DeviceRegistrationViewModel_VerifyRaisesActivationWhenDeviceIsAllowed()
+    public async Task DeviceRegistrationViewModel_VerifyRaisesActivationWhenWorkflowReturnsActivated()
     {
-        var api = new FakeDeviceApiClient
+        var workflow = new FakeDeviceRegistrationWorkflowService
         {
-            Stores = [new StoreSelectionItem("1002", "Lutwyche", true)],
-            VerifyResponse = new DeviceVerifyResponse("POS-001", "1002", "Lutwyche", 1, true, "Device is enabled.", "AUTH-001")
+            HardwareId = "HW-001",
+            LoadResult = new DeviceRegistrationLoadResult(
+                [new StoreSelectionItem("1002", "Lutwyche", true)],
+                new StoreSelectionItem("1002", "Lutwyche", true),
+                "POS-001",
+                true,
+                "Pending approval"),
+            VerifyResult = new DeviceRegistrationActionResult(
+                "POS-001",
+                "1002",
+                "Lutwyche",
+                "HW-001",
+                false,
+                "Device is enabled.",
+                "AUTH-001",
+                true,
+                false)
         };
-        var repository = new FakeLocalDeviceRepository();
-        var viewModel = new DeviceRegistrationViewModel(
-            api,
-            repository,
-            new FakeFingerprintService("HW-001"));
+        var viewModel = new DeviceRegistrationViewModel(workflow);
         var cached = new LocalDeviceCache("POS-001", "1002", "Lutwyche", "HW-001", -1, false, "Pending approval", DateTimeOffset.UtcNow);
         DeviceActivatedEventArgs? activated = null;
         viewModel.DeviceActivated += (_, args) => activated = args;
@@ -96,26 +114,34 @@ public sealed class DeviceRegistrationTests
         Assert.Equal("Lutwyche", activated.StoreName);
         Assert.Equal("HW-001", activated.HardwareId);
         Assert.Equal("AUTH-001", activated.AuthorizationCode);
-        Assert.NotNull(repository.LastVerifyResponse);
+        Assert.Equal("POS-001", workflow.LastVerifyDeviceCode);
+        Assert.Equal("1002", workflow.LastVerifyStoreCode);
     }
 
     [Fact]
-    public async Task DeviceRegistrationViewModel_ReregisterMode_SubmitsReregisterAndFiltersCurrentStore()
+    public async Task DeviceRegistrationViewModel_ReregisterMode_MapsResultAndRaisesReregistered()
     {
-        var api = new FakeDeviceApiClient
+        var workflow = new FakeDeviceRegistrationWorkflowService
         {
-            Stores =
-            [
-                new StoreSelectionItem("1002", "Lutwyche", true),
-                new StoreSelectionItem("1003", "Zillmere", true)
-            ],
-            ReregisterResponse = new DeviceReregisterResponse("POS-NEW", "1003", "Zillmere", -1, false, "Pending approval")
+            HardwareId = "HW-001",
+            LoadResult = new DeviceRegistrationLoadResult(
+                [new StoreSelectionItem("1003", "Zillmere", true)],
+                new StoreSelectionItem("1003", "Zillmere", true),
+                string.Empty,
+                false,
+                "Select a new store and submit device reregistration."),
+            ReregisterResult = new DeviceRegistrationActionResult(
+                "POS-NEW",
+                "1003",
+                "Zillmere",
+                "HW-001",
+                true,
+                "Pending approval",
+                null,
+                false,
+                true)
         };
-        var repository = new FakeLocalDeviceRepository();
-        var viewModel = new DeviceRegistrationViewModel(
-            api,
-            repository,
-            new FakeFingerprintService("HW-001"));
+        var viewModel = new DeviceRegistrationViewModel(workflow);
         DeviceReregisteredEventArgs? reregistered = null;
         viewModel.DeviceReregistered += (_, args) => reregistered = args;
 
@@ -123,12 +149,14 @@ public sealed class DeviceRegistrationTests
         await viewModel.LoadStoresAsync(cachedDevice: null);
         await viewModel.RegisterCommand.ExecuteAsync(null);
 
+        Assert.Equal("1002", workflow.LastLoadExcludedStoreCode);
         Assert.Equal("Zillmere (1003)", viewModel.SelectedStore?.DisplayName);
         Assert.Equal("POS-NEW", viewModel.DeviceCode);
         Assert.True(viewModel.HasPendingRegistration);
         Assert.Equal("Pending approval", viewModel.StatusMessage);
-        Assert.NotNull(repository.LastReregisterResponse);
-        Assert.Equal("1003", api.LastReregisterRequest?.TargetStoreCode);
+        Assert.False(viewModel.IsReregisterMode);
+        Assert.False(viewModel.CanCancel);
+        Assert.Equal("1003", workflow.LastReregisterStoreCode);
         Assert.NotNull(reregistered);
     }
 
@@ -145,90 +173,71 @@ public sealed class DeviceRegistrationTests
         }
     }
 
-    private sealed class FakeDeviceApiClient : IDeviceApiClient
+    private sealed class FakeDeviceRegistrationWorkflowService : IDeviceRegistrationWorkflowService
     {
-        public IReadOnlyList<StoreSelectionItem> Stores { get; init; } = [];
+        public string HardwareId { get; init; } = "HW-001";
 
-        public DeviceRegisterResponse? RegisterResponse { get; init; }
+        public DeviceRegistrationLoadResult LoadResult { get; init; } = new([], null, string.Empty, false, string.Empty);
 
-        public DeviceVerifyResponse? VerifyResponse { get; init; }
+        public DeviceRegistrationActionResult RegisterResult { get; init; } = new(string.Empty, string.Empty, string.Empty, string.Empty, false, string.Empty, null, false, false);
 
-        public DeviceReregisterResponse? ReregisterResponse { get; init; }
+        public DeviceRegistrationActionResult VerifyResult { get; init; } = new(string.Empty, string.Empty, string.Empty, string.Empty, false, string.Empty, null, false, false);
 
-        public DeviceReregisterRequest? LastReregisterRequest { get; private set; }
+        public DeviceRegistrationActionResult ReregisterResult { get; init; } = new(string.Empty, string.Empty, string.Empty, string.Empty, false, string.Empty, null, false, false);
 
-        public Task<IReadOnlyList<StoreSelectionItem>> GetStoresAsync(CancellationToken cancellationToken = default)
-        {
-            return Task.FromResult<IReadOnlyList<StoreSelectionItem>>(
-                Stores
-                    .OrderBy(x => x.StoreName, StringComparer.CurrentCultureIgnoreCase)
-                    .ThenBy(x => x.StoreCode, StringComparer.OrdinalIgnoreCase)
-                    .ToArray());
-        }
+        public string? LastLoadExcludedStoreCode { get; private set; }
 
-        public Task<DeviceRegisterResponse> RegisterAsync(
-            DeviceRegisterRequest request,
+        public string? LastRegisterStoreCode { get; private set; }
+
+        public string? LastRegisterHardwareId { get; private set; }
+
+        public string? LastVerifyStoreCode { get; private set; }
+
+        public string? LastVerifyDeviceCode { get; private set; }
+
+        public string? LastReregisterStoreCode { get; private set; }
+
+        public string GetHardwareId() => HardwareId;
+
+        public Task<DeviceRegistrationLoadResult> LoadStoresAsync(
+            LocalDeviceCache? cachedDevice,
+            bool isReregisterMode,
+            string? excludedStoreCode = null,
             CancellationToken cancellationToken = default)
         {
-            return Task.FromResult(RegisterResponse!);
+            LastLoadExcludedStoreCode = excludedStoreCode;
+            return Task.FromResult(LoadResult);
         }
 
-        public Task<DeviceVerifyResponse> VerifyAsync(
-            DeviceVerifyRequest request,
+        public Task<DeviceRegistrationActionResult> RegisterAsync(
+            StoreSelectionItem selectedStore,
+            string hardwareId,
             CancellationToken cancellationToken = default)
         {
-            return Task.FromResult(VerifyResponse!);
+            LastRegisterStoreCode = selectedStore.StoreCode;
+            LastRegisterHardwareId = hardwareId;
+            return Task.FromResult(RegisterResult);
         }
 
-        public Task<DeviceReregisterResponse> ReregisterAsync(
-            DeviceReregisterRequest request,
+        public Task<DeviceRegistrationActionResult> VerifyAsync(
+            StoreSelectionItem selectedStore,
+            string deviceCode,
+            string hardwareId,
             CancellationToken cancellationToken = default)
         {
-            LastReregisterRequest = request;
-            return Task.FromResult(ReregisterResponse!);
+            LastVerifyStoreCode = selectedStore.StoreCode;
+            LastVerifyDeviceCode = deviceCode;
+            return Task.FromResult(VerifyResult);
         }
-    }
 
-    private sealed class FakeLocalDeviceRepository : ILocalDeviceRepository
-    {
-        public DeviceRegisterResponse? LastRegisterResponse { get; private set; }
-
-        public DeviceVerifyResponse? LastVerifyResponse { get; private set; }
-
-        public DeviceReregisterResponse? LastReregisterResponse { get; private set; }
-
-        public string? LastHardwareId { get; private set; }
-
-        public Task<LocalDeviceCache?> GetLatestAsync(CancellationToken cancellationToken = default)
+        public Task<DeviceRegistrationActionResult> ReregisterAsync(
+            StoreSelectionItem selectedStore,
+            string hardwareId,
+            CancellationToken cancellationToken = default)
         {
-            return Task.FromResult<LocalDeviceCache?>(null);
+            LastReregisterStoreCode = selectedStore.StoreCode;
+            return Task.FromResult(ReregisterResult);
         }
-
-        public Task SaveAsync(DeviceRegisterResponse response, string hardwareId, CancellationToken cancellationToken = default)
-        {
-            LastRegisterResponse = response;
-            LastHardwareId = hardwareId;
-            return Task.CompletedTask;
-        }
-
-        public Task SaveAsync(DeviceVerifyResponse response, string hardwareId, CancellationToken cancellationToken = default)
-        {
-            LastVerifyResponse = response;
-            LastHardwareId = hardwareId;
-            return Task.CompletedTask;
-        }
-
-        public Task SaveAsync(DeviceReregisterResponse response, string hardwareId, CancellationToken cancellationToken = default)
-        {
-            LastReregisterResponse = response;
-            LastHardwareId = hardwareId;
-            return Task.CompletedTask;
-        }
-    }
-
-    private sealed class FakeFingerprintService(string hardwareId) : IDeviceFingerprintService
-    {
-        public string GetHardwareId() => hardwareId;
     }
 
     private sealed class FakeAuthorizationProtector : IDeviceAuthorizationProtector

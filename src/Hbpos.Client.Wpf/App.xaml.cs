@@ -1,4 +1,3 @@
-using System.IO;
 using System.Windows;
 using System.Windows.Threading;
 using Hbpos.Client.Wpf.Localization;
@@ -40,57 +39,7 @@ public partial class App : Application
             _host = Host.CreateDefaultBuilder(e.Args)
                 .ConfigureServices(services =>
                 {
-                    services.AddSingleton(startupOptions);
-                    services.AddSingleton<ILocalizationService, LocalizationService>();
-                    services.AddSingleton<LocalSqliteStore>(_ =>
-                    {
-                        if (!startupOptions.PreviewMode)
-                        {
-                            return new LocalSqliteStore();
-                        }
-
-                        var databasePath = Path.Combine(Path.GetTempPath(), $"hbpos-client-preview-{Environment.ProcessId}.db");
-                        return new LocalSqliteStore(databasePath);
-                    });
-                    services.AddSingleton<ILocalSchemaService, LocalSchemaService>();
-                    services.AddSingleton<IDeviceAuthorizationProtector, WindowsDpapiDeviceAuthorizationProtector>();
-                    services.AddSingleton<DeviceAuthorizationState>();
-                    services.AddTransient<DeviceAuthorizationMessageHandler>();
-                    services.AddSingleton<ILocalAppSettingsRepository, LocalAppSettingsRepository>();
-                    services.AddSingleton<IScannerBindingService, ScannerBindingService>();
-                    services.AddSingleton<ILocalDeviceRepository, LocalDeviceRepository>();
-                    services.AddSingleton<ILocalCatalogRepository, LocalCatalogRepository>();
-                    services.AddSingleton<ILocalOrderRepository, LocalOrderRepository>();
-                    services.AddSingleton<ISyncQueueRepository, SyncQueueRepository>();
-                    services.AddHttpClient<ICatalogApiClient, CatalogApiClient>(client =>
-                    {
-                        client.BaseAddress = GetCatalogApiBaseAddress();
-                    })
-                    .AddHttpMessageHandler<DeviceAuthorizationMessageHandler>();
-                    services.AddHttpClient<IDeviceApiClient, DeviceApiClient>(client =>
-                    {
-                        client.BaseAddress = GetCatalogApiBaseAddress();
-                        client.Timeout = TimeSpan.FromSeconds(3);
-                    })
-                    .AddHttpMessageHandler<DeviceAuthorizationMessageHandler>();
-                    services.AddHttpClient<IConnectivityApiClient, ConnectivityApiClient>(client =>
-                    {
-                        client.BaseAddress = GetCatalogApiBaseAddress();
-                        client.Timeout = TimeSpan.FromSeconds(3);
-                    });
-                    services.AddSingleton<IDeviceFingerprintService, DeviceFingerprintService>();
-                    services.AddSingleton<ILocalCatalogSyncService, LocalCatalogSyncService>();
-                    services.AddSingleton<IRemoteLookupRefreshService, RemoteLookupRefreshService>();
-                    services.AddSingleton<ISpecialProductService, SpecialProductService>();
-                    services.AddSingleton<IDisplayTopologyService, DisplayTopologyService>();
-                    services.AddSingleton<ICustomerDisplayWindowService, CustomerDisplayWindowService>();
-                    services.AddSingleton<RawScannerInputProcessor>();
-                    services.AddSingleton<IRawScannerService, RawScannerService>();
-                    services.AddSingleton<LocalSellableItemIndex>();
-                    services.AddSingleton<PosCartService>();
-                    services.AddSingleton<CashCheckoutService>();
-                    services.AddSingleton<MainViewModel>();
-                    services.AddSingleton<MainWindow>();
+                    services.AddHbposClientServices(startupOptions);
                 })
                 .Build();
 
@@ -152,18 +101,4 @@ public partial class App : Application
         _startupSplashWindow = null;
     }
 
-    private static Uri GetCatalogApiBaseAddress()
-    {
-        var configuredBaseUrl = Environment.GetEnvironmentVariable("HBPOS_API_BASE_URL");
-        var baseUrl = string.IsNullOrWhiteSpace(configuredBaseUrl)
-            ? "http://localhost:5159/"
-            : configuredBaseUrl.Trim();
-
-        if (!baseUrl.EndsWith('/'))
-        {
-            baseUrl += "/";
-        }
-
-        return new Uri(baseUrl, UriKind.Absolute);
-    }
 }

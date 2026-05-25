@@ -11,9 +11,7 @@ namespace Hbpos.Client.Wpf.ViewModels;
 public sealed partial class CashPaymentViewModel : ObservableObject
 {
     private readonly PosCartService _cart;
-    private readonly CashCheckoutService _checkout;
-    private readonly ILocalOrderRepository _orderRepository;
-    private readonly ISyncQueueRepository _syncQueueRepository;
+    private readonly ICashPaymentWorkflowService _workflowService;
     private readonly ILocalizationService? _localization;
     private string _statusKey = "payment.cash.status.ready";
 
@@ -36,11 +34,22 @@ public sealed partial class CashPaymentViewModel : ObservableObject
         ISyncQueueRepository syncQueueRepository,
         PosSessionState session,
         ILocalizationService? localization = null)
+        : this(
+            cart,
+            new CashPaymentWorkflowService(checkout, orderRepository, syncQueueRepository),
+            session,
+            localization)
+    {
+    }
+
+    public CashPaymentViewModel(
+        PosCartService cart,
+        ICashPaymentWorkflowService workflowService,
+        PosSessionState session,
+        ILocalizationService? localization = null)
     {
         _cart = cart;
-        _checkout = checkout;
-        _orderRepository = orderRepository;
-        _syncQueueRepository = syncQueueRepository;
+        _workflowService = workflowService;
         _session = session;
         _localization = localization;
         _amountTenderedText = cart.ActualAmount > 0 ? cart.ActualAmount.ToString("0.00") : string.Empty;
@@ -166,19 +175,16 @@ public sealed partial class CashPaymentViewModel : ObservableObject
             return;
         }
 
-        if (!decimal.TryParse(AmountTenderedText, out var tendered))
+        if (!_workflowService.TryParseTenderedAmount(AmountTenderedText, out _))
         {
             SetStatus("payment.cash.status.invalidTendered");
             return;
         }
 
-        var result = _checkout.CreateCashOrder(_cart, Session, tendered);
-        await _orderRepository.SavePendingOrderAsync(result.Order);
-
-        _cart.Clear();
+        var result = await _workflowService.CompleteAsync(_cart, Session, AmountTenderedText);
         RefreshCart();
-        PendingSyncCount = await _syncQueueRepository.CountPendingAsync();
-        Session = Session with { PendingSyncCount = PendingSyncCount };
+        PendingSyncCount = result.PendingSyncCount;
+        Session = result.UpdatedSession;
         SetStatus("payment.cash.status.completed");
         PaymentCompleted?.Invoke(this, new PaymentCompletedEventArgs(result.Order, result.TenderedAmount, result.ChangeAmount));
     }
@@ -188,7 +194,7 @@ public sealed partial class CashPaymentViewModel : ObservableObject
         return !_cart.IsEmpty &&
             !_cart.HasNonIntegerQuantity &&
             !_cart.HasZeroPriceLine &&
-            decimal.TryParse(AmountTenderedText, out var tendered) &&
+            _workflowService.TryParseTenderedAmount(AmountTenderedText, out var tendered) &&
             tendered >= ActualAmount;
     }
 
@@ -224,9 +230,7 @@ public sealed partial class CashPaymentViewModel : ObservableObject
 
     private void RecalculateChange()
     {
-        ChangeDue = decimal.TryParse(AmountTenderedText, out var tendered)
-            ? decimal.Round(tendered - ActualAmount, 2, MidpointRounding.AwayFromZero)
-            : 0m;
+        ChangeDue = _workflowService.CalculateChange(AmountTenderedText, ActualAmount);
     }
 
     private IReadOnlyList<decimal> BuildQuickCashAmounts()

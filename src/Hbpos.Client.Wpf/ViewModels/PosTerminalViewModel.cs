@@ -13,17 +13,15 @@ namespace Hbpos.Client.Wpf.ViewModels;
 public sealed partial class PosTerminalViewModel : ObservableObject, IDisposable
 {
     public const string PageId = "PosTerminal";
-    private static readonly TimeSpan RemoteLookupTimeout = TimeSpan.FromSeconds(2);
 
     private readonly LocalSellableItemIndex _priceIndex;
     private readonly PosCartService _cart;
+    private readonly IPosTerminalWorkflowService _workflowService;
     private readonly Action? _onOpenPayment;
     private readonly Func<Task>? _onOpenSpecialProductsAsync;
     private readonly Func<Task>? _onReregisterDeviceAsync;
     private readonly ILocalizationService? _localization;
     private readonly IRawScannerService? _rawScannerService;
-    private readonly Func<string, string, CancellationToken, Task<RemoteLookupRefreshResult>>? _remoteLookupRefreshAsync;
-    private readonly Func<CancellationToken, Task<IReadOnlyList<SellableItemDto>>>? _reloadCatalogAsync;
     private readonly Func<CancellationToken, Task<IReadOnlyList<SellableItemDto>>>? _syncCatalogAsync;
     private readonly Func<CancellationToken, Task<IReadOnlyList<SellableItemDto>>>? _resetCatalogAsync;
     private readonly Func<CancellationToken, Task<bool>>? _refreshOnlineAsync;
@@ -68,17 +66,17 @@ public sealed partial class PosTerminalViewModel : ObservableObject, IDisposable
         Func<CancellationToken, Task<IReadOnlyList<SellableItemDto>>>? resetCatalogAsync = null,
         Func<CancellationToken, Task<bool>>? refreshOnlineAsync = null,
         IRawScannerService? rawScannerService = null,
-        Func<Task>? onReregisterDeviceAsync = null)
+        Func<Task>? onReregisterDeviceAsync = null,
+        IPosTerminalWorkflowService? workflowService = null)
     {
         _priceIndex = priceIndex;
         _cart = cart;
+        _workflowService = workflowService ?? new PosTerminalWorkflowService(priceIndex, cart, remoteLookupRefreshAsync, reloadCatalogAsync);
         _session = session;
         _onOpenPayment = onOpenPayment;
         _onOpenSpecialProductsAsync = onOpenSpecialProductsAsync;
         _onReregisterDeviceAsync = onReregisterDeviceAsync;
         _localization = localization;
-        _remoteLookupRefreshAsync = remoteLookupRefreshAsync;
-        _reloadCatalogAsync = reloadCatalogAsync;
         _syncCatalogAsync = syncCatalogAsync;
         _resetCatalogAsync = resetCatalogAsync;
         _refreshOnlineAsync = refreshOnlineAsync;
@@ -89,6 +87,7 @@ public sealed partial class PosTerminalViewModel : ObservableObject, IDisposable
         }
 
         _cart.CartChanged += OnCartChanged;
+        _workflowService.CatalogReloaded += OnWorkflowCatalogReloaded;
         _rawScannerService?.Subscribe(PageId, OnRawBarcodeScanned);
 
         ScanCommand = new RelayCommand(SearchAndAdd);
@@ -209,6 +208,7 @@ public sealed partial class PosTerminalViewModel : ObservableObject, IDisposable
     public void Dispose()
     {
         _cart.CartChanged -= OnCartChanged;
+        _workflowService.CatalogReloaded -= OnWorkflowCatalogReloaded;
         _rawScannerService?.Unsubscribe(PageId);
     }
 
@@ -323,6 +323,11 @@ public sealed partial class PosTerminalViewModel : ObservableObject, IDisposable
         RefreshCartCore("cart-changed");
     }
 
+    private void OnWorkflowCatalogReloaded(object? sender, PosTerminalCatalogReloadedEventArgs e)
+    {
+        RefreshMatches(e.CatalogItems);
+    }
+
     private void AppendScanText(string? value)
     {
         if (value == "Enter")
@@ -427,119 +432,14 @@ public sealed partial class PosTerminalViewModel : ObservableObject, IDisposable
 
     private void SearchAndAdd()
     {
-        ProcessScan(ScanText, preferExactLookup: false, source: "manual");
-    }
-
-    private void ProcessScan(string scanText, bool preferExactLookup, string source)
-    {
-        var submittedScanText = scanText;
-        var totalStopwatch = Stopwatch.StartNew();
-        var exactLookupElapsedMs = 0L;
-        var searchElapsedMs = 0L;
-        var cartUpdateElapsedMs = 0L;
-        var uiRefreshElapsedMs = 0L;
-        var matchKind = preferExactLookup ? "exact-not-found" : "search";
-        var matchCount = 0;
-        var autoAdded = false;
-
-        if (preferExactLookup)
+        var stopwatch = Stopwatch.StartNew();
+        var result = _workflowService.ProcessScan(Session, ScanText, preferExactLookup: false, source: "manual");
+        ApplyWorkflowResult(result);
+        stopwatch.Stop();
+        if (result.SelectedCartLine is not null && string.Equals(result.StatusKey, "pos.status.added", StringComparison.Ordinal))
         {
-            var exactLookupStopwatch = Stopwatch.StartNew();
-            var exactMatches = _priceIndex.FindExactMatches(Session.StoreCode, submittedScanText);
-            exactLookupStopwatch.Stop();
-            exactLookupElapsedMs = exactLookupStopwatch.ElapsedMilliseconds;
-            matchKind = exactMatches.Count switch
-            {
-                0 => "exact-not-found",
-                1 => "lookup-exact",
-                _ => "search-multiple"
-            };
-
-            var matches = exactMatches;
-            var allowAutoAdd = exactMatches.Count == 1;
-            if (exactMatches.Count == 0)
-            {
-                var metadataMatches = _priceIndex.FindMetadataExactMatches(Session.StoreCode, submittedScanText);
-                if (metadataMatches.Count > 0)
-                {
-                    matches = metadataMatches;
-                    matchKind = metadataMatches.Count > 1 ? "metadata-duplicate" : "metadata-only";
-                }
-            }
-
-            ApplyScanMatches(matches, submittedScanText, allowAutoAdd, out autoAdded, out cartUpdateElapsedMs, out uiRefreshElapsedMs);
-            matchCount = matches.Count;
+            LogCartOperation("scan-auto-add", result.SelectedCartLine, success: true, stopwatch.ElapsedMilliseconds);
         }
-        else
-        {
-            var exactLookupStopwatch = Stopwatch.StartNew();
-            var exactMatches = _priceIndex.FindExactMatches(Session.StoreCode, submittedScanText);
-            exactLookupStopwatch.Stop();
-            exactLookupElapsedMs = exactLookupStopwatch.ElapsedMilliseconds;
-            var hasDuplicateExactMatch = exactMatches.Count > 1;
-            if (hasDuplicateExactMatch)
-            {
-                matchKind = "search-multiple";
-            }
-
-            var searchStopwatch = Stopwatch.StartNew();
-            var matches = _priceIndex.Search(Session.StoreCode, submittedScanText);
-            searchStopwatch.Stop();
-            searchElapsedMs = searchStopwatch.ElapsedMilliseconds;
-
-            ApplyScanMatches(matches, submittedScanText, allowAutoAdd: !hasDuplicateExactMatch, out autoAdded, out cartUpdateElapsedMs, out uiRefreshElapsedMs);
-            matchCount = matches.Count;
-        }
-
-        totalStopwatch.Stop();
-        ConsoleLog.Write(
-            "PosScan",
-            $"barcode={submittedScanText} storeCode={Session.StoreCode} source={source} hit={matchKind} matchCount={matchCount} autoAdded={autoAdded} cartLines={_cart.Lines.Count} exactLookupElapsedMs={exactLookupElapsedMs} searchElapsedMs={searchElapsedMs} cartUpdateElapsedMs={cartUpdateElapsedMs} uiRefreshElapsedMs={uiRefreshElapsedMs} totalElapsedMs={totalStopwatch.ElapsedMilliseconds}");
-    }
-
-    private void ApplyScanMatches(
-        IReadOnlyList<SellableItemDto> matches,
-        string submittedScanText,
-        bool allowAutoAdd,
-        out bool autoAdded,
-        out long cartUpdateElapsedMs,
-        out long uiRefreshElapsedMs)
-    {
-        var uiRefreshStopwatch = Stopwatch.StartNew();
-        autoAdded = false;
-        cartUpdateElapsedMs = 0;
-        Matches.ReplaceWith(matches);
-        SelectedItem = matches.FirstOrDefault();
-
-        if (SelectedItem is null)
-        {
-            IsMatchesPopupOpen = false;
-            SetStatus("pos.status.noLocalMatch");
-            uiRefreshStopwatch.Stop();
-            uiRefreshElapsedMs = uiRefreshStopwatch.ElapsedMilliseconds;
-            return;
-        }
-
-        if (allowAutoAdd && (matches.Count == 1 || IsExactLookup(SelectedItem, submittedScanText)))
-        {
-            IsMatchesPopupOpen = false;
-            var cartUpdateStopwatch = Stopwatch.StartNew();
-            autoAdded = AddItem(SelectedItem, "scan-auto-add");
-            cartUpdateStopwatch.Stop();
-            cartUpdateElapsedMs = cartUpdateStopwatch.ElapsedMilliseconds;
-            if (autoAdded)
-            {
-                ScanText = string.Empty;
-            }
-        }
-        else
-        {
-            IsMatchesPopupOpen = true;
-            SetStatus("pos.status.multipleMatches", matches.Count);
-        }
-
-        uiRefreshStopwatch.Stop();
-        uiRefreshElapsedMs = uiRefreshStopwatch.ElapsedMilliseconds;
     }
 
     private void AddSelected()
@@ -549,7 +449,12 @@ public sealed partial class PosTerminalViewModel : ObservableObject, IDisposable
             return;
         }
 
-        AddItem(SelectedItem, "manual-add-selected");
+        ApplyWorkflowResult(_workflowService.AddSelectedItem(
+            Session,
+            SelectedItem,
+            clearScanText: false,
+            closeMatchesPopup: false,
+            operation: "manual-add-selected"));
     }
 
     private void SelectMatch(SellableItemDto? item)
@@ -560,392 +465,59 @@ public sealed partial class PosTerminalViewModel : ObservableObject, IDisposable
         }
 
         SelectedItem = item;
-        if (AddItem(item, "manual-select-match"))
-        {
-            ScanText = string.Empty;
-            IsMatchesPopupOpen = false;
-            IsTouchKeyboardOpen = false;
-        }
+        ApplyWorkflowResult(_workflowService.AddSelectedItem(
+            Session,
+            item,
+            clearScanText: true,
+            closeMatchesPopup: true,
+            operation: "manual-select-match"));
     }
 
     private void RemoveLine(CartLine? line)
     {
-        var stopwatch = Stopwatch.StartNew();
-        if (line is null)
-        {
-            stopwatch.Stop();
-            LogCartOperation("remove-line", line, success: false, stopwatch.ElapsedMilliseconds, "null-line");
-            return;
-        }
-
-        if (!_cart.RemoveLine(line))
-        {
-            stopwatch.Stop();
-            LogCartOperation("remove-line", line, success: false, stopwatch.ElapsedMilliseconds, "not-found");
-            return;
-        }
-
-        SetStatus("pos.status.ready");
-        stopwatch.Stop();
-        LogCartOperation("remove-line", line, success: true, stopwatch.ElapsedMilliseconds);
+        ApplyWorkflowResult(_workflowService.RemoveLine(line));
     }
 
     private void IncreaseLine(CartLine? line)
     {
         var stopwatch = Stopwatch.StartNew();
-        if (line is null)
-        {
-            stopwatch.Stop();
-            LogCartOperation("increase-line", line, success: false, stopwatch.ElapsedMilliseconds, "null-line");
-            return;
-        }
-
-        if (!_cart.IncreaseLine(line))
-        {
-            SetStatus("cart.status.quantityMustBeInteger");
-            stopwatch.Stop();
-            LogCartOperation("increase-line", line, success: false, stopwatch.ElapsedMilliseconds, "quantity-not-integer-or-not-found");
-            return;
-        }
-
-        SelectCartLine(line);
-        SetStatus("pos.status.ready");
+        var result = _workflowService.IncreaseLine(line);
+        ApplyWorkflowResult(result);
         stopwatch.Stop();
-        LogCartOperation("increase-line", line, success: true, stopwatch.ElapsedMilliseconds);
+        if (line is not null && string.Equals(result.StatusKey, "pos.status.ready", StringComparison.Ordinal))
+        {
+            LogCartOperation("increase-line", line, success: true, stopwatch.ElapsedMilliseconds);
+        }
     }
 
     private void DecreaseLine(CartLine? line)
     {
-        var stopwatch = Stopwatch.StartNew();
-        if (line is null)
-        {
-            stopwatch.Stop();
-            LogCartOperation("decrease-line", line, success: false, stopwatch.ElapsedMilliseconds, "null-line");
-            return;
-        }
-
-        if (!_cart.DecreaseLine(line))
-        {
-            SetStatus("cart.status.quantityMustBeInteger");
-            stopwatch.Stop();
-            LogCartOperation("decrease-line", line, success: false, stopwatch.ElapsedMilliseconds, "quantity-not-integer-or-not-found");
-            return;
-        }
-
-        if (_cart.Lines.Contains(line))
-        {
-            SelectCartLine(line);
-        }
-
-        SetStatus("pos.status.ready");
-        stopwatch.Stop();
-        LogCartOperation("decrease-line", line, success: true, stopwatch.ElapsedMilliseconds);
+        ApplyWorkflowResult(_workflowService.DecreaseLine(line));
     }
 
     private void ModifySelectedLineQuantity()
     {
-        var stopwatch = Stopwatch.StartNew();
-        if (!TryGetSelectedLineKeypadValue(out var line, out var value))
-        {
-            stopwatch.Stop();
-            LogCartOperation("set-line-quantity", SelectedCartLine, success: false, stopwatch.ElapsedMilliseconds, "invalid-keypad-or-no-selection");
-            return;
-        }
-
-        if (value <= 0m)
-        {
-            SetStatus("pos.status.quantityMustBePositive");
-            stopwatch.Stop();
-            LogCartOperation("set-line-quantity", line, success: false, stopwatch.ElapsedMilliseconds, "quantity-not-positive");
-            return;
-        }
-
-        if (!PosCartService.IsPositiveIntegerQuantity(value))
-        {
-            SetStatus("cart.status.quantityMustBeInteger");
-            stopwatch.Stop();
-            LogCartOperation("set-line-quantity", line, success: false, stopwatch.ElapsedMilliseconds, "quantity-not-integer");
-            return;
-        }
-
-        if (!_cart.SetLineQuantity(line, value))
-        {
-            stopwatch.Stop();
-            LogCartOperation("set-line-quantity", line, success: false, stopwatch.ElapsedMilliseconds, "not-found");
-            return;
-        }
-
-        SelectCartLine(line);
-        KeypadBuffer = string.Empty;
-        SetStatus("pos.status.lineQuantityUpdated");
-        stopwatch.Stop();
-        LogCartOperation("set-line-quantity", line, success: true, stopwatch.ElapsedMilliseconds);
+        ApplyWorkflowResult(_workflowService.ModifySelectedLineQuantity(SelectedCartLine, KeypadBuffer));
     }
 
     private void ModifySelectedLinePrice()
     {
-        var stopwatch = Stopwatch.StartNew();
-        if (!TryGetSelectedLineKeypadValue(out var line, out var value))
-        {
-            stopwatch.Stop();
-            LogCartOperation("set-line-price", SelectedCartLine, success: false, stopwatch.ElapsedMilliseconds, "invalid-keypad-or-no-selection");
-            return;
-        }
-
-        if (!_cart.SetLineUnitPrice(line, value))
-        {
-            stopwatch.Stop();
-            LogCartOperation("set-line-price", line, success: false, stopwatch.ElapsedMilliseconds, "not-found");
-            return;
-        }
-
-        SelectCartLine(line);
-        KeypadBuffer = string.Empty;
-        SetStatus("pos.status.linePriceUpdated");
-        stopwatch.Stop();
-        LogCartOperation("set-line-price", line, success: true, stopwatch.ElapsedMilliseconds);
+        ApplyWorkflowResult(_workflowService.ModifySelectedLinePrice(SelectedCartLine, KeypadBuffer));
     }
 
     private void ApplySelectedLineDiscountAmount()
     {
-        if (IsWholeOrderOperation)
-        {
-            ApplyWholeOrderDiscountAmount();
-            return;
-        }
-
-        var stopwatch = Stopwatch.StartNew();
-        if (!TryGetSelectedLineKeypadValue(out var line, out var value))
-        {
-            stopwatch.Stop();
-            LogCartOperation("set-line-discount-amount", SelectedCartLine, success: false, stopwatch.ElapsedMilliseconds, "invalid-keypad-or-no-selection");
-            return;
-        }
-
-        if (value > line.GrossAmount)
-        {
-            SetStatus("pos.status.discountAmountTooHigh");
-            stopwatch.Stop();
-            LogCartOperation("set-line-discount-amount", line, success: false, stopwatch.ElapsedMilliseconds, "discount-too-high");
-            return;
-        }
-
-        if (!_cart.SetLineDiscountAmount(line, value))
-        {
-            stopwatch.Stop();
-            LogCartOperation("set-line-discount-amount", line, success: false, stopwatch.ElapsedMilliseconds, "not-found");
-            return;
-        }
-
-        SelectCartLine(line);
-        KeypadBuffer = string.Empty;
-        SetStatus("pos.status.lineDiscountUpdated");
-        stopwatch.Stop();
-        LogCartOperation("set-line-discount-amount", line, success: true, stopwatch.ElapsedMilliseconds);
+        ApplyWorkflowResult(_workflowService.ApplySelectedLineDiscountAmount(SelectedCartLine, KeypadBuffer, IsWholeOrderOperation));
     }
 
     private void ApplySelectedLineDiscountPercent()
     {
-        if (IsWholeOrderOperation)
-        {
-            ApplyWholeOrderDiscountPercent();
-            return;
-        }
-
-        var stopwatch = Stopwatch.StartNew();
-        if (!TryGetSelectedLineKeypadValue(out var line, out var value))
-        {
-            stopwatch.Stop();
-            LogCartOperation("set-line-discount-percent", SelectedCartLine, success: false, stopwatch.ElapsedMilliseconds, "invalid-keypad-or-no-selection");
-            return;
-        }
-
-        if (value > 100m)
-        {
-            SetStatus("pos.status.discountPercentOutOfRange");
-            stopwatch.Stop();
-            LogCartOperation("set-line-discount-percent", line, success: false, stopwatch.ElapsedMilliseconds, "discount-percent-out-of-range");
-            return;
-        }
-
-        if (!_cart.SetLineDiscountPercent(line, value))
-        {
-            stopwatch.Stop();
-            LogCartOperation("set-line-discount-percent", line, success: false, stopwatch.ElapsedMilliseconds, "not-found");
-            return;
-        }
-
-        SelectCartLine(line);
-        KeypadBuffer = string.Empty;
-        SetStatus("pos.status.lineDiscountUpdated");
-        stopwatch.Stop();
-        LogCartOperation("set-line-discount-percent", line, success: true, stopwatch.ElapsedMilliseconds);
+        ApplyWorkflowResult(_workflowService.ApplySelectedLineDiscountPercent(SelectedCartLine, KeypadBuffer, IsWholeOrderOperation));
     }
 
     private void ApplyQuickDiscountPercent(string? value)
     {
-        if (!decimal.TryParse(value, NumberStyles.Number, CultureInfo.InvariantCulture, out var discountPercent) ||
-            discountPercent < 0m)
-        {
-            SetStatus("pos.status.invalidKeypadValue");
-            return;
-        }
-
-        if (discountPercent > 100m)
-        {
-            SetStatus("pos.status.discountPercentOutOfRange");
-            return;
-        }
-
-        if (IsWholeOrderOperation)
-        {
-            ApplyWholeOrderDiscountPercent(discountPercent);
-            return;
-        }
-
-        ApplySelectedLineDiscountPercent(discountPercent);
-    }
-
-    private void ApplyWholeOrderDiscountAmount()
-    {
-        var stopwatch = Stopwatch.StartNew();
-        if (!TryGetOrderDiscountKeypadValue(out var value))
-        {
-            stopwatch.Stop();
-            LogCartOperation("set-order-discount-amount", (CartLine?)null, success: false, stopwatch.ElapsedMilliseconds, "invalid-keypad-or-empty-cart");
-            return;
-        }
-
-        if (value > _cart.TotalAmount)
-        {
-            SetStatus("pos.status.discountAmountTooHigh");
-            stopwatch.Stop();
-            LogCartOperation("set-order-discount-amount", (CartLine?)null, success: false, stopwatch.ElapsedMilliseconds, "discount-too-high");
-            return;
-        }
-
-        if (!_cart.SetOrderDiscountAmount(value))
-        {
-            stopwatch.Stop();
-            LogCartOperation("set-order-discount-amount", (CartLine?)null, success: false, stopwatch.ElapsedMilliseconds, "not-applied");
-            return;
-        }
-
-        IsWholeOrderOperation = false;
-        KeypadBuffer = string.Empty;
-        SetStatus("pos.status.orderDiscountUpdated");
-        stopwatch.Stop();
-        LogCartOperation("set-order-discount-amount", (CartLine?)null, success: true, stopwatch.ElapsedMilliseconds);
-    }
-
-    private void ApplyWholeOrderDiscountPercent()
-    {
-        if (!TryGetOrderDiscountKeypadValue(out var value))
-        {
-            return;
-        }
-
-        ApplyWholeOrderDiscountPercent(value);
-    }
-
-    private void ApplyWholeOrderDiscountPercent(decimal value)
-    {
-        var stopwatch = Stopwatch.StartNew();
-        if (_cart.IsEmpty)
-        {
-            SetStatus("pos.status.selectCartLine");
-            stopwatch.Stop();
-            LogCartOperation("set-order-discount-percent", (CartLine?)null, success: false, stopwatch.ElapsedMilliseconds, "empty-cart");
-            return;
-        }
-
-        if (value > 100m)
-        {
-            SetStatus("pos.status.discountPercentOutOfRange");
-            stopwatch.Stop();
-            LogCartOperation("set-order-discount-percent", (CartLine?)null, success: false, stopwatch.ElapsedMilliseconds, "discount-percent-out-of-range");
-            return;
-        }
-
-        if (!_cart.SetOrderDiscountPercent(value))
-        {
-            stopwatch.Stop();
-            LogCartOperation("set-order-discount-percent", (CartLine?)null, success: false, stopwatch.ElapsedMilliseconds, "not-applied");
-            return;
-        }
-
-        IsWholeOrderOperation = false;
-        KeypadBuffer = string.Empty;
-        SetStatus("pos.status.orderDiscountUpdated");
-        stopwatch.Stop();
-        LogCartOperation("set-order-discount-percent", (CartLine?)null, success: true, stopwatch.ElapsedMilliseconds);
-    }
-
-    private void ApplySelectedLineDiscountPercent(decimal value)
-    {
-        var stopwatch = Stopwatch.StartNew();
-        if (SelectedCartLine is null)
-        {
-            SetStatus("pos.status.selectCartLine");
-            stopwatch.Stop();
-            LogCartOperation("quick-line-discount-percent", (CartLine?)null, success: false, stopwatch.ElapsedMilliseconds, "no-selection");
-            return;
-        }
-
-        if (value > 100m)
-        {
-            SetStatus("pos.status.discountPercentOutOfRange");
-            stopwatch.Stop();
-            LogCartOperation("quick-line-discount-percent", SelectedCartLine, success: false, stopwatch.ElapsedMilliseconds, "discount-percent-out-of-range");
-            return;
-        }
-
-        var line = SelectedCartLine;
-        if (!_cart.SetLineDiscountPercent(line, value))
-        {
-            stopwatch.Stop();
-            LogCartOperation("quick-line-discount-percent", line, success: false, stopwatch.ElapsedMilliseconds, "not-found");
-            return;
-        }
-
-        SelectCartLine(line);
-        KeypadBuffer = string.Empty;
-        SetStatus("pos.status.lineDiscountUpdated");
-        stopwatch.Stop();
-        LogCartOperation("quick-line-discount-percent", line, success: true, stopwatch.ElapsedMilliseconds);
-    }
-
-    private bool AddItem(SellableItemDto item, string operation)
-    {
-        var stopwatch = Stopwatch.StartNew();
-        if (!PosCartService.IsPositiveIntegerQuantity(item.QuantityFactor))
-        {
-            SetStatus("cart.status.quantityMustBeInteger");
-            stopwatch.Stop();
-            LogCartOperation(operation, item, success: false, stopwatch.ElapsedMilliseconds, "quantity-factor-not-integer");
-            return false;
-        }
-
-        CartLine line;
-        try
-        {
-            line = _cart.AddItem(item);
-        }
-        catch (InvalidOperationException)
-        {
-            SetStatus("cart.status.quantityMustBeInteger");
-            stopwatch.Stop();
-            LogCartOperation(operation, item, success: false, stopwatch.ElapsedMilliseconds, "cart-quantity-not-integer");
-            return false;
-        }
-
-        SelectCartLine(line);
-        IsTouchKeyboardOpen = false;
-        SetStatus("pos.status.added", item.DisplayName);
-        BeginRemoteLookup(line, item);
-        stopwatch.Stop();
-        LogCartOperation(operation, line, success: true, stopwatch.ElapsedMilliseconds);
-        return true;
+        ApplyWorkflowResult(_workflowService.ApplyQuickDiscountPercent(SelectedCartLine, value, IsWholeOrderOperation));
     }
 
     private void SelectCartLine(CartLine line)
@@ -1005,46 +577,6 @@ public sealed partial class PosTerminalViewModel : ObservableObject, IDisposable
         return string.IsNullOrWhiteSpace(value) ? "<null>" : value.Trim();
     }
 
-    private bool TryGetSelectedLineKeypadValue(out CartLine line, out decimal value)
-    {
-        value = 0m;
-
-        if (SelectedCartLine is null)
-        {
-            line = null!;
-            SetStatus("pos.status.selectCartLine");
-            return false;
-        }
-
-        line = SelectedCartLine;
-        return TryGetKeypadValue(out value);
-    }
-
-    private bool TryGetOrderDiscountKeypadValue(out decimal value)
-    {
-        value = 0m;
-
-        if (_cart.IsEmpty)
-        {
-            SetStatus("pos.status.selectCartLine");
-            return false;
-        }
-
-        return TryGetKeypadValue(out value);
-    }
-
-    private bool TryGetKeypadValue(out decimal value)
-    {
-        if (!decimal.TryParse(KeypadBuffer, NumberStyles.Number, CultureInfo.InvariantCulture, out value) ||
-            value < 0m)
-        {
-            SetStatus("pos.status.invalidKeypadValue");
-            return false;
-        }
-
-        return true;
-    }
-
     private void OnRawBarcodeScanned(RawBarcodeScannedEventArgs e)
     {
         ProcessScannerBarcode(e.Barcode, e.DevicePath, "raw");
@@ -1055,7 +587,14 @@ public sealed partial class PosTerminalViewModel : ObservableObject, IDisposable
         ConsoleLog.Write("PosScan", $"{source} scanner event received barcode={barcode} devicePath={devicePath}");
         ScanText = barcode;
         IsTouchKeyboardOpen = false;
-        ProcessScan(barcode, preferExactLookup: true, source);
+        var stopwatch = Stopwatch.StartNew();
+        var result = _workflowService.ProcessScan(Session, barcode, preferExactLookup: true, source);
+        ApplyWorkflowResult(result);
+        stopwatch.Stop();
+        if (result.SelectedCartLine is not null && string.Equals(result.StatusKey, "pos.status.added", StringComparison.Ordinal))
+        {
+            LogCartOperation("scan-auto-add", result.SelectedCartLine, success: true, stopwatch.ElapsedMilliseconds);
+        }
     }
 
     private void ClearSearch()
@@ -1067,29 +606,17 @@ public sealed partial class PosTerminalViewModel : ObservableObject, IDisposable
 
     private void ClearCart()
     {
-        var stopwatch = Stopwatch.StartNew();
-        _cart.Clear();
-        SetStatus("pos.status.cartCleared");
-        stopwatch.Stop();
-        LogCartOperation("clear-cart", (CartLine?)null, success: true, stopwatch.ElapsedMilliseconds);
+        ApplyWorkflowResult(_workflowService.ClearCart());
     }
 
     private void OpenPayment()
     {
         var stopwatch = Stopwatch.StartNew();
-        if (_cart.HasNonIntegerQuantity)
+        var result = _workflowService.GuardPayment();
+        ApplyWorkflowResult(result);
+        if (!result.PaymentAllowed)
         {
-            SetStatus("cart.status.quantityMustBeInteger");
             stopwatch.Stop();
-            LogCartOperation("open-payment", (CartLine?)null, success: false, stopwatch.ElapsedMilliseconds, "quantity-not-integer");
-            return;
-        }
-
-        if (_cart.HasZeroPriceLine)
-        {
-            SetStatus("cart.status.zeroPriceItem");
-            stopwatch.Stop();
-            LogCartOperation("open-payment", (CartLine?)null, success: false, stopwatch.ElapsedMilliseconds, "zero-price-line");
             return;
         }
 
@@ -1114,100 +641,6 @@ public sealed partial class PosTerminalViewModel : ObservableObject, IDisposable
             await _onReregisterDeviceAsync();
         }
     }
-
-    private void BeginRemoteLookup(CartLine line, SellableItemDto item)
-    {
-        if (!Session.IsOnline || _remoteLookupRefreshAsync is null)
-        {
-            return;
-        }
-
-        var snapshot = new RemoteLookupCartSnapshot(
-            line,
-            Session.StoreCode,
-            item.LookupCode,
-            item.ProductCode,
-            item.ReferenceCode);
-        _ = RefreshRemoteLookupAsync(snapshot);
-    }
-
-    private async Task RefreshRemoteLookupAsync(RemoteLookupCartSnapshot snapshot)
-    {
-        using var timeoutCts = new CancellationTokenSource(RemoteLookupTimeout);
-        var stopwatch = Stopwatch.StartNew();
-        try
-        {
-            var result = await _remoteLookupRefreshAsync!(
-                snapshot.StoreCode,
-                snapshot.LookupCode,
-                timeoutCts.Token);
-            stopwatch.Stop();
-
-            if (result.Updated && result.Item is not null)
-            {
-                if (CanApplyRemoteItemToCartLine(snapshot, result.Item))
-                {
-                    var updated = _cart.UpdateLineFromRemote(snapshot.Line, result.Item);
-                    ConsoleLog.Write(
-                        "PosScan",
-                        $"remote lookup cart update storeCode={snapshot.StoreCode} lookupCode={snapshot.LookupCode} productCode={snapshot.ProductCode} referenceCode={snapshot.ReferenceCode ?? "<null>"} updated={updated} elapsedMs={stopwatch.ElapsedMilliseconds}");
-                }
-                else
-                {
-                    ConsoleLog.Write(
-                        "PosScan",
-                        $"remote lookup ignored for cart storeCode={snapshot.StoreCode} lookupCode={snapshot.LookupCode} localProductCode={snapshot.ProductCode} localReferenceCode={snapshot.ReferenceCode ?? "<null>"} remoteProductCode={result.Item.ProductCode} remoteReferenceCode={result.Item.ReferenceCode ?? "<null>"} elapsedMs={stopwatch.ElapsedMilliseconds}");
-                }
-            }
-            else if (result.Deleted)
-            {
-                ConsoleLog.Write(
-                    "PosScan",
-                    $"remote lookup deleted local cache only storeCode={result.StoreCode} lookupCode={result.LookupCode} deletedCount={result.DeletedCount} elapsedMs={stopwatch.ElapsedMilliseconds}");
-            }
-
-            var catalogItems = await ReloadCatalogAsync(CancellationToken.None);
-            RefreshMatches(catalogItems);
-        }
-        catch (OperationCanceledException ex) when (timeoutCts.IsCancellationRequested)
-        {
-            stopwatch.Stop();
-            ConsoleLog.Write(
-                "PosScan",
-                $"remote lookup timeout storeCode={snapshot.StoreCode} lookupCode={snapshot.LookupCode} timeoutMs={RemoteLookupTimeout.TotalMilliseconds:0} elapsedMs={stopwatch.ElapsedMilliseconds} error={ex.Message}");
-        }
-        catch (Exception ex)
-        {
-            stopwatch.Stop();
-            ConsoleLog.Write(
-                "PosScan",
-                $"remote lookup failed storeCode={snapshot.StoreCode} lookupCode={snapshot.LookupCode} elapsedMs={stopwatch.ElapsedMilliseconds} error={ex.Message}");
-        }
-    }
-
-    private static bool CanApplyRemoteItemToCartLine(RemoteLookupCartSnapshot snapshot, SellableItemDto item)
-    {
-        return EqualsIdentity(snapshot.StoreCode, item.StoreCode) &&
-            EqualsIdentity(snapshot.ProductCode, item.ProductCode) &&
-            EqualsIdentity(snapshot.ReferenceCode, item.ReferenceCode);
-    }
-
-    private static bool EqualsIdentity(string? left, string? right)
-    {
-        return string.Equals(NormalizeIdentity(left), NormalizeIdentity(right), StringComparison.Ordinal);
-    }
-
-    private static string NormalizeIdentity(string? value)
-    {
-        return (value ?? string.Empty).Trim().ToUpperInvariant();
-    }
-
-    private sealed record RemoteLookupCartSnapshot(
-        CartLine Line,
-        string StoreCode,
-        string LookupCode,
-        string ProductCode,
-        string? ReferenceCode);
 
     private async Task SyncAsync()
     {
@@ -1264,13 +697,6 @@ public sealed partial class PosTerminalViewModel : ObservableObject, IDisposable
         }
     }
 
-    private async Task<IReadOnlyList<SellableItemDto>> ReloadCatalogAsync(CancellationToken cancellationToken)
-    {
-        return _reloadCatalogAsync is null
-            ? _priceIndex.Items
-            : await _reloadCatalogAsync(cancellationToken);
-    }
-
     private void RefreshMatches(IReadOnlyList<SellableItemDto> catalogItems)
     {
         var matches = string.IsNullOrWhiteSpace(ScanText)
@@ -1280,12 +706,48 @@ public sealed partial class PosTerminalViewModel : ObservableObject, IDisposable
         SelectedItem = Matches.FirstOrDefault();
     }
 
-    private static bool IsExactLookup(SellableItemDto item, string query)
+    private void ApplyWorkflowResult(PosTerminalWorkflowResult result)
     {
-        var normalized = query.Trim();
-        return string.Equals(item.Barcode, normalized, StringComparison.OrdinalIgnoreCase) ||
-            string.Equals(item.LookupCode, normalized, StringComparison.OrdinalIgnoreCase) ||
-            string.Equals(item.ItemNumber, normalized, StringComparison.OrdinalIgnoreCase);
+        if (result.Matches is not null)
+        {
+            Matches.ReplaceWith(result.Matches);
+            SelectedItem = result.SelectedItem;
+        }
+
+        if (result.MatchesPopupOpen is bool matchesPopupOpen)
+        {
+            IsMatchesPopupOpen = matchesPopupOpen;
+        }
+
+        if (result.TouchKeyboardOpen is bool touchKeyboardOpen)
+        {
+            IsTouchKeyboardOpen = touchKeyboardOpen;
+        }
+
+        if (result.WholeOrderOperation is bool wholeOrderOperation)
+        {
+            IsWholeOrderOperation = wholeOrderOperation;
+        }
+
+        if (result.ClearScanText)
+        {
+            ScanText = string.Empty;
+        }
+
+        if (result.ClearKeypadBuffer)
+        {
+            KeypadBuffer = string.Empty;
+        }
+
+        if (result.SelectedCartLine is not null)
+        {
+            SelectCartLine(result.SelectedCartLine);
+        }
+
+        if (!string.IsNullOrWhiteSpace(result.StatusKey))
+        {
+            SetStatus(result.StatusKey!, result.StatusArgs);
+        }
     }
 
     private void SetStatus(string key, params object[] args)

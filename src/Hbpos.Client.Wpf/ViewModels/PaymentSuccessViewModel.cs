@@ -8,7 +8,7 @@ namespace Hbpos.Client.Wpf.ViewModels;
 
 public sealed partial class PaymentSuccessViewModel : ObservableObject
 {
-    private readonly ILocalOrderRepository? _orderRepository;
+    private readonly IReceiptQueryService? _receiptQueryService;
 
     [ObservableProperty]
     private Guid? _transactionId;
@@ -29,15 +29,25 @@ public sealed partial class PaymentSuccessViewModel : ObservableObject
     private string _cashierName = string.Empty;
 
     public PaymentSuccessViewModel()
+        : this(initialize: true, receiptQueryService: null)
     {
-        PrintReceiptCommand = new RelayCommand(() => PrintReceiptRequested?.Invoke(this, EventArgs.Empty), () => TransactionId is not null);
-        NewTransactionCommand = new RelayCommand(() => NewTransactionRequested?.Invoke(this, EventArgs.Empty));
     }
 
     public PaymentSuccessViewModel(ILocalOrderRepository orderRepository)
-        : this()
+        : this(initialize: true, receiptQueryService: new ReceiptQueryService(orderRepository))
     {
-        _orderRepository = orderRepository;
+    }
+
+    public PaymentSuccessViewModel(IReceiptQueryService receiptQueryService)
+        : this(initialize: true, receiptQueryService)
+    {
+    }
+
+    private PaymentSuccessViewModel(bool initialize, IReceiptQueryService? receiptQueryService)
+    {
+        _receiptQueryService = receiptQueryService;
+        PrintReceiptCommand = new RelayCommand(() => PrintReceiptRequested?.Invoke(this, EventArgs.Empty), () => TransactionId is not null);
+        NewTransactionCommand = new RelayCommand(() => NewTransactionRequested?.Invoke(this, EventArgs.Empty));
     }
 
     public event EventHandler? PrintReceiptRequested;
@@ -78,49 +88,48 @@ public sealed partial class PaymentSuccessViewModel : ObservableObject
 
     public async Task LoadAsync(Guid orderGuid, CancellationToken cancellationToken = default)
     {
-        if (_orderRepository is null)
+        if (_receiptQueryService is null)
         {
             return;
         }
 
-        var order = await _orderRepository.GetOrderAsync(orderGuid, cancellationToken);
-        if (order is not null)
+        var receipt = await _receiptQueryService.GetReceiptAsync(orderGuid, cancellationToken);
+        if (receipt is not null)
         {
-            LoadFromOrder(order);
+            ApplyReceipt(receipt);
         }
     }
 
     public async Task LoadLatestAsync(CancellationToken cancellationToken = default)
     {
-        if (_orderRepository is null)
+        if (_receiptQueryService is null)
         {
             return;
         }
 
-        var latest = (await _orderRepository.GetRecentOrdersAsync(1, cancellationToken)).FirstOrDefault();
+        var latest = await _receiptQueryService.GetLatestReceiptAsync(cancellationToken);
         if (latest is not null)
         {
-            await LoadAsync(latest.OrderGuid, cancellationToken);
+            ApplyReceipt(latest);
         }
     }
 
     public void LoadFromOrder(LocalOrder order)
     {
-        TransactionId = order.OrderGuid;
-        TotalAmountPaid = order.ActualAmount;
-        SoldAt = order.SoldAt;
-        StoreCode = order.StoreCode;
-        DeviceCode = order.DeviceCode;
-        CashierName = order.CashierName;
+        ApplyReceipt(ReceiptQueryService.CreateReceipt(order));
+    }
 
-        ReceiptLines.ReplaceWith(order.Lines.Select(line => new ReceiptPreviewLine(
-            line.DisplayName,
-            line.LookupCode,
-            line.Quantity,
-            line.UnitPrice,
-            line.DiscountAmount,
-            line.ActualAmount)));
-        Payments.ReplaceWith(order.Payments.Select(payment => new ReceiptPaymentLine(payment.Method, payment.Amount, payment.Reference)));
+    private void ApplyReceipt(ReceiptDetails receipt)
+    {
+        TransactionId = receipt.OrderGuid;
+        TotalAmountPaid = receipt.ActualAmount;
+        SoldAt = receipt.SoldAt;
+        StoreCode = receipt.StoreCode;
+        DeviceCode = receipt.DeviceCode;
+        CashierName = receipt.CashierName;
+
+        ReceiptLines.ReplaceWith(receipt.Lines);
+        Payments.ReplaceWith(receipt.Payments);
 
         OnPropertyChanged(nameof(TransactionIdDisplay));
         OnPropertyChanged(nameof(SoldAtDisplay));

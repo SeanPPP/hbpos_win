@@ -13,17 +13,11 @@ public sealed partial class SpecialProductsViewModel : ObservableObject
 {
     private const int PageSize = 20;
 
-    private readonly LocalSellableItemIndex _priceIndex;
-    private readonly PosCartService _cart;
-    private readonly ILocalCatalogRepository _catalogRepository;
-    private readonly ISpecialProductService _specialProductService;
+    private readonly ISpecialProductsWorkflowService _workflowService;
     private readonly ILocalizationService _localization;
     private readonly Action _onBack;
     private readonly Action<CartLine>? _onCartLineAdded;
-    private readonly SemaphoreSlim _loadLock = new(1, 1);
-    private Task? _preloadTask;
-    private bool _hasLoaded;
-    private string? _loadedStoreCode;
+    private readonly object _specialItemsGate = new();
 
     [ObservableProperty]
     private PosSessionState _session;
@@ -66,12 +60,14 @@ public sealed partial class SpecialProductsViewModel : ObservableObject
         PosSessionState session,
         ILocalizationService localization,
         Action onBack,
-        Action<CartLine>? onCartLineAdded = null)
+        Action<CartLine>? onCartLineAdded = null,
+        ISpecialProductsWorkflowService? workflowService = null)
     {
-        _priceIndex = priceIndex;
-        _cart = cart;
-        _catalogRepository = catalogRepository;
-        _specialProductService = specialProductService;
+        _workflowService = workflowService ?? new SpecialProductsWorkflowService(
+            priceIndex,
+            cart,
+            catalogRepository,
+            specialProductService);
         _session = session;
         _localization = localization;
         _onBack = onBack;
@@ -186,164 +182,75 @@ public sealed partial class SpecialProductsViewModel : ObservableObject
 
     public Task PreloadAsync(CancellationToken cancellationToken = default)
     {
-        if (IsLoadedForCurrentStore())
-        {
-            Log($"preload skipped store={Session.StoreCode} reason=already-loaded");
-            return Task.CompletedTask;
-        }
-
-        if (_preloadTask is null || _preloadTask.IsCompleted)
-        {
-            Log($"preload start store={Session.StoreCode}");
-            _preloadTask = LoadSpecialProductsAsync(
-                forceReload: false,
-                showBusy: false,
-                resetToFirstPage: true,
-                cancellationToken);
-        }
-
-        return _preloadTask;
+        return PreloadCoreAsync(cancellationToken);
     }
 
     public async Task EnsureLoadedAsync(CancellationToken cancellationToken = default)
     {
-        if (IsLoadedForCurrentStore())
+        var shouldResetBusy = !IsBusy;
+        if (shouldResetBusy)
         {
-            Log($"ensure loaded skipped store={Session.StoreCode} reason=already-loaded");
-            return;
+            IsBusy = true;
         }
 
-        var preloadTask = _preloadTask;
-        if (preloadTask is not null && !preloadTask.IsCompleted)
+        try
         {
-            Log($"ensure loaded waiting preload store={Session.StoreCode}");
-            IsBusy = true;
-            try
-            {
-                await preloadTask;
-            }
-            finally
+            var result = await _workflowService.EnsureLoadedAsync(Session.StoreCode, cancellationToken);
+            ApplySpecialItems(result.SpecialItems, resetToFirstPage: SpecialItems.Count == 0);
+        }
+        catch (Exception ex)
+        {
+            SetStatusText(string.Format(_localization.CurrentCulture, T("specialProducts.status.loadFailed"), ex.Message));
+        }
+        finally
+        {
+            if (shouldResetBusy)
             {
                 IsBusy = false;
             }
-
-            if (IsLoadedForCurrentStore())
-            {
-                Log($"ensure loaded completed from preload store={Session.StoreCode}");
-                return;
-            }
         }
-
-        await LoadSpecialProductsAsync(
-            forceReload: false,
-            showBusy: true,
-            resetToFirstPage: SpecialItems.Count == 0,
-            cancellationToken);
     }
 
     public Task LoadAsync(CancellationToken cancellationToken = default)
     {
-        return LoadSpecialProductsAsync(
-            forceReload: true,
-            showBusy: true,
-            resetToFirstPage: true,
-            cancellationToken);
+        return LoadAsyncCore(cancellationToken);
     }
 
-    private async Task LoadSpecialProductsAsync(
-        bool forceReload,
-        bool showBusy,
-        bool resetToFirstPage,
-        CancellationToken cancellationToken)
+    private async Task PreloadCoreAsync(CancellationToken cancellationToken)
     {
-        if (showBusy && IsBusy)
-        {
-            Log($"load skipped store={Session.StoreCode} reason=busy forceReload={forceReload} showBusy={showBusy}");
-            return;
-        }
-
-        if (!forceReload && IsLoadedForCurrentStore())
-        {
-            Log($"load skipped store={Session.StoreCode} reason=already-loaded forceReload={forceReload} showBusy={showBusy}");
-            return;
-        }
-
-        if (forceReload)
-        {
-            _preloadTask = null;
-        }
-
-        if (showBusy)
-        {
-            IsBusy = true;
-        }
-
-        var totalStopwatch = Stopwatch.StartNew();
-        var lockWaitElapsedMs = 0L;
         try
         {
-            Log($"load start store={Session.StoreCode} forceReload={forceReload} showBusy={showBusy} resetToFirstPage={resetToFirstPage}");
-            var lockStopwatch = Stopwatch.StartNew();
-            await _loadLock.WaitAsync(cancellationToken);
-            lockStopwatch.Stop();
-            lockWaitElapsedMs = lockStopwatch.ElapsedMilliseconds;
-            try
-            {
-                if (!forceReload && IsLoadedForCurrentStore())
-                {
-                    totalStopwatch.Stop();
-                    Log($"load skipped inside lock store={Session.StoreCode} reason=already-loaded lockWaitElapsedMs={lockWaitElapsedMs} totalElapsedMs={totalStopwatch.ElapsedMilliseconds}");
-                    return;
-                }
-
-                var loadStopwatch = Stopwatch.StartNew();
-                var specialItems = await _catalogRepository.LoadSpecialProductItemsAsync(Session.StoreCode, cancellationToken);
-                loadStopwatch.Stop();
-
-                var replaceStopwatch = Stopwatch.StartNew();
-                SpecialItems.ReplaceWith(specialItems);
-                replaceStopwatch.Stop();
-                _hasLoaded = true;
-                _loadedStoreCode = NormalizeStoreCode(Session.StoreCode);
-
-                var pageStopwatch = Stopwatch.StartNew();
-                RefreshPagedSpecialItems(resetToFirstPage: resetToFirstPage);
-                pageStopwatch.Stop();
-                if (showBusy)
-                {
-                    SetStatus("specialProducts.status.loaded", SpecialItems.Count);
-                }
-
-                totalStopwatch.Stop();
-                Log($"load completed store={Session.StoreCode} items={specialItems.Count} lockWaitElapsedMs={lockWaitElapsedMs} loadElapsedMs={loadStopwatch.ElapsedMilliseconds} replaceElapsedMs={replaceStopwatch.ElapsedMilliseconds} pageRefreshElapsedMs={pageStopwatch.ElapsedMilliseconds} totalElapsedMs={totalStopwatch.ElapsedMilliseconds}");
-            }
-            finally
-            {
-                _loadLock.Release();
-            }
-
-            RefreshCommandStates();
+            var result = await _workflowService.PreloadAsync(Session.StoreCode, cancellationToken);
+            ApplySpecialItems(result.SpecialItems, resetToFirstPage: true);
         }
         catch (Exception ex)
         {
-            totalStopwatch.Stop();
-            _hasLoaded = false;
-            Log($"load failed store={Session.StoreCode} lockWaitElapsedMs={lockWaitElapsedMs} totalElapsedMs={totalStopwatch.ElapsedMilliseconds} error={ex.Message}");
-            if (showBusy)
-            {
-                SetStatusText(string.Format(_localization.CurrentCulture, T("specialProducts.status.loadFailed"), ex.Message));
-            }
-            else
-            {
-                ConsoleLog.Write("SpecialProducts", $"preload failed store={Session.StoreCode} error={ex.Message}");
-            }
+            ConsoleLog.Write("SpecialProducts", $"preload failed store={Session.StoreCode} error={ex.Message}");
+        }
+    }
+
+    private async Task LoadAsyncCore(CancellationToken cancellationToken)
+    {
+        if (IsBusy)
+        {
+            Log($"load skipped store={Session.StoreCode} reason=busy forceReload=true");
+            return;
+        }
+
+        IsBusy = true;
+        try
+        {
+            var result = await _workflowService.LoadAsync(Session.StoreCode, cancellationToken);
+            ApplySpecialItems(result.SpecialItems, resetToFirstPage: true);
+            SetStatus("specialProducts.status.loaded", SpecialItems.Count);
+        }
+        catch (Exception ex)
+        {
+            SetStatusText(string.Format(_localization.CurrentCulture, T("specialProducts.status.loadFailed"), ex.Message));
         }
         finally
         {
-            if (showBusy)
-            {
-                IsBusy = false;
-            }
+            IsBusy = false;
         }
     }
 
@@ -389,25 +296,13 @@ public sealed partial class SpecialProductsViewModel : ObservableObject
             return;
         }
 
-        var results = _priceIndex.Search(Session.StoreCode, SearchText, 80)
-            .Where(item =>
-                string.Equals(item.StoreCode, Session.StoreCode, StringComparison.OrdinalIgnoreCase) &&
-                !item.IsSpecialProduct)
-            .GroupBy(item => NormalizeProductCode(item.ProductCode), StringComparer.OrdinalIgnoreCase)
-            .Select(group => group
-                .OrderBy(PreferredLookupRank)
-                .ThenBy(item => item.DisplayName, StringComparer.CurrentCultureIgnoreCase)
-                .ThenBy(item => item.LookupCode, StringComparer.OrdinalIgnoreCase)
-                .First())
-            .Take(12)
-            .ToArray();
-
-        SearchResults.ReplaceWith(results);
+        var results = _workflowService.Search(Session.StoreCode, SearchText);
+        SearchResults.ReplaceWith(results.Items);
         OnPropertyChanged(nameof(HasSearchResults));
-        SetStatus(results.Length == 0
+        SetStatus(results.Items.Count == 0
             ? "specialProducts.status.noSearchResults"
             : "specialProducts.status.searchResults",
-            results.Length);
+            results.Items.Count);
     }
 
     private void ClearSearch()
@@ -428,12 +323,12 @@ public sealed partial class SpecialProductsViewModel : ObservableObject
         var stopwatch = Stopwatch.StartNew();
         try
         {
-            var line = _cart.AddItem(item);
+            var result = _workflowService.AddToCart(item);
             SetStatus("specialProducts.status.addedToCart", item.DisplayName);
             _onBack();
-            _onCartLineAdded?.Invoke(line);
+            _onCartLineAdded?.Invoke(result.Line);
             stopwatch.Stop();
-            Log($"operation=add-to-cart store={Session.StoreCode} productCode={item.ProductCode} lookupCode={item.LookupCode} success=true revealRequested={_onCartLineAdded is not null} cartLines={_cart.Lines.Count} totalElapsedMs={stopwatch.ElapsedMilliseconds}");
+            Log($"operation=add-to-cart store={Session.StoreCode} productCode={item.ProductCode} lookupCode={item.LookupCode} success=true revealRequested={_onCartLineAdded is not null} cartLines={result.CartLineCount} totalElapsedMs={stopwatch.ElapsedMilliseconds}");
         }
         catch (Exception ex)
         {
@@ -468,53 +363,35 @@ public sealed partial class SpecialProductsViewModel : ObservableObject
 
             var progress = new Progress<SpecialProductDownloadProgress>(ApplyDownloadProgress);
             var serviceStopwatch = Stopwatch.StartNew();
-            var result = await _specialProductService.DownloadSpecialProductsAsync(
+            var result = await _workflowService.DownloadAsync(
                 Session.StoreCode,
                 cancellationToken,
                 progress);
             serviceStopwatch.Stop();
 
-            var loadCatalogStopwatch = Stopwatch.StartNew();
-            var catalogItems = await _catalogRepository.LoadSellableItemsAsync(Session.StoreCode, cancellationToken);
-            loadCatalogStopwatch.Stop();
-
-            var indexStopwatch = Stopwatch.StartNew();
-            _priceIndex.ReplaceAll(catalogItems);
-            indexStopwatch.Stop();
-
-            var loadSpecialStopwatch = Stopwatch.StartNew();
-            var specialItems = await _catalogRepository.LoadSpecialProductItemsAsync(Session.StoreCode, cancellationToken);
-            loadSpecialStopwatch.Stop();
-
             var replaceStopwatch = Stopwatch.StartNew();
-            SpecialItems.ReplaceWith(specialItems);
+            ApplySpecialItems(result.SpecialItems, resetToFirstPage: true);
             replaceStopwatch.Stop();
-            _hasLoaded = true;
-            _loadedStoreCode = NormalizeStoreCode(Session.StoreCode);
 
             var searchStopwatch = Stopwatch.StartNew();
             SearchCatalog();
             searchStopwatch.Stop();
-
-            var pageStopwatch = Stopwatch.StartNew();
-            RefreshPagedSpecialItems(resetToFirstPage: true);
-            pageStopwatch.Stop();
             ApplyDownloadProgress(new SpecialProductDownloadProgress(
-                result.StoreCode,
+                result.DownloadResult.StoreCode,
                 SpecialProductDownloadProgressStage.Completed,
-                result.TotalCount,
-                result.DownloadedCount,
+                result.DownloadResult.TotalCount,
+                result.DownloadResult.DownloadedCount,
                 100,
-                result.PageCount,
-                result.UpsertedCount,
-                result.UnmarkedCount,
+                result.DownloadResult.PageCount,
+                result.DownloadResult.UpsertedCount,
+                result.DownloadResult.UnmarkedCount,
                 0));
             SetStatus(
                 "specialProducts.status.downloadCompleted",
-                result.DownloadedCount,
-                result.UnmarkedCount);
+                result.DownloadResult.DownloadedCount,
+                result.DownloadResult.UnmarkedCount);
             totalStopwatch.Stop();
-            Log($"operation=download store={Session.StoreCode} stage=completed pages={result.PageCount} downloaded={result.DownloadedCount} upserted={result.UpsertedCount} unmarked={result.UnmarkedCount} serviceElapsedMs={serviceStopwatch.ElapsedMilliseconds} loadCatalogElapsedMs={loadCatalogStopwatch.ElapsedMilliseconds} indexRefreshElapsedMs={indexStopwatch.ElapsedMilliseconds} loadSpecialElapsedMs={loadSpecialStopwatch.ElapsedMilliseconds} replaceElapsedMs={replaceStopwatch.ElapsedMilliseconds} searchElapsedMs={searchStopwatch.ElapsedMilliseconds} pageRefreshElapsedMs={pageStopwatch.ElapsedMilliseconds} totalElapsedMs={totalStopwatch.ElapsedMilliseconds}");
+            Log($"operation=download store={Session.StoreCode} stage=completed pages={result.DownloadResult.PageCount} downloaded={result.DownloadResult.DownloadedCount} upserted={result.DownloadResult.UpsertedCount} unmarked={result.DownloadResult.UnmarkedCount} serviceElapsedMs={serviceStopwatch.ElapsedMilliseconds} replaceElapsedMs={replaceStopwatch.ElapsedMilliseconds} searchElapsedMs={searchStopwatch.ElapsedMilliseconds} totalElapsedMs={totalStopwatch.ElapsedMilliseconds}");
         }
         catch (Exception ex)
         {
@@ -563,39 +440,24 @@ public sealed partial class SpecialProductsViewModel : ObservableObject
         {
             Log($"operation=mark store={Session.StoreCode} productCode={item.ProductCode} isSpecialProduct={isSpecialProduct} stage=start");
             var serviceStopwatch = Stopwatch.StartNew();
-            await _specialProductService.MarkSpecialProductAsync(
+            var result = await _workflowService.MarkSpecialProductAsync(
                 Session.StoreCode,
                 item.ProductCode,
                 isSpecialProduct,
                 cancellationToken);
             serviceStopwatch.Stop();
 
-            var loadCatalogStopwatch = Stopwatch.StartNew();
-            var catalogItems = await _catalogRepository.LoadSellableItemsAsync(Session.StoreCode, cancellationToken);
-            loadCatalogStopwatch.Stop();
-
-            var indexStopwatch = Stopwatch.StartNew();
-            _priceIndex.ReplaceAll(catalogItems);
-            indexStopwatch.Stop();
-
-            var loadSpecialStopwatch = Stopwatch.StartNew();
-            var specialItems = await _catalogRepository.LoadSpecialProductItemsAsync(Session.StoreCode, cancellationToken);
-            loadSpecialStopwatch.Stop();
-
             var replaceStopwatch = Stopwatch.StartNew();
-            SpecialItems.ReplaceWith(specialItems);
+            ApplySpecialItems(
+                result.SpecialItems,
+                resetToFirstPage: false,
+                focusProductCode: isSpecialProduct ? item.ProductCode : null);
             replaceStopwatch.Stop();
-            _hasLoaded = true;
-            _loadedStoreCode = NormalizeStoreCode(Session.StoreCode);
-
-            var pageStopwatch = Stopwatch.StartNew();
-            RefreshPagedSpecialItems(focusProductCode: isSpecialProduct ? item.ProductCode : null);
-            pageStopwatch.Stop();
             SetStatus(
                 isSpecialProduct ? "specialProducts.status.marked" : "specialProducts.status.unmarked",
                 item.DisplayName);
             totalStopwatch.Stop();
-            Log($"operation=mark store={Session.StoreCode} productCode={item.ProductCode} isSpecialProduct={isSpecialProduct} stage=completed items={specialItems.Count} serviceElapsedMs={serviceStopwatch.ElapsedMilliseconds} loadCatalogElapsedMs={loadCatalogStopwatch.ElapsedMilliseconds} indexRefreshElapsedMs={indexStopwatch.ElapsedMilliseconds} loadSpecialElapsedMs={loadSpecialStopwatch.ElapsedMilliseconds} replaceElapsedMs={replaceStopwatch.ElapsedMilliseconds} pageRefreshElapsedMs={pageStopwatch.ElapsedMilliseconds} totalElapsedMs={totalStopwatch.ElapsedMilliseconds}");
+            Log($"operation=mark store={Session.StoreCode} productCode={item.ProductCode} isSpecialProduct={isSpecialProduct} stage=completed items={result.SpecialItems.Count} serviceElapsedMs={serviceStopwatch.ElapsedMilliseconds} replaceElapsedMs={replaceStopwatch.ElapsedMilliseconds} pageRefreshElapsedMs=0 totalElapsedMs={totalStopwatch.ElapsedMilliseconds}");
         }
         catch (Exception ex)
         {
@@ -624,16 +486,21 @@ public sealed partial class SpecialProductsViewModel : ObservableObject
         }
 
         var totalStopwatch = Stopwatch.StartNew();
-        SpecialItems.Move(currentIndex, nextIndex);
         var saveStopwatch = Stopwatch.StartNew();
-        await _catalogRepository.SaveSpecialProductOrderAsync(
+        var result = await _workflowService.ReorderAsync(
             Session.StoreCode,
-            SpecialItems.Select(x => x.ProductCode),
+            SpecialItems.ToArray(),
+            item.ProductCode,
+            delta,
             CancellationToken.None);
         saveStopwatch.Stop();
+        if (result is null)
+        {
+            return;
+        }
 
         var pageStopwatch = Stopwatch.StartNew();
-        RefreshPagedSpecialItems(focusProductCode: item.ProductCode);
+        ApplySpecialItems(result.SpecialItems, resetToFirstPage: false, focusProductCode: result.FocusProductCode);
         pageStopwatch.Stop();
         SetStatus("specialProducts.status.orderSaved");
         RefreshCommandStates();
@@ -721,12 +588,6 @@ public sealed partial class SpecialProductsViewModel : ObservableObject
         return Session.IsOnline && !IsBusy;
     }
 
-    private bool IsLoadedForCurrentStore()
-    {
-        return _hasLoaded &&
-            string.Equals(_loadedStoreCode, NormalizeStoreCode(Session.StoreCode), StringComparison.OrdinalIgnoreCase);
-    }
-
     private bool CanMoveUp(SellableItemDto? item)
     {
         return item is not null && IsEditMode && !IsBusy && SpecialItems.IndexOf(item) > 0;
@@ -771,6 +632,19 @@ public sealed partial class SpecialProductsViewModel : ObservableObject
     private void SetStatusText(string message)
     {
         StatusMessage = message;
+    }
+
+    private void ApplySpecialItems(
+        IReadOnlyList<SellableItemDto> specialItems,
+        bool resetToFirstPage,
+        string? focusProductCode = null)
+    {
+        lock (_specialItemsGate)
+        {
+            SpecialItems.ReplaceWith(specialItems);
+            RefreshPagedSpecialItems(focusProductCode, resetToFirstPage);
+            RefreshCommandStates();
+        }
     }
 
     private void RaiseLocalizedProperties()
@@ -845,33 +719,6 @@ public sealed partial class SpecialProductsViewModel : ObservableObject
             _localization.CurrentCulture,
             T("shell.catalogDownload.elapsedSeconds"),
             elapsedMilliseconds / 1000d);
-    }
-
-    private static int PreferredLookupRank(SellableItemDto item)
-    {
-        if (!string.IsNullOrWhiteSpace(item.Barcode) &&
-            string.Equals(NormalizeLookupCode(item.LookupCode), NormalizeLookupCode(item.Barcode), StringComparison.Ordinal))
-        {
-            return 0;
-        }
-
-        if (!string.IsNullOrWhiteSpace(item.ItemNumber) &&
-            string.Equals(NormalizeLookupCode(item.LookupCode), NormalizeLookupCode(item.ItemNumber), StringComparison.Ordinal))
-        {
-            return 1;
-        }
-
-        return 2;
-    }
-
-    private static string NormalizeLookupCode(string? value)
-    {
-        return (value ?? string.Empty).Trim().ToUpperInvariant();
-    }
-
-    private static string NormalizeStoreCode(string? value)
-    {
-        return (value ?? string.Empty).Trim();
     }
 
     private static string NormalizeProductCode(string? value)

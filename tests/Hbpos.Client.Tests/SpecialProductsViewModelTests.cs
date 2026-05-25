@@ -118,6 +118,22 @@ public sealed class SpecialProductsViewModelTests
     }
 
     [Fact]
+    public async Task PreloadAsync_populates_collections_from_workflow_service()
+    {
+        var workflow = new FakeSpecialProductsWorkflowService
+        {
+            PreloadResult = new SpecialProductsLoadResult("S001", CreateSpecialItems(21))
+        };
+        var viewModel = CreateViewModel(workflow: workflow);
+
+        await viewModel.PreloadAsync();
+
+        Assert.Equal(1, workflow.PreloadCallCount);
+        Assert.Equal(20, viewModel.PagedSpecialItems.Count);
+        Assert.Equal(2, viewModel.TotalPages);
+    }
+
+    [Fact]
     public async Task EnsureLoadedAsync_after_preload_does_not_reload_local_cache()
     {
         var repository = new FakeCatalogRepository { SpecialItems = CreateSpecialItems(1) };
@@ -284,6 +300,28 @@ public sealed class SpecialProductsViewModelTests
     }
 
     [Fact]
+    public async Task Online_add_uses_workflow_result_to_refresh_special_items()
+    {
+        var item = CreateItem("SKU-021", "Item 021", "930021");
+        var workflow = new FakeSpecialProductsWorkflowService
+        {
+            MarkResultFactory = (_, _, isSpecialProduct) => new SpecialProductsMutationWorkflowResult(
+                "S001",
+                "SKU-021",
+                isSpecialProduct,
+                [item with { IsSpecialProduct = true }])
+        };
+        var viewModel = CreateViewModel(workflow: workflow);
+        viewModel.ToggleEditModeCommand.Execute(null);
+
+        await viewModel.AddSpecialProductCommand.ExecuteAsync(item);
+
+        Assert.Equal(1, workflow.MarkCallCount);
+        Assert.Equal(("S001", "SKU-021", true), workflow.LastMarkCall);
+        Assert.Contains(viewModel.SpecialItems, specialItem => specialItem.ProductCode == "SKU-021" && specialItem.IsSpecialProduct);
+    }
+
+    [Fact]
     public async Task Online_add_writes_mark_diagnostic_log()
     {
         var item = CreateItem("SKU-001", "Alpha", "930001");
@@ -405,6 +443,7 @@ public sealed class SpecialProductsViewModelTests
         PosCartService? cart = null,
         FakeCatalogRepository? repository = null,
         FakeSpecialProductService? service = null,
+        FakeSpecialProductsWorkflowService? workflow = null,
         PosSessionState? session = null,
         Action? onBack = null,
         Action<CartLine>? onCartLineAdded = null)
@@ -417,7 +456,8 @@ public sealed class SpecialProductsViewModelTests
             session ?? Session,
             new LocalizationService(),
             onBack ?? (() => { }),
-            onCartLineAdded);
+            onCartLineAdded,
+            workflow);
     }
 
     private static PosSessionState Session => new("HB POS", "S001", "Main Store", "POS-01", "C001", "Alice", true, 0);
@@ -611,6 +651,95 @@ public sealed class SpecialProductsViewModelTests
                 DownloadResult.UnmarkedCount,
                 20));
             return Task.FromResult(DownloadResult);
+        }
+    }
+
+    private sealed class FakeSpecialProductsWorkflowService : ISpecialProductsWorkflowService
+    {
+        public int PreloadCallCount { get; private set; }
+
+        public int EnsureLoadedCallCount { get; private set; }
+
+        public int LoadCallCount { get; private set; }
+
+        public int MarkCallCount { get; private set; }
+
+        public (string StoreCode, string ProductCode, bool IsSpecialProduct)? LastMarkCall { get; private set; }
+
+        public SpecialProductsLoadResult PreloadResult { get; init; } = new("S001", []);
+
+        public SpecialProductsLoadResult EnsureLoadedResult { get; init; } = new("S001", []);
+
+        public SpecialProductsLoadResult LoadResult { get; init; } = new("S001", []);
+
+        public SpecialProductsDownloadWorkflowResult DownloadResult { get; init; } =
+            new(new SpecialProductDownloadResult("S001", 0, 0, 0, 0, 0), []);
+
+        public Func<string, string, bool, SpecialProductsMutationWorkflowResult> MarkResultFactory { get; init; } =
+            (storeCode, productCode, isSpecialProduct) => new SpecialProductsMutationWorkflowResult(
+                storeCode,
+                productCode,
+                isSpecialProduct,
+                []);
+
+        public Func<string, IReadOnlyList<SellableItemDto>, string, int, SpecialProductsReorderWorkflowResult?> ReorderResultFactory { get; init; } =
+            (storeCode, items, productCode, _) => new SpecialProductsReorderWorkflowResult(storeCode, items, productCode);
+
+        public SpecialProductsAddToCartResult AddToCart(SellableItemDto item)
+        {
+            return new SpecialProductsAddToCartResult(new CartLine(item), 1);
+        }
+
+        public Task<SpecialProductsLoadResult> PreloadAsync(string storeCode, CancellationToken cancellationToken = default)
+        {
+            PreloadCallCount++;
+            return Task.FromResult(PreloadResult);
+        }
+
+        public Task<SpecialProductsLoadResult> EnsureLoadedAsync(string storeCode, CancellationToken cancellationToken = default)
+        {
+            EnsureLoadedCallCount++;
+            return Task.FromResult(EnsureLoadedResult);
+        }
+
+        public Task<SpecialProductsLoadResult> LoadAsync(string storeCode, CancellationToken cancellationToken = default)
+        {
+            LoadCallCount++;
+            return Task.FromResult(LoadResult);
+        }
+
+        public SpecialProductsSearchResult Search(string storeCode, string searchText)
+        {
+            return new SpecialProductsSearchResult(storeCode, searchText, []);
+        }
+
+        public Task<SpecialProductsDownloadWorkflowResult> DownloadAsync(
+            string storeCode,
+            CancellationToken cancellationToken = default,
+            IProgress<SpecialProductDownloadProgress>? progress = null)
+        {
+            return Task.FromResult(DownloadResult);
+        }
+
+        public Task<SpecialProductsMutationWorkflowResult> MarkSpecialProductAsync(
+            string storeCode,
+            string productCode,
+            bool isSpecialProduct,
+            CancellationToken cancellationToken = default)
+        {
+            MarkCallCount++;
+            LastMarkCall = (storeCode, productCode, isSpecialProduct);
+            return Task.FromResult(MarkResultFactory(storeCode, productCode, isSpecialProduct));
+        }
+
+        public Task<SpecialProductsReorderWorkflowResult?> ReorderAsync(
+            string storeCode,
+            IReadOnlyList<SellableItemDto> currentItems,
+            string productCode,
+            int delta,
+            CancellationToken cancellationToken = default)
+        {
+            return Task.FromResult(ReorderResultFactory(storeCode, currentItems, productCode, delta));
         }
     }
 

@@ -34,6 +34,96 @@ public sealed class PosTerminalCashPaymentViewModelTests
     }
 
     [Fact]
+    public void Pos_terminal_scan_command_maps_workflow_result_to_ui_state()
+    {
+        var cart = new PosCartService();
+        var index = new LocalSellableItemIndex();
+        var matchedItem = CreateItem("SKU-101A", "Workflow Match", "930101A", PriceSourceKind.StoreRetailPrice, 2.2m);
+        var workflow = new FakePosTerminalWorkflowService
+        {
+            ProcessScanResult = new PosTerminalWorkflowResult
+            {
+                StatusKey = "pos.status.multipleMatches",
+                StatusArgs = [1],
+                Matches = [matchedItem],
+                SelectedItem = matchedItem,
+                MatchesPopupOpen = true,
+                TouchKeyboardOpen = false
+            }
+        };
+        var viewModel = new PosTerminalViewModel(
+            index,
+            cart,
+            Session,
+            onOpenPayment: null,
+            workflowService: workflow)
+        {
+            ScanText = "930101A",
+            IsTouchKeyboardOpen = true
+        };
+
+        viewModel.ScanCommand.Execute(null);
+
+        Assert.Equal("930101A", workflow.LastProcessScanText);
+        Assert.True(workflow.LastProcessScanPreferExactLookup is false);
+        var match = Assert.Single(viewModel.Matches);
+        Assert.Equal("Workflow Match", match.DisplayName);
+        Assert.Same(match, viewModel.SelectedItem);
+        Assert.True(viewModel.IsMatchesPopupOpen);
+        Assert.False(viewModel.IsTouchKeyboardOpen);
+        Assert.Equal("pos.status.multipleMatches", viewModel.StatusMessage);
+    }
+
+    [Fact]
+    public void Pos_terminal_open_payment_obeys_workflow_guard_result()
+    {
+        var cart = new PosCartService();
+        var line = cart.AddItem(CreateItem("SKU-101B", "Guarded Match", "930101B", PriceSourceKind.StoreRetailPrice, 3.3m));
+        var deniedWorkflow = new FakePosTerminalWorkflowService
+        {
+            GuardPaymentResult = new PosTerminalWorkflowResult
+            {
+                StatusKey = "cart.status.zeroPriceItem",
+                PaymentAllowed = false
+            }
+        };
+        var deniedViewModel = new PosTerminalViewModel(
+            new LocalSellableItemIndex(),
+            cart,
+            Session,
+            onOpenPayment: null,
+            workflowService: deniedWorkflow);
+        deniedViewModel.RefreshCart();
+
+        var deniedRaised = false;
+        deniedViewModel.PaymentRequested += (_, _) => deniedRaised = true;
+
+        deniedViewModel.OpenPaymentCommand.Execute(null);
+
+        Assert.False(deniedRaised);
+        Assert.Equal("cart.status.zeroPriceItem", deniedViewModel.StatusMessage);
+
+        var allowedWorkflow = new FakePosTerminalWorkflowService
+        {
+            GuardPaymentResult = new PosTerminalWorkflowResult { PaymentAllowed = true }
+        };
+        var allowedViewModel = new PosTerminalViewModel(
+            new LocalSellableItemIndex(),
+            cart,
+            Session,
+            onOpenPayment: null,
+            workflowService: allowedWorkflow);
+        allowedViewModel.RefreshCart();
+
+        var allowedRaised = false;
+        allowedViewModel.PaymentRequested += (_, _) => allowedRaised = true;
+
+        allowedViewModel.OpenPaymentCommand.Execute(null);
+
+        Assert.True(allowedRaised);
+    }
+
+    [Fact]
     public void Pos_terminal_selects_the_latest_added_cart_line()
     {
         var cart = new PosCartService();
@@ -1373,6 +1463,106 @@ public sealed class PosTerminalCashPaymentViewModelTests
         public Task<IReadOnlyList<SyncQueueListItem>> GetActiveItemsAsync(int take = 20, CancellationToken cancellationToken = default)
         {
             return Task.FromResult<IReadOnlyList<SyncQueueListItem>>([]);
+        }
+    }
+
+    private sealed class FakePosTerminalWorkflowService : IPosTerminalWorkflowService
+    {
+        public event EventHandler<PosTerminalCatalogReloadedEventArgs>? CatalogReloaded;
+
+        public PosTerminalWorkflowResult ProcessScanResult { get; set; } = new();
+
+        public PosTerminalWorkflowResult AddSelectedItemResult { get; set; } = new();
+
+        public PosTerminalWorkflowResult RemoveLineResult { get; set; } = new();
+
+        public PosTerminalWorkflowResult IncreaseLineResult { get; set; } = new();
+
+        public PosTerminalWorkflowResult DecreaseLineResult { get; set; } = new();
+
+        public PosTerminalWorkflowResult ModifySelectedLineQuantityResult { get; set; } = new();
+
+        public PosTerminalWorkflowResult ModifySelectedLinePriceResult { get; set; } = new();
+
+        public PosTerminalWorkflowResult ApplySelectedLineDiscountAmountResult { get; set; } = new();
+
+        public PosTerminalWorkflowResult ApplySelectedLineDiscountPercentResult { get; set; } = new();
+
+        public PosTerminalWorkflowResult ApplyQuickDiscountPercentResult { get; set; } = new();
+
+        public PosTerminalWorkflowResult ClearCartResult { get; set; } = new();
+
+        public PosTerminalWorkflowResult GuardPaymentResult { get; set; } = new();
+
+        public string? LastProcessScanText { get; private set; }
+
+        public bool? LastProcessScanPreferExactLookup { get; private set; }
+
+        public PosTerminalWorkflowResult ProcessScan(PosSessionState session, string scanText, bool preferExactLookup, string source)
+        {
+            LastProcessScanText = scanText;
+            LastProcessScanPreferExactLookup = preferExactLookup;
+            return ProcessScanResult;
+        }
+
+        public PosTerminalWorkflowResult AddSelectedItem(PosSessionState session, SellableItemDto item, bool clearScanText, bool closeMatchesPopup, string operation)
+        {
+            return AddSelectedItemResult;
+        }
+
+        public PosTerminalWorkflowResult RemoveLine(CartLine? line)
+        {
+            return RemoveLineResult;
+        }
+
+        public PosTerminalWorkflowResult IncreaseLine(CartLine? line)
+        {
+            return IncreaseLineResult;
+        }
+
+        public PosTerminalWorkflowResult DecreaseLine(CartLine? line)
+        {
+            return DecreaseLineResult;
+        }
+
+        public PosTerminalWorkflowResult ModifySelectedLineQuantity(CartLine? selectedLine, string keypadBuffer)
+        {
+            return ModifySelectedLineQuantityResult;
+        }
+
+        public PosTerminalWorkflowResult ModifySelectedLinePrice(CartLine? selectedLine, string keypadBuffer)
+        {
+            return ModifySelectedLinePriceResult;
+        }
+
+        public PosTerminalWorkflowResult ApplySelectedLineDiscountAmount(CartLine? selectedLine, string keypadBuffer, bool isWholeOrderOperation)
+        {
+            return ApplySelectedLineDiscountAmountResult;
+        }
+
+        public PosTerminalWorkflowResult ApplySelectedLineDiscountPercent(CartLine? selectedLine, string keypadBuffer, bool isWholeOrderOperation)
+        {
+            return ApplySelectedLineDiscountPercentResult;
+        }
+
+        public PosTerminalWorkflowResult ApplyQuickDiscountPercent(CartLine? selectedLine, string? value, bool isWholeOrderOperation)
+        {
+            return ApplyQuickDiscountPercentResult;
+        }
+
+        public PosTerminalWorkflowResult ClearCart()
+        {
+            return ClearCartResult;
+        }
+
+        public PosTerminalWorkflowResult GuardPayment()
+        {
+            return GuardPaymentResult;
+        }
+
+        public void RaiseCatalogReloaded(IReadOnlyList<SellableItemDto> catalogItems)
+        {
+            CatalogReloaded?.Invoke(this, new PosTerminalCatalogReloadedEventArgs(catalogItems));
         }
     }
 

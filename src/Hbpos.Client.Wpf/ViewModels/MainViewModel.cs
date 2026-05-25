@@ -8,33 +8,35 @@ using Hbpos.Client.Wpf.Localization;
 using Hbpos.Client.Wpf.Models;
 using Hbpos.Client.Wpf.Services;
 using Hbpos.Contracts.Catalog;
+using Microsoft.Extensions.DependencyInjection;
 
 namespace Hbpos.Client.Wpf.ViewModels;
 
 public sealed partial class MainViewModel : ObservableObject
 {
-    private const string LanguageSettingKey = "Language";
     private const string DefaultTestStoreCode = "1002";
 
     private readonly LocalSellableItemIndex _priceIndex;
     private readonly PosCartService _cart;
     private readonly CashCheckoutService _checkout;
     private readonly ILocalSchemaService _schema;
-    private readonly ILocalAppSettingsRepository _settingsRepository;
     private readonly ILocalCatalogRepository _catalogRepository;
-    private readonly ILocalCatalogSyncService _catalogSync;
+    private readonly IShellCultureService _shellCultureService;
+    private readonly IShellCatalogService _shellCatalogService;
     private readonly IRemoteLookupRefreshService _remoteLookupRefresh;
     private readonly ISpecialProductService _specialProductService;
     private readonly IConnectivityApiClient _connectivityApiClient;
-    private readonly ILocalDeviceRepository _deviceRepository;
-    private readonly IDeviceApiClient _deviceApiClient;
-    private readonly IDeviceFingerprintService _fingerprintService;
-    private readonly DeviceAuthorizationState _deviceAuthorizationState;
+    private readonly IMainShellStartupService _mainShellStartupService;
     private readonly ILocalOrderRepository _orderRepository;
-    private readonly ISyncQueueRepository _syncQueueRepository;
+    private readonly IShellSyncCenterService _shellSyncCenterService;
     private readonly ILocalizationService _localization;
-    private readonly ICustomerDisplayWindowService _customerDisplayWindowService;
+    private readonly ICustomerDisplayOrchestrator _customerDisplayOrchestrator;
     private readonly IRawScannerService _rawScannerService;
+    private readonly IReceiptQueryService _receiptQueryService;
+    private readonly ICashPaymentWorkflowService _cashPaymentWorkflowService;
+    private readonly IDeviceRegistrationWorkflowService _deviceRegistrationWorkflowService;
+    private readonly ISpecialProductsWorkflowService _specialProductsWorkflowService;
+    private readonly PosTerminalWorkflowFactory _posTerminalWorkflowFactory;
     private readonly DispatcherTimer _clockTimer = new() { Interval = TimeSpan.FromSeconds(1) };
     private readonly DispatcherTimer _connectivityTimer = new() { Interval = TimeSpan.FromSeconds(30) };
     private readonly DispatcherTimer _catalogDownloadHideTimer = new();
@@ -123,6 +125,7 @@ public sealed partial class MainViewModel : ObservableObject
     [ObservableProperty]
     private bool _isCatalogDownloadProgressFailed;
 
+    [ActivatorUtilitiesConstructor]
     public MainViewModel(
         LocalSellableItemIndex priceIndex,
         PosCartService cart,
@@ -143,28 +146,81 @@ public sealed partial class MainViewModel : ObservableObject
         ILocalizationService localization,
         ICustomerDisplayWindowService customerDisplayWindowService,
         IRawScannerService rawScannerService)
+        : this(
+            priceIndex,
+            cart,
+            checkout,
+            schema,
+            new ShellCultureService(localization, settingsRepository),
+            new ShellCatalogService(priceIndex, catalogRepository, catalogSync),
+            catalogRepository,
+            remoteLookupRefresh,
+            specialProductService,
+            connectivityApiClient,
+            new MainShellStartupService(deviceRepository, fingerprintService, deviceAuthorizationState),
+            orderRepository,
+            new ShellSyncCenterService(syncQueueRepository),
+            localization,
+            new CustomerDisplayOrchestrator(customerDisplayWindowService),
+            rawScannerService,
+            new ReceiptQueryService(orderRepository),
+            new CashPaymentWorkflowService(checkout, orderRepository, syncQueueRepository),
+            new DeviceRegistrationWorkflowService(deviceApiClient, deviceRepository, fingerprintService),
+            new SpecialProductsWorkflowService(priceIndex, cart, catalogRepository, specialProductService),
+            (remoteLookupRefreshAsync, reloadCatalogAsync) => new PosTerminalWorkflowService(
+                priceIndex,
+                cart,
+                remoteLookupRefreshAsync,
+                reloadCatalogAsync))
+    {
+    }
+
+    public MainViewModel(
+        LocalSellableItemIndex priceIndex,
+        PosCartService cart,
+        CashCheckoutService checkout,
+        ILocalSchemaService schema,
+        IShellCultureService shellCultureService,
+        IShellCatalogService shellCatalogService,
+        ILocalCatalogRepository catalogRepository,
+        IRemoteLookupRefreshService remoteLookupRefresh,
+        ISpecialProductService specialProductService,
+        IConnectivityApiClient connectivityApiClient,
+        IMainShellStartupService mainShellStartupService,
+        ILocalOrderRepository orderRepository,
+        IShellSyncCenterService shellSyncCenterService,
+        ILocalizationService localization,
+        ICustomerDisplayOrchestrator customerDisplayOrchestrator,
+        IRawScannerService rawScannerService,
+        IReceiptQueryService receiptQueryService,
+        ICashPaymentWorkflowService cashPaymentWorkflowService,
+        IDeviceRegistrationWorkflowService deviceRegistrationWorkflowService,
+        ISpecialProductsWorkflowService specialProductsWorkflowService,
+        PosTerminalWorkflowFactory posTerminalWorkflowFactory)
     {
         _priceIndex = priceIndex;
         _cart = cart;
         _checkout = checkout;
         _schema = schema;
-        _settingsRepository = settingsRepository;
+        _shellCultureService = shellCultureService;
+        _shellCatalogService = shellCatalogService;
         _catalogRepository = catalogRepository;
-        _catalogSync = catalogSync;
         _remoteLookupRefresh = remoteLookupRefresh;
         _specialProductService = specialProductService;
         _connectivityApiClient = connectivityApiClient;
-        _deviceRepository = deviceRepository;
-        _deviceApiClient = deviceApiClient;
-        _fingerprintService = fingerprintService;
-        _deviceAuthorizationState = deviceAuthorizationState;
+        _mainShellStartupService = mainShellStartupService;
         _orderRepository = orderRepository;
-        _syncQueueRepository = syncQueueRepository;
+        _shellSyncCenterService = shellSyncCenterService;
         _localization = localization;
-        _customerDisplayWindowService = customerDisplayWindowService;
+        _customerDisplayOrchestrator = customerDisplayOrchestrator;
         _rawScannerService = rawScannerService;
+        _receiptQueryService = receiptQueryService;
+        _cashPaymentWorkflowService = cashPaymentWorkflowService;
+        _deviceRegistrationWorkflowService = deviceRegistrationWorkflowService;
+        _specialProductsWorkflowService = specialProductsWorkflowService;
+        _posTerminalWorkflowFactory = posTerminalWorkflowFactory;
 
-        PaymentSuccess = new PaymentSuccessViewModel(_orderRepository);
+        PaymentSuccess = new PaymentSuccessViewModel(_receiptQueryService);
 
         ShowPosCommand = new RelayCommand(ShowPos);
         ShowCashPaymentCommand = new RelayCommand(ShowCashPayment, () => !_cart.IsEmpty);
@@ -181,7 +237,7 @@ public sealed partial class MainViewModel : ObservableObject
 
         _cart.CartChanged += OnCartChanged;
         _localization.CultureChanged += OnCultureChanged;
-        _customerDisplayWindowService.Closed += (_, _) => CustomerDisplayWindowMode = CustomerDisplayWindowMode.Closed;
+        _customerDisplayOrchestrator.Closed += (_, _) => CustomerDisplayWindowMode = CustomerDisplayWindowMode.Closed;
         _clockTimer.Tick += (_, _) => RefreshClock();
         _connectivityTimer.Tick += async (_, _) => await RefreshOnlineStateAsync(CancellationToken.None);
         _catalogDownloadHideTimer.Tick += (_, _) =>
@@ -239,37 +295,17 @@ public sealed partial class MainViewModel : ObservableObject
         _schemaReady = true;
 
         await RestoreLanguageAsync(startupOptions);
-
-        if (!startupOptions.PreviewMode)
+        var startupResult = await _mainShellStartupService.EvaluateAsync(Session, startupOptions.PreviewMode);
+        Session = startupResult.Session;
+        if (startupResult.RequiresDeviceRegistration)
         {
-            var cachedDevice = await _deviceRepository.GetLatestAsync();
-            var hardwareId = _fingerprintService.GetHardwareId();
-            if (cachedDevice is null
-                || !cachedDevice.IsAllowed
-                || string.IsNullOrWhiteSpace(cachedDevice.AuthorizationCode)
-                || !string.Equals(cachedDevice.HardwareId, hardwareId, StringComparison.OrdinalIgnoreCase))
-            {
-                _deviceAuthorizationState.Clear();
-                DeviceRegistration = CreateDeviceRegistrationViewModel(startupOptions);
-                _pendingDeviceRegistrationCache = cachedDevice;
-                DeviceRegistration.Prepare(cachedDevice);
-                CurrentScreen = DeviceRegistration;
-                RefreshClock();
-                _clockTimer.Start();
-                return;
-            }
-
-            Session = Session with
-            {
-                StoreCode = cachedDevice.StoreCode,
-                StoreName = cachedDevice.StoreName,
-                DeviceCode = cachedDevice.DeviceCode
-            };
-            _deviceAuthorizationState.Set(new DeviceAuthorizationContext(
-                cachedDevice.DeviceCode,
-                cachedDevice.StoreCode,
-                cachedDevice.HardwareId,
-                cachedDevice.AuthorizationCode));
+            DeviceRegistration = CreateDeviceRegistrationViewModel(startupOptions);
+            _pendingDeviceRegistrationCache = startupResult.CachedDevice;
+            DeviceRegistration.Prepare(startupResult.CachedDevice);
+            CurrentScreen = DeviceRegistration;
+            RefreshClock();
+            _clockTimer.Start();
+            return;
         }
 
         await InitializePosExperienceAsync(startupOptions);
@@ -315,11 +351,11 @@ public sealed partial class MainViewModel : ObservableObject
         };
         if (!string.IsNullOrWhiteSpace(args.AuthorizationCode))
         {
-            _deviceAuthorizationState.Set(new DeviceAuthorizationContext(
+            _mainShellStartupService.SetAuthorizedDevice(
                 args.DeviceCode,
                 args.StoreCode,
                 args.HardwareId,
-                args.AuthorizationCode));
+                args.AuthorizationCode);
         }
 
         await InitializePosExperienceAsync(startupOptions);
@@ -333,14 +369,14 @@ public sealed partial class MainViewModel : ObservableObject
         if (startupOptions.PreviewMode)
         {
             cachedItems = CreateStarterItems();
-            await _catalogRepository.ReplaceSellableItemsAsync(cachedItems);
-            _priceIndex.ReplaceAll(cachedItems);
+            await _shellCatalogService.ReplacePreviewCatalogAsync(cachedItems);
         }
         else
         {
             cachedItems = await LoadStartupCatalogIndexAsync();
         }
 
+        var posWorkflowService = _posTerminalWorkflowFactory(RefreshRemoteLookupAsync, ReloadCatalogIndexAsync);
         PosTerminal = new PosTerminalViewModel(
             _priceIndex,
             _cart,
@@ -348,13 +384,12 @@ public sealed partial class MainViewModel : ObservableObject
             ShowCashPayment,
             ShowSpecialProductsAsync,
             _localization,
-            RefreshRemoteLookupAsync,
-            ReloadCatalogIndexAsync,
-            SyncCatalogAndReloadAsync,
-            ResetCatalogAndReloadAsync,
-            RefreshOnlineStateAsync,
-            _rawScannerService,
-            BeginDeviceReregistrationAsync);
+            syncCatalogAsync: SyncCatalogAndReloadAsync,
+            resetCatalogAsync: ResetCatalogAndReloadAsync,
+            refreshOnlineAsync: RefreshOnlineStateAsync,
+            rawScannerService: _rawScannerService,
+            onReregisterDeviceAsync: BeginDeviceReregistrationAsync,
+            workflowService: posWorkflowService);
         SpecialProducts = new SpecialProductsViewModel(
             _priceIndex,
             _cart,
@@ -363,13 +398,14 @@ public sealed partial class MainViewModel : ObservableObject
             Session,
             _localization,
             ShowPos,
-            line => PosTerminal?.RevealCartLine(line));
+            line => PosTerminal?.RevealCartLine(line),
+            _specialProductsWorkflowService);
         if (cachedItems.Count > 0)
         {
             PosTerminal.LoadMatches(cachedItems);
         }
 
-        TransactionHistory = new TransactionHistoryViewModel(_orderRepository);
+        TransactionHistory = new TransactionHistoryViewModel(_receiptQueryService);
         PaymentSuccess.NewTransactionRequested += (_, _) => ResetForNewTransaction();
 
         if (startupOptions.PreviewMode)
@@ -413,7 +449,7 @@ public sealed partial class MainViewModel : ObservableObject
         ConsoleLog.Write("CatalogStartup", $"local catalog load start store={Session.StoreCode}");
         try
         {
-            var cachedItems = await Task.Run(() => ReloadCatalogIndexAsync(CancellationToken.None));
+            var cachedItems = await _shellCatalogService.LoadLocalCatalogAsync(Session.StoreCode, CancellationToken.None);
             PosTerminal?.LoadMatches(cachedItems);
             PosTerminal?.RefreshCart();
             CashPayment?.RefreshCart();
@@ -464,53 +500,17 @@ public sealed partial class MainViewModel : ObservableObject
 
     private async Task RestoreLanguageAsync(AppStartupOptions startupOptions)
     {
-        if (startupOptions.PreviewMode)
-        {
-            await ApplyLanguageAsync(startupOptions.InitialCulture ?? LocalizationService.DefaultCultureName, persist: false);
-            return;
-        }
-
-        var cultureName = startupOptions.InitialCulture;
-        if (string.IsNullOrWhiteSpace(cultureName))
-        {
-            cultureName = await _settingsRepository.GetValueAsync(LanguageSettingKey) ?? LocalizationService.DefaultCultureName;
-        }
-
-        await ApplyLanguageAsync(cultureName, persist: startupOptions.InitialCulture is not null);
+        ApplySelectedCultureName(await _shellCultureService.RestoreAsync(startupOptions, _schemaReady));
     }
 
     private async Task ApplyLanguageAsync(string cultureName, bool persist)
     {
-        try
-        {
-            _localization.SetCulture(cultureName);
-        }
-        catch (ArgumentException)
-        {
-            cultureName = LocalizationService.DefaultCultureName;
-            _localization.SetCulture(cultureName);
-        }
-
-        _isApplyingCulture = true;
-        SelectedCultureName = _localization.CurrentCulture.Name;
-        _isApplyingCulture = false;
-
-        if (persist && _schemaReady)
-        {
-            await _settingsRepository.SetValueAsync(LanguageSettingKey, _localization.CurrentCulture.Name);
-        }
+        ApplySelectedCultureName(await _shellCultureService.ApplyAsync(cultureName, persist, _schemaReady));
     }
 
-    private Task ToggleCultureAsync()
+    private async Task ToggleCultureAsync()
     {
-        var nextCultureName = string.Equals(
-            _localization.CurrentCulture.Name,
-            LocalizationService.ChineseCultureName,
-            StringComparison.OrdinalIgnoreCase)
-            ? LocalizationService.DefaultCultureName
-            : LocalizationService.ChineseCultureName;
-
-        return ApplyLanguageAsync(nextCultureName, persist: true);
+        ApplySelectedCultureName(await _shellCultureService.ToggleAsync(_schemaReady));
     }
 
     private void RefreshLocalizedShell(bool resetStatus = false)
@@ -539,29 +539,34 @@ public sealed partial class MainViewModel : ObservableObject
 
     private async Task RefreshPendingSyncAsync()
     {
-        var overview = await _syncQueueRepository.GetOverviewAsync();
-        PendingUploadCount = overview.PendingCount;
-        FailedUploadCount = overview.FailedCount;
-        SyncingOrderCount = overview.SyncingCount;
-        LastOrderSyncErrorText = overview.LastError ?? _localization.T("shell.sync.noErrors");
-
-        var activeItems = await _syncQueueRepository.GetActiveItemsAsync();
-        SyncCenterOrders.ReplaceWith(activeItems);
-
-        Session = Session with { PendingSyncCount = overview.PendingCount };
-        RefreshLocalizedShell();
+        ApplySyncCenterSnapshot(await _shellSyncCenterService.GetSnapshotAsync());
     }
 
     private DeviceRegistrationViewModel CreateDeviceRegistrationViewModel(AppStartupOptions startupOptions)
     {
-        var viewModel = new DeviceRegistrationViewModel(
-            _deviceApiClient,
-            _deviceRepository,
-            _fingerprintService);
+        var viewModel = new DeviceRegistrationViewModel(_deviceRegistrationWorkflowService);
         viewModel.DeviceActivated += async (_, args) => await ActivateDeviceAsync(args, startupOptions);
         viewModel.DeviceReregistered += (_, _) => ApplyDeviceReregistered();
         viewModel.CancelRequested += (_, _) => CancelDeviceReregistration();
         return viewModel;
+    }
+
+    private void ApplySelectedCultureName(string cultureName)
+    {
+        _isApplyingCulture = true;
+        SelectedCultureName = cultureName;
+        _isApplyingCulture = false;
+    }
+
+    private void ApplySyncCenterSnapshot(ShellSyncCenterSnapshot snapshot)
+    {
+        PendingUploadCount = snapshot.Overview.PendingCount;
+        FailedUploadCount = snapshot.Overview.FailedCount;
+        SyncingOrderCount = snapshot.Overview.SyncingCount;
+        LastOrderSyncErrorText = snapshot.Overview.LastError ?? _localization.T("shell.sync.noErrors");
+        SyncCenterOrders.ReplaceWith(snapshot.ActiveItems);
+        Session = Session with { PendingSyncCount = snapshot.Overview.PendingCount };
+        RefreshLocalizedShell();
     }
 
     private void RefreshClock()
@@ -684,12 +689,11 @@ public sealed partial class MainViewModel : ObservableObject
         CancellationToken cancellationToken)
     {
         var progress = new Progress<CatalogSyncProgress>(ApplyCatalogDownloadProgress);
-        var storeCode = Session.StoreCode;
-        return await Task.Run(async () =>
-        {
-            await _catalogSync.FullSyncAsync(storeCode, cancellationToken, progress, forceFullDownload);
-            return await ReloadCatalogIndexAsync(storeCode, cancellationToken);
-        }, cancellationToken);
+        return await _shellCatalogService.SyncCatalogAndReloadAsync(
+            Session.StoreCode,
+            forceFullDownload,
+            progress,
+            cancellationToken);
     }
 
     private void ApplyCatalogDownloadProgress(CatalogSyncProgress progress)
@@ -754,9 +758,7 @@ public sealed partial class MainViewModel : ObservableObject
 
     private async Task<IReadOnlyList<SellableItemDto>> ReloadCatalogIndexAsync(string storeCode, CancellationToken cancellationToken)
     {
-        var cachedItems = await _catalogRepository.LoadSellableItemsAsync(storeCode, cancellationToken);
-        _priceIndex.ReplaceAll(cachedItems);
-        return cachedItems;
+        return await _shellCatalogService.LoadLocalCatalogAsync(storeCode, cancellationToken);
     }
 
     private async Task BeginDeviceReregistrationAsync()
@@ -773,11 +775,12 @@ public sealed partial class MainViewModel : ObservableObject
             return;
         }
 
-        var overview = await _syncQueueRepository.GetOverviewAsync();
+        var syncSnapshot = await _shellSyncCenterService.GetSnapshotAsync();
+        var overview = syncSnapshot.Overview;
         if (overview.PendingCount > 0 || overview.FailedCount > 0 || overview.SyncingCount > 0)
         {
             StatusMessage = "存在待同步、失败或同步中的订单，请先处理同步后再重新注册设备。";
-            await RefreshPendingSyncAsync();
+            ApplySyncCenterSnapshot(syncSnapshot);
             return;
         }
 
@@ -793,7 +796,7 @@ public sealed partial class MainViewModel : ObservableObject
 
     private void ApplyDeviceReregistered()
     {
-        _deviceAuthorizationState.Clear();
+        _mainShellStartupService.ClearAuthorization();
         _posPostShowStartupTask = null;
         PosTerminal?.Dispose();
         PosTerminal = null;
@@ -871,9 +874,7 @@ public sealed partial class MainViewModel : ObservableObject
 
         CashPayment = new CashPaymentViewModel(
             _cart,
-            _checkout,
-            _orderRepository,
-            _syncQueueRepository,
+            _cashPaymentWorkflowService,
             Session,
             _localization);
         CashPayment.PaymentCancelled += (_, _) => ShowPos();
@@ -907,7 +908,7 @@ public sealed partial class MainViewModel : ObservableObject
 
     private async Task ShowHistoryAsync()
     {
-        TransactionHistory ??= new TransactionHistoryViewModel(_orderRepository);
+        TransactionHistory ??= new TransactionHistoryViewModel(_receiptQueryService);
         await TransactionHistory.LoadAsync();
         CurrentScreen = TransactionHistory;
     }
@@ -920,14 +921,7 @@ public sealed partial class MainViewModel : ObservableObject
 
     private void LoadCustomerDisplayFromCart()
     {
-        var lines = _cart.Lines.Select(line => new CustomerDisplayLine(
-            line.DisplayName,
-            line.LookupCode,
-            line.Quantity,
-            line.UnitPrice,
-            line.ActualAmount));
-        CustomerDisplay.TerminalName = Session.DeviceCode;
-        CustomerDisplay.LoadLines(lines, _cart.TotalAmount, 0m, _cart.DiscountAmount);
+        _customerDisplayOrchestrator.LoadFromCart(CustomerDisplay, Session, _cart);
     }
 
     private async Task ToggleSyncCenterAsync()
@@ -953,12 +947,7 @@ public sealed partial class MainViewModel : ObservableObject
 
     public void ToggleCustomerDisplayWindow(Window? owner)
     {
-        var targetMode = CustomerDisplayWindowMode switch
-        {
-            CustomerDisplayWindowMode.Closed => CustomerDisplayWindowMode.Normal,
-            CustomerDisplayWindowMode.Normal => CustomerDisplayWindowMode.Fullscreen,
-            _ => CustomerDisplayWindowMode.Closed
-        };
+        var targetMode = _customerDisplayOrchestrator.GetNextMode(CustomerDisplayWindowMode);
         SetCustomerDisplayWindowMode(targetMode, owner);
     }
 
@@ -979,12 +968,7 @@ public sealed partial class MainViewModel : ObservableObject
 
     public void SetCustomerDisplayWindowMode(CustomerDisplayWindowMode mode, Window? owner)
     {
-        if (mode != CustomerDisplayWindowMode.Closed)
-        {
-            LoadCustomerDisplayFromCart();
-        }
-
-        ApplyCustomerDisplayWindowResult(_customerDisplayWindowService.SetMode(mode, CustomerDisplay, owner));
+        ApplyCustomerDisplayWindowResult(_customerDisplayOrchestrator.SetMode(mode, CustomerDisplay, Session, _cart, owner));
     }
 
     private void OpenCustomerDisplayWindow(Window? owner)

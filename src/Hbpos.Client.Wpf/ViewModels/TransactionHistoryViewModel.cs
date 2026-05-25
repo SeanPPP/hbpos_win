@@ -8,7 +8,8 @@ namespace Hbpos.Client.Wpf.ViewModels;
 
 public sealed partial class TransactionHistoryViewModel : ObservableObject
 {
-    private readonly ILocalOrderRepository? _orderRepository;
+    private readonly IReceiptQueryService? _receiptQueryService;
+    private bool _suppressSelectedOrderLoad;
 
     [ObservableProperty]
     private string _searchText = string.Empty;
@@ -41,16 +42,26 @@ public sealed partial class TransactionHistoryViewModel : ObservableObject
     private string _previewSoldAt = "-";
 
     public TransactionHistoryViewModel()
+        : this(initialize: true, receiptQueryService: null)
     {
-        LoadCommand = new AsyncRelayCommand(() => LoadAsync());
-        ReprintCommand = new RelayCommand(() => ReprintRequested?.Invoke(this, EventArgs.Empty), () => SelectedOrder is not null);
-        RefundCommand = new RelayCommand(() => { }, () => false);
     }
 
     public TransactionHistoryViewModel(ILocalOrderRepository orderRepository)
-        : this()
+        : this(initialize: true, receiptQueryService: new ReceiptQueryService(orderRepository))
     {
-        _orderRepository = orderRepository;
+    }
+
+    public TransactionHistoryViewModel(IReceiptQueryService receiptQueryService)
+        : this(initialize: true, receiptQueryService)
+    {
+    }
+
+    private TransactionHistoryViewModel(bool initialize, IReceiptQueryService? receiptQueryService)
+    {
+        _receiptQueryService = receiptQueryService;
+        LoadCommand = new AsyncRelayCommand(() => LoadAsync());
+        ReprintCommand = new RelayCommand(() => ReprintRequested?.Invoke(this, EventArgs.Empty), () => SelectedOrder is not null);
+        RefundCommand = new RelayCommand(() => { }, () => false);
     }
 
     public event EventHandler? ReprintRequested;
@@ -79,55 +90,70 @@ public sealed partial class TransactionHistoryViewModel : ObservableObject
 
     public async Task LoadAsync(CancellationToken cancellationToken = default)
     {
-        if (_orderRepository is null)
+        if (_receiptQueryService is null)
         {
             return;
         }
 
-        var orders = await _orderRepository.GetRecentOrdersAsync(50, cancellationToken);
+        var orders = await _receiptQueryService.GetRecentOrdersAsync(50, cancellationToken);
         Orders.ReplaceWith(orders);
+        _suppressSelectedOrderLoad = true;
         SelectedOrder = Orders.FirstOrDefault();
+        _suppressSelectedOrderLoad = false;
+
+        if (SelectedOrder is null)
+        {
+            ClearReceiptPreview();
+            return;
+        }
+
         await LoadSelectedReceiptAsync(cancellationToken);
     }
 
     partial void OnSelectedOrderChanged(LocalOrderSummary? value)
     {
         ReprintCommand.NotifyCanExecuteChanged();
+
+        if (_suppressSelectedOrderLoad)
+        {
+            return;
+        }
+
         _ = LoadSelectedReceiptAsync(CancellationToken.None);
     }
 
     private async Task LoadSelectedReceiptAsync(CancellationToken cancellationToken)
     {
-        if (_orderRepository is null || SelectedOrder is null)
+        if (_receiptQueryService is null || SelectedOrder is null)
         {
-            ReceiptLines.Clear();
-            Payments.Clear();
-            PreviewSubtotal = 0m;
-            PreviewDiscount = 0m;
-            PreviewTotal = 0m;
-            PreviewOrderId = "-";
-            PreviewSoldAt = "-";
+            ClearReceiptPreview();
             return;
         }
 
-        var order = await _orderRepository.GetOrderAsync(SelectedOrder.OrderGuid, cancellationToken);
-        if (order is null)
+        var receipt = await _receiptQueryService.GetReceiptAsync(SelectedOrder.OrderGuid, cancellationToken);
+        if (receipt is null)
         {
+            ClearReceiptPreview();
             return;
         }
 
-        ReceiptLines.ReplaceWith(order.Lines.Select(line => new ReceiptPreviewLine(
-            line.DisplayName,
-            line.LookupCode,
-            line.Quantity,
-            line.UnitPrice,
-            line.DiscountAmount,
-            line.ActualAmount)));
-        Payments.ReplaceWith(order.Payments.Select(payment => new ReceiptPaymentLine(payment.Method, payment.Amount, payment.Reference)));
-        PreviewSubtotal = order.TotalAmount;
-        PreviewDiscount = order.DiscountAmount;
-        PreviewTotal = order.ActualAmount;
-        PreviewOrderId = $"#{order.OrderGuid.ToString("N")[..10].ToUpperInvariant()}";
-        PreviewSoldAt = order.SoldAt.ToLocalTime().ToString("MMM dd, yyyy HH:mm");
+        ReceiptLines.ReplaceWith(receipt.Lines);
+        Payments.ReplaceWith(receipt.Payments);
+        PreviewSubtotal = receipt.TotalAmount;
+        PreviewDiscount = receipt.DiscountAmount;
+        PreviewTotal = receipt.ActualAmount;
+        PreviewOrderId = receipt.TransactionIdDisplay;
+        PreviewSoldAt = receipt.SoldAtDisplay;
+    }
+
+    private void ClearReceiptPreview()
+    {
+        ReceiptLines.Clear();
+        Payments.Clear();
+        PreviewSubtotal = 0m;
+        PreviewDiscount = 0m;
+        PreviewTotal = 0m;
+        PreviewOrderId = "-";
+        PreviewSoldAt = "-";
     }
 }
