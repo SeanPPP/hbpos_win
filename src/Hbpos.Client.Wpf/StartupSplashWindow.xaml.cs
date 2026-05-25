@@ -4,8 +4,9 @@ namespace Hbpos.Client.Wpf;
 
 public partial class StartupSplashWindow : Window
 {
-    public StartupSplashWindow()
+    public StartupSplashWindow(StartupProgressState progressState)
     {
         InitializeComponent();
+        DataContext = progressState;
     }
 }

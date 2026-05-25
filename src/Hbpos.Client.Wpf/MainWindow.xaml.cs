@@ -79,6 +79,20 @@ public partial class MainWindow : Window
         _ = ContinueStartupAfterShownCoreAsync();
     }
 
+    public void ActivateForScannerInput()
+    {
+        if (WindowState == WindowState.Minimized)
+        {
+            WindowState = WindowState.Normal;
+        }
+
+        var wasTopmost = Topmost;
+        Topmost = true;
+        Activate();
+        Focus();
+        Topmost = wasTopmost;
+    }
+
     private async Task ContinueStartupAfterShownCoreAsync()
     {
         try
@@ -114,7 +128,7 @@ public partial class MainWindow : Window
     private void MainWindowPreviewKeyDown(object sender, KeyEventArgs e)
     {
         _uiPriorityCoordinator.NotifyUserInput();
-        if (IsTextInputFocused())
+        if (IsKeyboardScannerFallbackBlockedByFocusedInput())
         {
             _keyboardScannerFallback.Clear();
             return;
@@ -137,9 +151,31 @@ public partial class MainWindow : Window
         _uiPriorityCoordinator.NotifyUserInput();
     }
 
-    private static bool IsTextInputFocused()
+    private static bool IsKeyboardScannerFallbackBlockedByFocusedInput()
     {
-        return Keyboard.FocusedElement is TextBoxBase or PasswordBox or ComboBox;
+        var focusedElement = Keyboard.FocusedElement;
+        return ShouldBlockKeyboardScannerFallback(
+            IsTextInputElement(focusedElement),
+            IsFocusedElementVisible(focusedElement));
+    }
+
+    internal static bool ShouldBlockKeyboardScannerFallback(
+        bool isTextInputFocused,
+        bool isFocusedElementVisible)
+    {
+        return isTextInputFocused && isFocusedElementVisible;
+    }
+
+    private static bool IsTextInputElement(object? focusedElement)
+    {
+        return focusedElement is TextBoxBase or PasswordBox or ComboBox;
+    }
+
+    private static bool IsFocusedElementVisible(object? focusedElement)
+    {
+        return focusedElement is not UIElement uiElement ||
+            uiElement.IsVisible &&
+            PresentationSource.FromDependencyObject(uiElement) is not null;
     }
 
     private void TitleBar_MouseLeftButtonDown(object sender, MouseButtonEventArgs e)

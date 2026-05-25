@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using Hbpos.Client.Wpf.Localization;
 using Hbpos.Client.Wpf.Models;
 using Hbpos.Client.Wpf.Services;
 using Hbpos.Client.Wpf.ViewModels;
@@ -244,12 +245,14 @@ public sealed class PosTerminalCashPaymentViewModelTests
         var cart = new PosCartService();
         var index = new LocalSellableItemIndex();
         var scanner = new FakeRawScannerService();
+        var localization = new LocalizationService();
         index.ReplaceAll([CreateItem("SKU-110", "Scanner Apple", "930110", PriceSourceKind.StoreRetailPrice, 1.8m)]);
         var viewModel = new PosTerminalViewModel(
             index,
             cart,
             Session,
             onOpenPayment: null,
+            localization: localization,
             rawScannerService: scanner);
         scanner.SetActivePage(PosTerminalViewModel.PageId);
 
@@ -260,6 +263,7 @@ public sealed class PosTerminalCashPaymentViewModelTests
         var line = Assert.Single(viewModel.CartLines);
         Assert.Equal("Scanner Apple", line.DisplayName);
         Assert.False(viewModel.IsMatchesPopupOpen);
+        Assert.Equal("Scan 930110: Added Scanner Apple", viewModel.StatusMessage);
     }
 
     [Fact]
@@ -291,6 +295,7 @@ public sealed class PosTerminalCashPaymentViewModelTests
         var cart = new PosCartService();
         var index = new LocalSellableItemIndex();
         var scanner = new FakeRawScannerService();
+        var localization = new LocalizationService();
         index.ReplaceAll(
         [
             CreateItem("SKU-114", "Scanner Apple Small", "930114", PriceSourceKind.StoreRetailPrice, 1.8m),
@@ -301,6 +306,7 @@ public sealed class PosTerminalCashPaymentViewModelTests
             cart,
             Session,
             onOpenPayment: null,
+            localization: localization,
             rawScannerService: scanner);
         scanner.SetActivePage(PosTerminalViewModel.PageId);
 
@@ -310,6 +316,27 @@ public sealed class PosTerminalCashPaymentViewModelTests
         Assert.Equal(2, viewModel.Matches.Count);
         Assert.True(viewModel.IsMatchesPopupOpen);
         Assert.Equal("930114", viewModel.ScanText);
+        Assert.Equal("Scan 930114: Found 2 items. Select one to add.", viewModel.StatusMessage);
+    }
+
+    [Fact]
+    public void Pos_terminal_keyboard_fallback_scanner_shows_barcode_and_no_match_result()
+    {
+        var cart = new PosCartService();
+        var index = new LocalSellableItemIndex();
+        var localization = new LocalizationService();
+        var viewModel = new PosTerminalViewModel(
+            index,
+            cart,
+            Session,
+            onOpenPayment: null,
+            localization: localization);
+
+        viewModel.ProcessScannerBarcode("930999", "keyboard-focus-fallback", "keyboard-fallback");
+
+        Assert.Empty(viewModel.CartLines);
+        Assert.Equal("930999", viewModel.ScanText);
+        Assert.Equal("Scan 930999: No local item found. Checkout can continue offline.", viewModel.StatusMessage);
     }
 
     [Fact]

@@ -14,6 +14,7 @@
     <UserControl.Resources>
         <BooleanToVisibilityConverter x:Key="BoolToVis" />
         <converters:AlternationIndexToRowNumberConverter x:Key="RowNumberConverter" />
+        <converters:ProductThumbnailImageSourceConverter x:Key="ProductThumbnailImageSourceConverter" DecodePixelWidth="72" />
         <converters:StringNullOrWhiteSpaceToVisibilityConverter x:Key="StringHasValueToVis" />
         <converters:StringNullOrWhiteSpaceToVisibilityConverter x:Key="StringIsEmptyToVis" Invert="True" />
 
@@ -512,9 +513,10 @@
                                                            Margin="3"
                                                            SnapsToDevicePixels="True"
                                                            RenderOptions.BitmapScalingMode="HighQuality"
-                                                           Visibility="{Binding ProductImage, Converter={StaticResource StringHasValueToVis}}">
+                                                           Panel.ZIndex="1">
                                                     <Rectangle.Fill>
-                                                        <ImageBrush ImageSource="{Binding ProductImage}"
+                                                        <ImageBrush converters:ProductThumbnailImageSourceConverter.AsyncSourceText="{Binding ProductImage}"
+                                                                    converters:ProductThumbnailImageSourceConverter.AsyncDecodePixelWidth="72"
                                                                     Stretch="Uniform" />
                                                     </Rectangle.Fill>
                                                 </Rectangle>
@@ -524,7 +526,7 @@
                                                                          Foreground="{StaticResource PosPrimaryBrush}"
                                                                          HorizontalAlignment="Center"
                                                                          VerticalAlignment="Center"
-                                                                         Visibility="{Binding ProductImage, Converter={StaticResource StringIsEmptyToVis}}" />
+                                                                         Panel.ZIndex="0" />
                                             </Grid>
                                         </Border>
                                         <StackPanel Grid.Column="1" VerticalAlignment="Center">

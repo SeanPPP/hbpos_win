@@ -12,6 +12,7 @@
         MinHeight="520"
         WindowStyle="None"
         ResizeMode="CanResize"
+        ShowActivated="False"
         FontFamily="{StaticResource PosFontFamily}"
         Background="{StaticResource PosScreenBackgroundBrush}">
     <shell:WindowChrome.WindowChrome>

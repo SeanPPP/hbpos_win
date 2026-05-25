@@ -240,7 +240,8 @@
                                             <Border Grid.Column="0" Background="#FFE8F0FE" CornerRadius="6">
                                                 <Grid>
                                                     <materialDesign:PackIcon Kind="Image" Width="22" Height="22" Foreground="{StaticResource PosPrimaryBrush}" HorizontalAlignment="Center" VerticalAlignment="Center" />
-                                                    <Image Source="{Binding ProductImage, Converter={StaticResource ProductThumbnailImageSourceConverter}}"
+                                                    <Image converters:ProductThumbnailImageSourceConverter.AsyncSourceText="{Binding ProductImage}"
+                                                           converters:ProductThumbnailImageSourceConverter.AsyncDecodePixelWidth="72"
                                                            Stretch="UniformToFill"
                                                            RenderOptions.BitmapScalingMode="LowQuality" />
                                                 </Grid>
@@ -336,7 +337,8 @@
                                     <Border Grid.Column="0" Background="#FFE8F0FE" CornerRadius="6" ClipToBounds="True" Width="72" Height="72" VerticalAlignment="Center">
                                         <Grid>
                                             <materialDesign:PackIcon Kind="Image" Width="28" Height="28" Foreground="{StaticResource PosPrimaryBrush}" HorizontalAlignment="Center" VerticalAlignment="Center" />
-                                            <Image Source="{Binding ProductImage, Converter={StaticResource ProductThumbnailImageSourceConverter}}"
+                                            <Image converters:ProductThumbnailImageSourceConverter.AsyncSourceText="{Binding ProductImage}"
+                                                   converters:ProductThumbnailImageSourceConverter.AsyncDecodePixelWidth="72"
                                                    Stretch="UniformToFill"
                                                    RenderOptions.BitmapScalingMode="LowQuality" />
                                         </Grid>

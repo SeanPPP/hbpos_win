@@ -680,6 +680,7 @@ public sealed partial class PosTerminalViewModel : ObservableObject, IDisposable
             workflowStopwatch.Stop();
             applyStopwatch.Start();
             ApplyWorkflowResult(result);
+            SetStatusText(FormatScannerResultStatus(barcode, result));
             applyStopwatch.Stop();
         }
         finally
@@ -869,6 +870,25 @@ public sealed partial class PosTerminalViewModel : ObservableObject, IDisposable
         {
             SetStatus(result.StatusKey!, result.StatusArgs);
         }
+    }
+
+    private string FormatScannerResultStatus(string barcode, PosTerminalWorkflowResult result)
+    {
+        var resultText = string.IsNullOrWhiteSpace(result.StatusKey)
+            ? StatusMessage
+            : Format(result.StatusKey!, result.StatusArgs);
+
+        var template = T("pos.status.scannerResult");
+        if (string.Equals(template, "pos.status.scannerResult", StringComparison.Ordinal))
+        {
+            template = "Scan {0}: {1}";
+        }
+
+        return string.Format(
+            _localization?.CurrentCulture ?? CultureInfo.CurrentCulture,
+            template,
+            barcode,
+            resultText);
     }
 
     private void SetStatus(string key, params object[] args)

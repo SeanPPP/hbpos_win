@@ -31,4 +31,19 @@ public sealed class KeyboardScannerFallbackBufferTests
 
         Assert.Null(barcode);
     }
+
+    [Theory]
+    [InlineData(true, true, true)]
+    [InlineData(true, false, false)]
+    [InlineData(false, true, false)]
+    [InlineData(false, false, false)]
+    public void ShouldBlockKeyboardScannerFallback_blocks_only_visible_text_input_focus(
+        bool isTextInputFocused,
+        bool isFocusedElementVisible,
+        bool expected)
+    {
+        Assert.Equal(
+            expected,
+            MainWindow.ShouldBlockKeyboardScannerFallback(isTextInputFocused, isFocusedElementVisible));
+    }
 }

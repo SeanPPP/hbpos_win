@@ -3,7 +3,7 @@
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:loc="clr-namespace:Hbpos.Client.Wpf.Localization"
         Width="460"
-        Height="280"
+        Height="320"
         WindowStyle="None"
         ResizeMode="NoResize"
         WindowStartupLocation="CenterScreen"
@@ -46,6 +46,15 @@
                            FontSize="13"
                            Foreground="#FF64748B"
                            HorizontalAlignment="Center" />
+                <TextBlock Text="{Binding ProgressText}"
+                           Margin="0,14,0,0"
+                           MinWidth="96"
+                           FontSize="26"
+                           FontWeight="SemiBold"
+                           Foreground="#FF2563EB"
+                           HorizontalAlignment="Center"
+                           TextAlignment="Center"
+                           TextWrapping="NoWrap" />
             </StackPanel>
 
             <Border Grid.Row="1"

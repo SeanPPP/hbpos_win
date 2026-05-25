@@ -136,6 +136,7 @@
   <data name="pos.status.noLocalMatch" xml:space="preserve"><value>本地未找到商品，离线收银仍可继续。</value></data>
   <data name="pos.status.multipleMatches" xml:space="preserve"><value>找到 {0} 个商品，请选择后加入。</value></data>
   <data name="pos.status.added" xml:space="preserve"><value>已加入 {0}</value></data>
+  <data name="pos.status.scannerResult" xml:space="preserve"><value>&#x626B;&#x7801; {0}&#xFF1A;{1}</value></data>
   <data name="pos.status.cartCleared" xml:space="preserve"><value>购物车已清空。</value></data>
 
   <data name="payment.cash.title" xml:space="preserve"><value>现金支付</value></data>

@@ -1,4 +1,5 @@
 using System.Windows;
+using System.Windows.Threading;
 using Hbpos.Client.Wpf.ViewModels;
 using Hbpos.Client.Wpf.Views.Windows;
 
@@ -138,6 +139,35 @@ public sealed class CustomerDisplayWindowService : ICustomerDisplayWindowService
         {
             window.WindowState = WindowState.Maximized;
         }
+
+        RestoreOwnerActivation(owner);
+    }
+
+    private static void RestoreOwnerActivation(Window owner)
+    {
+        if (!owner.IsVisible)
+        {
+            return;
+        }
+
+        owner.Dispatcher.BeginInvoke(() =>
+        {
+            if (!owner.IsVisible)
+            {
+                return;
+            }
+
+            if (owner.WindowState == WindowState.Minimized)
+            {
+                owner.WindowState = WindowState.Normal;
+            }
+
+            var wasTopmost = owner.Topmost;
+            owner.Topmost = true;
+            owner.Activate();
+            owner.Focus();
+            owner.Topmost = wasTopmost;
+        }, DispatcherPriority.ApplicationIdle);
     }
 
     private static void CenterNormalWindow(Window window)

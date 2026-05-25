@@ -10,9 +10,16 @@ namespace Hbpos.Client.Wpf;
 
 public partial class App : Application
 {
+    private const int SplashShownPercent = 10;
+    private const int HostBuiltPercent = 30;
+    private const int HostStartedPercent = 50;
+    private const int MainWindowInitializedPercent = 85;
+    private const int StartupCompletedPercent = 100;
+
     private IHost? _host;
     private SingleInstanceStartupLease? _startupLease;
     private StartupSplashWindow? _startupSplashWindow;
+    private StartupProgressState? _startupProgressState;
 
     protected override async void OnStartup(StartupEventArgs e)
     {
@@ -29,7 +36,9 @@ public partial class App : Application
         ShutdownMode = ShutdownMode.OnExplicitShutdown;
         if (!startupOptions.PreviewMode)
         {
-            _startupSplashWindow = new StartupSplashWindow();
+            _startupProgressState = new StartupProgressState();
+            _startupProgressState.SetStage(SplashShownPercent);
+            _startupSplashWindow = new StartupSplashWindow(_startupProgressState);
             _startupSplashWindow.Show();
             await Dispatcher.InvokeAsync(static () => { }, DispatcherPriority.Render);
         }
@@ -42,16 +51,19 @@ public partial class App : Application
                     services.AddHbposClientServices(startupOptions);
                 })
                 .Build();
+            _startupProgressState?.SetStage(HostBuiltPercent);
 
             await _host.StartAsync();
             LocalizationResourceProvider.Instance.Configure(_host.Services.GetRequiredService<ILocalizationService>());
+            _startupProgressState?.SetStage(HostStartedPercent);
 
             var mainWindow = _host.Services.GetRequiredService<MainWindow>();
             await mainWindow.InitializeForStartupAsync();
+            _startupProgressState?.SetStage(MainWindowInitializedPercent);
             FinishStartupExperience();
             MainWindow = mainWindow;
             mainWindow.Show();
-            mainWindow.Activate();
+            mainWindow.ActivateForScannerInput();
             await Dispatcher.InvokeAsync(static () => { }, DispatcherPriority.Render);
             mainWindow.ContinueStartupAfterShown();
             ShutdownMode = ShutdownMode.OnMainWindowClose;
@@ -97,8 +109,10 @@ public partial class App : Application
             return;
         }
 
+        _startupProgressState?.SetStage(StartupCompletedPercent);
         _startupSplashWindow.Close();
         _startupSplashWindow = null;
+        _startupProgressState = null;
     }
 
 }

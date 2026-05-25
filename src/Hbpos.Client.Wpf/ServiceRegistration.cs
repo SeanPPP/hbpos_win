@@ -37,23 +37,23 @@ public static class ServiceRegistration
         services.AddSingleton<ISyncQueueRepository, SyncQueueRepository>();
         services.AddHttpClient<ICatalogApiClient, CatalogApiClient>(client =>
         {
-            client.BaseAddress = GetCatalogApiBaseAddress();
+            client.BaseAddress = GetApiBaseAddress();
         })
         .AddHttpMessageHandler<DeviceAuthorizationMessageHandler>();
         services.AddHttpClient<IDeviceApiClient, DeviceApiClient>(client =>
         {
-            client.BaseAddress = GetCatalogApiBaseAddress();
+            client.BaseAddress = GetApiBaseAddress();
             client.Timeout = TimeSpan.FromSeconds(3);
         })
         .AddHttpMessageHandler<DeviceAuthorizationMessageHandler>();
         services.AddHttpClient<IConnectivityApiClient, ConnectivityApiClient>(client =>
         {
-            client.BaseAddress = GetCatalogApiBaseAddress();
+            client.BaseAddress = GetApiBaseAddress();
             client.Timeout = TimeSpan.FromSeconds(3);
         });
         services.AddHttpClient<IOrderHistoryApiClient, OrderHistoryApiClient>(client =>
         {
-            client.BaseAddress = GetCatalogApiBaseAddress();
+            client.BaseAddress = GetApiBaseAddress();
             client.Timeout = TimeSpan.FromSeconds(10);
         })
         .AddHttpMessageHandler<DeviceAuthorizationMessageHandler>();
@@ -122,7 +122,7 @@ public static class ServiceRegistration
         return services;
     }
 
-    private static Uri GetCatalogApiBaseAddress()
+    internal static Uri GetApiBaseAddress()
     {
         var configuredBaseUrl = Environment.GetEnvironmentVariable("HBPOS_API_BASE_URL");
         var baseUrl = string.IsNullOrWhiteSpace(configuredBaseUrl)
