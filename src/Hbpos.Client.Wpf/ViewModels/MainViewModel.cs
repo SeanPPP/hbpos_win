@@ -39,6 +39,7 @@ public sealed partial class MainViewModel : ObservableObject
     private readonly ICashPaymentWorkflowService _cashPaymentWorkflowService;
     private readonly IDeviceRegistrationWorkflowService _deviceRegistrationWorkflowService;
     private readonly ISpecialProductsWorkflowService _specialProductsWorkflowService;
+    private readonly IReceiptReturnsWorkflowService _receiptReturnsWorkflowService;
     private readonly PosTerminalWorkflowFactory _posTerminalWorkflowFactory;
     private readonly DispatcherTimer _clockTimer = new() { Interval = TimeSpan.FromSeconds(1) };
     private readonly DispatcherTimer _connectivityTimer = new() { Interval = TimeSpan.FromSeconds(30) };
@@ -176,6 +177,12 @@ public sealed partial class MainViewModel : ObservableObject
                 cart,
                 remoteLookupRefreshAsync,
                 reloadCatalogAsync),
+            receiptReturnsWorkflowService: new ReceiptReturnsWorkflowService(
+                new ReceiptQueryService(orderRepository),
+                orderRepository,
+                null,
+                priceIndex,
+                cart),
             userFeedbackService: userFeedbackService ?? NoopUserFeedbackService.Instance)
     {
     }
@@ -204,7 +211,8 @@ public sealed partial class MainViewModel : ObservableObject
         PosTerminalWorkflowFactory posTerminalWorkflowFactory,
         ISuspendedOrderService? suspendedOrderService = null,
         IRemoteOrderHistoryService? remoteOrderHistoryService = null,
-        IUserFeedbackService? userFeedbackService = null)
+        IUserFeedbackService? userFeedbackService = null,
+        IReceiptReturnsWorkflowService? receiptReturnsWorkflowService = null)
     {
         _priceIndex = priceIndex;
         _cart = cart;
@@ -229,12 +237,19 @@ public sealed partial class MainViewModel : ObservableObject
         _cashPaymentWorkflowService = cashPaymentWorkflowService;
         _deviceRegistrationWorkflowService = deviceRegistrationWorkflowService;
         _specialProductsWorkflowService = specialProductsWorkflowService;
+        _receiptReturnsWorkflowService = receiptReturnsWorkflowService ?? new ReceiptReturnsWorkflowService(
+            _receiptQueryService,
+            _orderRepository,
+            _remoteOrderHistoryService,
+            _priceIndex,
+            _cart);
         _posTerminalWorkflowFactory = posTerminalWorkflowFactory;
 
         PaymentSuccess = new PaymentSuccessViewModel(_receiptQueryService);
 
         ShowPosCommand = new RelayCommand(ShowPos);
         ShowCashPaymentCommand = new RelayCommand(ShowCashPayment, () => !_cart.IsEmpty);
+        ShowReturnsCommand = new RelayCommand(ShowReturns);
         ShowPaymentSuccessCommand = new AsyncRelayCommand(ShowPaymentSuccessLatestAsync);
         ShowHistoryCommand = new AsyncRelayCommand(ShowHistoryAsync);
         ShowCustomerDisplayCommand = new RelayCommand(ShowCustomerDisplay);
@@ -265,6 +280,8 @@ public sealed partial class MainViewModel : ObservableObject
 
     public CashPaymentViewModel? CashPayment { get; private set; }
 
+    public ReceiptReturnsViewModel? ReceiptReturns { get; private set; }
+
     public PaymentSuccessViewModel PaymentSuccess { get; }
 
     public TransactionHistoryViewModel? TransactionHistory { get; private set; }
@@ -278,6 +295,8 @@ public sealed partial class MainViewModel : ObservableObject
     public IRelayCommand ShowPosCommand { get; }
 
     public IRelayCommand ShowCashPaymentCommand { get; }
+
+    public IRelayCommand ShowReturnsCommand { get; }
 
     public IAsyncRelayCommand ShowPaymentSuccessCommand { get; }
 
@@ -381,6 +400,7 @@ public sealed partial class MainViewModel : ObservableObject
     {
         PosTerminal?.Dispose();
         SpecialProducts?.Dispose();
+        ReceiptReturns?.Dispose();
         IReadOnlyList<SellableItemDto> cachedItems = [];
         if (startupOptions.PreviewMode)
         {
@@ -408,7 +428,8 @@ public sealed partial class MainViewModel : ObservableObject
             refreshOnlineAsync: RefreshOnlineStateAsync,
             rawScannerService: _rawScannerService,
             onReregisterDeviceAsync: BeginDeviceReregistrationAsync,
-            workflowService: posWorkflowService);
+            workflowService: posWorkflowService,
+            onOpenReturns: ShowReturns);
         SpecialProducts = new SpecialProductsViewModel(
             _priceIndex,
             _cart,
@@ -419,6 +440,12 @@ public sealed partial class MainViewModel : ObservableObject
             ShowPos,
             line => PosTerminal?.RevealCartLine(line),
             _specialProductsWorkflowService,
+            _rawScannerService);
+        ReceiptReturns = new ReceiptReturnsViewModel(
+            _receiptReturnsWorkflowService,
+            Session,
+            ShowPos,
+            line => PosTerminal?.RevealCartLine(line),
             _rawScannerService);
         if (cachedItems.Count > 0)
         {
@@ -609,6 +636,11 @@ public sealed partial class MainViewModel : ObservableObject
         if (SpecialProducts is not null)
         {
             SpecialProducts.Session = Session;
+        }
+
+        if (ReceiptReturns is not null)
+        {
+            ReceiptReturns.Session = Session;
         }
 
         if (TransactionHistory is not null)
@@ -828,8 +860,10 @@ public sealed partial class MainViewModel : ObservableObject
         _posPostShowStartupTask = null;
         PosTerminal?.Dispose();
         SpecialProducts?.Dispose();
+        ReceiptReturns?.Dispose();
         PosTerminal = null;
         SpecialProducts = null;
+        ReceiptReturns = null;
         CashPayment = null;
         TransactionHistory = null;
         _lastCompletedOrder = null;
@@ -880,6 +914,17 @@ public sealed partial class MainViewModel : ObservableObject
         CurrentScreen = SpecialProducts;
         _ = EnsureSpecialProductsLoadedAsync(SpecialProducts);
         return Task.CompletedTask;
+    }
+
+    private void ShowReturns()
+    {
+        if (ReceiptReturns is null)
+        {
+            return;
+        }
+
+        ReceiptReturns.Session = Session;
+        CurrentScreen = ReceiptReturns;
     }
 
     private static async Task EnsureSpecialProductsLoadedAsync(SpecialProductsViewModel specialProducts)

@@ -3,6 +3,28 @@ using Hbpos.Contracts.Catalog;
 
 namespace Hbpos.Client.Wpf.Models;
 
+public enum CartLineKind
+{
+    Sale = 0,
+    Return = 1
+}
+
+public sealed record ReturnCartLineRequest(
+    string StoreCode,
+    string ProductCode,
+    string? ReferenceCode,
+    string DisplayName,
+    string LookupCode,
+    string? ItemNumber,
+    string? ProductImage,
+    decimal Quantity,
+    decimal UnitPrice,
+    PriceSourceKind PriceSource,
+    string PriceSourceLabel,
+    string ReturnSourceKey,
+    Guid? OriginalOrderGuid,
+    Guid? OriginalOrderLineGuid);
+
 public sealed class CartLine : ObservableObject
 {
     private string _storeCode = string.Empty;
@@ -19,6 +41,10 @@ public sealed class CartLine : ObservableObject
     private decimal? _discountPercent;
     private PriceSourceKind _priceSource;
     private string _priceSourceLabel = string.Empty;
+    private CartLineKind _kind = CartLineKind.Sale;
+    private string _returnSourceKey = string.Empty;
+    private Guid? _originalOrderGuid;
+    private Guid? _originalOrderLineGuid;
 
     public CartLine(SellableItemDto item)
     {
@@ -29,6 +55,30 @@ public sealed class CartLine : ObservableObject
 
         Quantity = item.QuantityFactor;
         UpdateFrom(item);
+    }
+
+    public CartLine(ReturnCartLineRequest request)
+    {
+        if (!IsPositiveIntegerQuantity(request.Quantity))
+        {
+            throw new InvalidOperationException("Cart line quantity must be a positive integer.");
+        }
+
+        Kind = CartLineKind.Return;
+        StoreCode = request.StoreCode;
+        ProductCode = request.ProductCode;
+        ReferenceCode = request.ReferenceCode;
+        ProductImage = request.ProductImage;
+        DisplayName = request.DisplayName;
+        LookupCode = request.LookupCode;
+        LookupCodeNormalized = NormalizeLookupCode(request.LookupCode);
+        Quantity = request.Quantity;
+        UnitPrice = request.UnitPrice;
+        PriceSource = request.PriceSource;
+        PriceSourceLabel = request.PriceSourceLabel;
+        ReturnSourceKey = request.ReturnSourceKey;
+        OriginalOrderGuid = request.OriginalOrderGuid;
+        OriginalOrderLineGuid = request.OriginalOrderLineGuid;
     }
 
     public string StoreCode
@@ -118,11 +168,11 @@ public sealed class CartLine : ObservableObject
         }
     }
 
-    public decimal GrossAmount => decimal.Round(Quantity * UnitPrice, 2, MidpointRounding.AwayFromZero);
+    public decimal GrossAmount => SignedAmount(PositiveGrossAmount);
 
-    public decimal ActualAmount => decimal.Round((Quantity * UnitPrice) - DiscountAmount, 2, MidpointRounding.AwayFromZero);
+    public decimal ActualAmount => SignedAmount(PositiveActualAmount);
 
-    public bool HasDiscount => DiscountAmount > 0m && GrossAmount > 0m;
+    public bool HasDiscount => DiscountAmount > 0m && PositiveGrossAmount > 0m;
 
     public bool HasZeroUnitPrice => UnitPrice == 0m;
 
@@ -135,7 +185,7 @@ public sealed class CartLine : ObservableObject
                 return string.Empty;
             }
 
-            var rate = DiscountAmount / GrossAmount;
+            var rate = DiscountAmount / PositiveGrossAmount;
             return $"-{rate * 100m:0.##}%";
         }
     }
@@ -154,13 +204,53 @@ public sealed class CartLine : ObservableObject
         private set => SetProperty(ref _priceSourceLabel, value);
     }
 
+    public CartLineKind Kind
+    {
+        get => _kind;
+        private set
+        {
+            if (SetProperty(ref _kind, value))
+            {
+                OnPropertyChanged(nameof(IsReturnLine));
+                OnPropertyChanged(nameof(IsLocked));
+                OnAmountPropertiesChanged();
+            }
+        }
+    }
+
+    public bool IsReturnLine => Kind == CartLineKind.Return;
+
+    public bool IsLocked => IsReturnLine;
+
+    public decimal SignedQuantity => IsReturnLine ? -Quantity : Quantity;
+
+    public string ReturnSourceKey
+    {
+        get => _returnSourceKey;
+        private set => SetProperty(ref _returnSourceKey, value);
+    }
+
+    public Guid? OriginalOrderGuid
+    {
+        get => _originalOrderGuid;
+        private set => SetProperty(ref _originalOrderGuid, value);
+    }
+
+    public Guid? OriginalOrderLineGuid
+    {
+        get => _originalOrderLineGuid;
+        private set => SetProperty(ref _originalOrderLineGuid, value);
+    }
+
     public void Increase(decimal quantity)
     {
+        ThrowIfLocked();
         Quantity += Math.Max(1m, quantity);
     }
 
     public bool Decrease(decimal quantity)
     {
+        ThrowIfLocked();
         var decreaseBy = Math.Max(1m, quantity);
         if (Quantity <= decreaseBy)
         {
@@ -171,8 +261,19 @@ public sealed class CartLine : ObservableObject
         return true;
     }
 
+    public void IncreaseReturnQuantity(decimal quantity)
+    {
+        if (!IsReturnLine)
+        {
+            throw new InvalidOperationException("Only return lines can use return quantity merging.");
+        }
+
+        Quantity += Math.Max(1m, quantity);
+    }
+
     public void SetQuantity(decimal quantity)
     {
+        ThrowIfLocked();
         if (!IsPositiveIntegerQuantity(quantity))
         {
             throw new InvalidOperationException("Cart line quantity must be a positive integer.");
@@ -183,17 +284,20 @@ public sealed class CartLine : ObservableObject
 
     public void SetUnitPrice(decimal unitPrice)
     {
+        ThrowIfLocked();
         UnitPrice = unitPrice;
     }
 
     public void SetDiscountAmount(decimal discountAmount)
     {
+        ThrowIfLocked();
         _discountPercent = null;
         DiscountAmount = ClampDiscountAmount(discountAmount);
     }
 
     public void SetDiscountPercent(decimal discountPercent)
     {
+        ThrowIfLocked();
         _discountPercent = Math.Clamp(discountPercent, 0m, 100m);
         DiscountAmount = CalculateDiscountAmount(_discountPercent.Value);
     }
@@ -225,6 +329,7 @@ public sealed class CartLine : ObservableObject
 
     private void OnAmountPropertiesChanged()
     {
+        OnPropertyChanged(nameof(SignedQuantity));
         OnPropertyChanged(nameof(GrossAmount));
         OnPropertyChanged(nameof(ActualAmount));
         OnPropertyChanged(nameof(HasDiscount));
@@ -240,11 +345,28 @@ public sealed class CartLine : ObservableObject
 
     private decimal CalculateDiscountAmount(decimal discountPercent)
     {
-        return ClampDiscountAmount(decimal.Round(GrossAmount * discountPercent / 100m, 2, MidpointRounding.AwayFromZero));
+        return ClampDiscountAmount(decimal.Round(PositiveGrossAmount * discountPercent / 100m, 2, MidpointRounding.AwayFromZero));
     }
 
     private decimal ClampDiscountAmount(decimal discountAmount)
     {
-        return Math.Clamp(decimal.Round(discountAmount, 2, MidpointRounding.AwayFromZero), 0m, GrossAmount);
+        return Math.Clamp(decimal.Round(discountAmount, 2, MidpointRounding.AwayFromZero), 0m, PositiveGrossAmount);
+    }
+
+    private decimal PositiveGrossAmount => decimal.Round(Quantity * UnitPrice, 2, MidpointRounding.AwayFromZero);
+
+    private decimal PositiveActualAmount => decimal.Round((Quantity * UnitPrice) - DiscountAmount, 2, MidpointRounding.AwayFromZero);
+
+    private decimal SignedAmount(decimal amount)
+    {
+        return IsReturnLine ? -amount : amount;
+    }
+
+    private void ThrowIfLocked()
+    {
+        if (IsLocked)
+        {
+            throw new InvalidOperationException("Locked cart lines cannot be edited.");
+        }
     }
 }

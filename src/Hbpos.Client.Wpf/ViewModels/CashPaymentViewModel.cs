@@ -193,6 +193,7 @@ public sealed partial class CashPaymentViewModel : ObservableObject
     {
         return !_cart.IsEmpty &&
             !_cart.HasNonIntegerQuantity &&
+            !_cart.HasReturnLine &&
             !_cart.HasZeroPriceLine &&
             _workflowService.TryParseTenderedAmount(AmountTenderedText, out var tendered) &&
             tendered >= ActualAmount;
@@ -205,7 +206,7 @@ public sealed partial class CashPaymentViewModel : ObservableObject
             return;
         }
 
-        if (_statusKey is "cart.status.quantityMustBeInteger" or "cart.status.zeroPriceItem")
+        if (_statusKey is "cart.status.quantityMustBeInteger" or "cart.status.zeroPriceItem" or "payment.cash.status.returnCheckoutNotReady")
         {
             SetStatus("payment.cash.status.ready");
         }
@@ -216,6 +217,12 @@ public sealed partial class CashPaymentViewModel : ObservableObject
         if (_cart.HasNonIntegerQuantity)
         {
             SetStatus("cart.status.quantityMustBeInteger");
+            return true;
+        }
+
+        if (_cart.HasReturnLine)
+        {
+            SetStatus("payment.cash.status.returnCheckoutNotReady");
             return true;
         }
 

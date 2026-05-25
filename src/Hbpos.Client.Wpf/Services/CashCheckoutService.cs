@@ -9,22 +9,27 @@ public sealed class CashCheckoutService
     {
         if (cart.IsEmpty)
         {
-            throw new InvalidOperationException("购物车为空，不能收款。");
+            throw new InvalidOperationException("Cart is empty.");
         }
 
         if (cart.HasNonIntegerQuantity)
         {
-            throw new InvalidOperationException("商品数量必须为正整数。");
+            throw new InvalidOperationException("Cart item quantity must be a positive integer.");
+        }
+
+        if (cart.HasReturnLine)
+        {
+            throw new InvalidOperationException("Refund checkout is not implemented yet.");
         }
 
         if (cart.HasZeroPriceLine)
         {
-            throw new InvalidOperationException("购物车存在价格为 0 的商品，不能收款。");
+            throw new InvalidOperationException("Cart contains a zero-price item.");
         }
 
         if (tenderedAmount < cart.ActualAmount)
         {
-            throw new InvalidOperationException("实收金额不能小于应收金额。");
+            throw new InvalidOperationException("Tendered amount cannot be less than amount due.");
         }
 
         var lines = cart.Lines
@@ -55,6 +60,9 @@ public sealed class CashCheckoutService
             lines,
             [new LocalPayment(Guid.NewGuid(), PaymentMethodKind.Cash, cart.ActualAmount, null)]);
 
-        return new CashCheckoutResult(order, tenderedAmount, decimal.Round(tenderedAmount - cart.ActualAmount, 2, MidpointRounding.AwayFromZero));
+        return new CashCheckoutResult(
+            order,
+            tenderedAmount,
+            decimal.Round(tenderedAmount - cart.ActualAmount, 2, MidpointRounding.AwayFromZero));
     }
 }

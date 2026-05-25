@@ -198,6 +198,41 @@ public sealed class MainViewModelScannerTests
     }
 
     [Fact]
+    public async Task OpenReturnsCommand_SwitchesToReceiptReturnsScreen()
+    {
+        var scanner = new FakeRawScannerService();
+        var viewModel = new MainViewModel(
+            new LocalSellableItemIndex(),
+            new PosCartService(),
+            new CashCheckoutService(),
+            new FakeLocalSchemaService(),
+            new FakeSettingsRepository(),
+            new FakeCatalogRepository(),
+            new FakeCatalogSyncService(),
+            new FakeRemoteLookupRefreshService(),
+            new FakeSpecialProductService(),
+            new FakeConnectivityApiClient(),
+            new FakeLocalDeviceRepository { Latest = CreateAllowedDevice("1042") },
+            new FakeDeviceApiClient(),
+            new FakeDeviceFingerprintService(),
+            new DeviceAuthorizationState(),
+            new FakeLocalOrderRepository(),
+            new FakeSyncQueueRepository(),
+            new LocalizationService(),
+            new FakeCustomerDisplayWindowService(),
+            scanner);
+
+        await viewModel.InitializeAsync(new AppStartupOptions([], false, null, null));
+
+        Assert.True(viewModel.PosTerminal!.OpenReturnsCommand.CanExecute(null));
+
+        viewModel.PosTerminal.OpenReturnsCommand.Execute(null);
+
+        Assert.Same(viewModel.ReceiptReturns, viewModel.CurrentScreen);
+        Assert.Equal(ReceiptReturnsViewModel.PageId, scanner.ActivePageId);
+    }
+
+    [Fact]
     public async Task KeyboardScannerInput_FromSpecialProductsNormalModeIsConsumedWithoutAddingCart()
     {
         var index = new LocalSellableItemIndex();

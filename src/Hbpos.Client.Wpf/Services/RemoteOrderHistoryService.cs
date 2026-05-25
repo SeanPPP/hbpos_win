@@ -1,6 +1,7 @@
 using System.Globalization;
 using System.Net;
 using System.Net.Http;
+using System.Net.Http.Json;
 using System.Text.Json;
 using Hbpos.Client.Wpf.Models;
 using Hbpos.Contracts.Common;
@@ -16,6 +17,14 @@ public interface IRemoteOrderHistoryService
 
     Task<ReceiptDetails?> GetDetailsAsync(
         Guid orderGuid,
+        CancellationToken cancellationToken = default);
+
+    Task<OrderReturnContextDto?> GetReturnContextAsync(
+        Guid orderGuid,
+        CancellationToken cancellationToken = default);
+
+    Task<OrderReturnRecordCreateResponse> CreateReturnRecordsAsync(
+        OrderReturnRecordCreateRequest request,
         CancellationToken cancellationToken = default);
 }
 
@@ -98,6 +107,20 @@ public sealed class RemoteOrderHistoryService(IOrderHistoryApiClient apiClient) 
                     payment.Amount,
                     payment.Reference)).ToList());
     }
+
+    public Task<OrderReturnContextDto?> GetReturnContextAsync(
+        Guid orderGuid,
+        CancellationToken cancellationToken = default)
+    {
+        return apiClient.GetReturnContextAsync(orderGuid, cancellationToken);
+    }
+
+    public Task<OrderReturnRecordCreateResponse> CreateReturnRecordsAsync(
+        OrderReturnRecordCreateRequest request,
+        CancellationToken cancellationToken = default)
+    {
+        return apiClient.CreateReturnRecordsAsync(request, cancellationToken);
+    }
 }
 
 public interface IOrderHistoryApiClient
@@ -108,6 +131,14 @@ public interface IOrderHistoryApiClient
 
     Task<OrderHistoryDetailsDto?> GetDetailsAsync(
         Guid orderGuid,
+        CancellationToken cancellationToken = default);
+
+    Task<OrderReturnContextDto?> GetReturnContextAsync(
+        Guid orderGuid,
+        CancellationToken cancellationToken = default);
+
+    Task<OrderReturnRecordCreateResponse> CreateReturnRecordsAsync(
+        OrderReturnRecordCreateRequest request,
         CancellationToken cancellationToken = default);
 }
 
@@ -141,6 +172,25 @@ public sealed class OrderHistoryApiClient(HttpClient httpClient) : IOrderHistory
             cancellationToken);
 
         return await ReadApiResultAsync<OrderHistoryDetailsDto?>(response, cancellationToken);
+    }
+
+    public async Task<OrderReturnContextDto?> GetReturnContextAsync(
+        Guid orderGuid,
+        CancellationToken cancellationToken = default)
+    {
+        using var response = await httpClient.GetAsync(
+            $"api/v1/orders/history/{Uri.EscapeDataString(orderGuid.ToString("D"))}/return-context",
+            cancellationToken);
+
+        return await ReadApiResultAsync<OrderReturnContextDto?>(response, cancellationToken);
+    }
+
+    public async Task<OrderReturnRecordCreateResponse> CreateReturnRecordsAsync(
+        OrderReturnRecordCreateRequest request,
+        CancellationToken cancellationToken = default)
+    {
+        using var response = await httpClient.PostAsJsonAsync("api/v1/orders/returns", request, JsonOptions, cancellationToken);
+        return await ReadApiResultAsync<OrderReturnRecordCreateResponse>(response, cancellationToken);
     }
 
     private static async Task<T> ReadApiResultAsync<T>(

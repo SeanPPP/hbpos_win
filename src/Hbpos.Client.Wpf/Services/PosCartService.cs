@@ -9,7 +9,7 @@ public sealed class PosCartService
 
     public IReadOnlyList<CartLine> Lines => _lines;
 
-    public decimal TotalAmount => decimal.Round(_lines.Sum(line => line.Quantity * line.UnitPrice), 2, MidpointRounding.AwayFromZero);
+    public decimal TotalAmount => decimal.Round(_lines.Sum(line => line.GrossAmount), 2, MidpointRounding.AwayFromZero);
 
     public decimal DiscountAmount => decimal.Round(_lines.Sum(line => line.DiscountAmount), 2, MidpointRounding.AwayFromZero);
 
@@ -20,6 +20,8 @@ public sealed class PosCartService
     public bool HasZeroPriceLine => _lines.Any(line => line.HasZeroUnitPrice);
 
     public bool HasNonIntegerQuantity => _lines.Any(line => !IsPositiveIntegerQuantity(line.Quantity));
+
+    public bool HasReturnLine => _lines.Any(line => line.IsReturnLine);
 
     public event EventHandler? CartChanged;
 
@@ -50,12 +52,41 @@ public sealed class PosCartService
         return line;
     }
 
+    public CartLine AddReturnLine(ReturnCartLineRequest request)
+    {
+        if (!IsPositiveIntegerQuantity(request.Quantity))
+        {
+            throw new InvalidOperationException("Return cart line quantity must be a positive integer.");
+        }
+
+        var existing = FindReturnLineBySourceKey(request.ReturnSourceKey);
+        if (existing is not null)
+        {
+            existing.IncreaseReturnQuantity(request.Quantity);
+            OnCartChanged();
+            return existing;
+        }
+
+        var line = new CartLine(request);
+        _lines.Add(line);
+        OnCartChanged();
+        return line;
+    }
+
     public CartLine? FindLineByLookupCode(string storeCode, string lookupCode)
     {
         var normalizedLookupCode = CartLine.NormalizeLookupCode(lookupCode);
         return _lines.FirstOrDefault(line =>
+            !line.IsReturnLine &&
             string.Equals(line.StoreCode, storeCode, StringComparison.OrdinalIgnoreCase) &&
             line.LookupCodeNormalized == normalizedLookupCode);
+    }
+
+    public CartLine? FindReturnLineBySourceKey(string returnSourceKey)
+    {
+        return _lines.FirstOrDefault(line =>
+            line.IsReturnLine &&
+            string.Equals(line.ReturnSourceKey, returnSourceKey, StringComparison.OrdinalIgnoreCase));
     }
 
     public bool UpdateLineFromRemote(SellableItemDto item)
@@ -116,7 +147,7 @@ public sealed class PosCartService
 
     public bool IncreaseLine(CartLine? line)
     {
-        if (line is null || !_lines.Contains(line) || !IsPositiveIntegerQuantity(line.Quantity))
+        if (line is null || line.IsLocked || !_lines.Contains(line) || !IsPositiveIntegerQuantity(line.Quantity))
         {
             return false;
         }
@@ -128,7 +159,7 @@ public sealed class PosCartService
 
     public bool DecreaseLine(CartLine? line)
     {
-        if (line is null || !_lines.Contains(line) || !IsPositiveIntegerQuantity(line.Quantity))
+        if (line is null || line.IsLocked || !_lines.Contains(line) || !IsPositiveIntegerQuantity(line.Quantity))
         {
             return false;
         }
@@ -144,7 +175,7 @@ public sealed class PosCartService
 
     public bool SetLineQuantity(CartLine? line, decimal quantity)
     {
-        if (line is null || !_lines.Contains(line) || !IsPositiveIntegerQuantity(quantity))
+        if (line is null || line.IsLocked || !_lines.Contains(line) || !IsPositiveIntegerQuantity(quantity))
         {
             return false;
         }
@@ -156,7 +187,7 @@ public sealed class PosCartService
 
     public bool SetLineUnitPrice(CartLine? line, decimal unitPrice)
     {
-        if (line is null || !_lines.Contains(line) || unitPrice < 0m)
+        if (line is null || line.IsLocked || !_lines.Contains(line) || unitPrice < 0m)
         {
             return false;
         }
@@ -168,7 +199,7 @@ public sealed class PosCartService
 
     public bool SetLineDiscountAmount(CartLine? line, decimal discountAmount)
     {
-        if (line is null || !_lines.Contains(line) || discountAmount < 0m || discountAmount > line.GrossAmount)
+        if (line is null || line.IsLocked || !_lines.Contains(line) || discountAmount < 0m || discountAmount > line.GrossAmount)
         {
             return false;
         }
@@ -180,7 +211,7 @@ public sealed class PosCartService
 
     public bool SetLineDiscountPercent(CartLine? line, decimal discountPercent)
     {
-        if (line is null || !_lines.Contains(line) || discountPercent < 0m || discountPercent > 100m)
+        if (line is null || line.IsLocked || !_lines.Contains(line) || discountPercent < 0m || discountPercent > 100m)
         {
             return false;
         }
@@ -192,7 +223,7 @@ public sealed class PosCartService
 
     public bool SetOrderDiscountAmount(decimal discountAmount)
     {
-        if (_lines.Count == 0 || discountAmount < 0m || discountAmount > TotalAmount)
+        if (_lines.Count == 0 || HasReturnLine || discountAmount < 0m || discountAmount > TotalAmount)
         {
             return false;
         }
@@ -204,7 +235,7 @@ public sealed class PosCartService
 
     public bool SetOrderDiscountPercent(decimal discountPercent)
     {
-        if (_lines.Count == 0 || discountPercent < 0m || discountPercent > 100m)
+        if (_lines.Count == 0 || HasReturnLine || discountPercent < 0m || discountPercent > 100m)
         {
             return false;
         }
@@ -242,7 +273,11 @@ public sealed class PosCartService
                 line.DiscountAmount,
                 line.DiscountPercent,
                 line.PriceSource,
-                line.PriceSourceLabel))
+                line.PriceSourceLabel,
+                line.Kind,
+                line.ReturnSourceKey,
+                line.OriginalOrderGuid,
+                line.OriginalOrderLineGuid))
             .ToArray());
     }
 
@@ -256,30 +291,52 @@ public sealed class PosCartService
                 throw new InvalidOperationException("Cart line quantity must be a positive integer.");
             }
 
-            var item = new SellableItemDto(
-                snapshotLine.StoreCode,
-                snapshotLine.ProductCode,
-                snapshotLine.ReferenceCode,
-                snapshotLine.DisplayName,
-                snapshotLine.LookupCode,
-                snapshotLine.ItemNumber,
-                snapshotLine.LookupCode,
-                snapshotLine.UnitPrice,
-                snapshotLine.PriceSource,
-                snapshotLine.PriceSourceLabel,
-                1m,
-                null,
-                snapshotLine.ProductImage);
-            var line = new CartLine(item);
-            line.SetQuantity(snapshotLine.Quantity);
-            line.SetUnitPrice(snapshotLine.UnitPrice);
-            if (snapshotLine.DiscountPercent is decimal discountPercent)
+            CartLine line;
+            if (snapshotLine.Kind == CartLineKind.Return)
             {
-                line.SetDiscountPercent(discountPercent);
+                line = new CartLine(new ReturnCartLineRequest(
+                    snapshotLine.StoreCode,
+                    snapshotLine.ProductCode,
+                    snapshotLine.ReferenceCode,
+                    snapshotLine.DisplayName,
+                    snapshotLine.LookupCode,
+                    snapshotLine.ItemNumber,
+                    snapshotLine.ProductImage,
+                    snapshotLine.Quantity,
+                    snapshotLine.UnitPrice,
+                    snapshotLine.PriceSource,
+                    snapshotLine.PriceSourceLabel,
+                    snapshotLine.ReturnSourceKey,
+                    snapshotLine.OriginalOrderGuid,
+                    snapshotLine.OriginalOrderLineGuid));
             }
             else
             {
-                line.SetDiscountAmount(snapshotLine.DiscountAmount);
+                var item = new SellableItemDto(
+                    snapshotLine.StoreCode,
+                    snapshotLine.ProductCode,
+                    snapshotLine.ReferenceCode,
+                    snapshotLine.DisplayName,
+                    snapshotLine.LookupCode,
+                    snapshotLine.ItemNumber,
+                    snapshotLine.LookupCode,
+                    snapshotLine.UnitPrice,
+                    snapshotLine.PriceSource,
+                    snapshotLine.PriceSourceLabel,
+                    1m,
+                    null,
+                    snapshotLine.ProductImage);
+                line = new CartLine(item);
+                line.SetQuantity(snapshotLine.Quantity);
+                line.SetUnitPrice(snapshotLine.UnitPrice);
+                if (snapshotLine.DiscountPercent is decimal discountPercent)
+                {
+                    line.SetDiscountPercent(discountPercent);
+                }
+                else
+                {
+                    line.SetDiscountAmount(snapshotLine.DiscountAmount);
+                }
             }
 
             _lines.Add(line);
@@ -341,4 +398,8 @@ public sealed record PosCartLineSnapshot(
     decimal DiscountAmount,
     decimal? DiscountPercent,
     PriceSourceKind PriceSource,
-    string PriceSourceLabel);
+    string PriceSourceLabel,
+    CartLineKind Kind = CartLineKind.Sale,
+    string ReturnSourceKey = "",
+    Guid? OriginalOrderGuid = null,
+    Guid? OriginalOrderLineGuid = null);

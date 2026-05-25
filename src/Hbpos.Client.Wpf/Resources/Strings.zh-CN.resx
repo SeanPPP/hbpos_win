@@ -277,4 +277,15 @@
   <data name="specialProducts.download.completed" xml:space="preserve"><value>&#x7279;&#x6B8A;&#x5546;&#x54C1;&#x4E0B;&#x8F7D;&#x5B8C;&#x6210; {0}%</value></data>
   <data name="specialProducts.download.failed" xml:space="preserve"><value>&#x7279;&#x6B8A;&#x5546;&#x54C1;&#x4E0B;&#x8F7D;&#x5931;&#x8D25; {0}%</value></data>
   <data name="specialProducts.download.detail" xml:space="preserve"><value>{0}/{1}  &#x9875;: {2}  &#x5199;&#x5165;: {3}  &#x53D6;&#x6D88;&#x7279;&#x6B8A;: {4}  &#x8017;&#x65F6;: {5}</value></data>
+  <data name="returns.title" xml:space="preserve"><value>退货选择</value></data>
+  <data name="returns.noReceipt" xml:space="preserve"><value>无收据退货</value></data>
+  <data name="returns.back" xml:space="preserve"><value>返回收银</value></data>
+  <data name="returns.searchHint" xml:space="preserve"><value>扫码或输入订单号；打开无收据退货后扫码商品</value></data>
+  <data name="returns.originalReceipt" xml:space="preserve"><value>原订单商品</value></data>
+  <data name="returns.staleWarning" xml:space="preserve"><value>当前使用本地兜底，退货记录可能未同步。</value></data>
+  <data name="returns.available" xml:space="preserve"><value>可退</value></data>
+  <data name="returns.pending" xml:space="preserve"><value>待退商品</value></data>
+  <data name="returns.totalRefund" xml:space="preserve"><value>退款合计</value></data>
+  <data name="returns.addToCart" xml:space="preserve"><value>加入购物车</value></data>
+  <data name="payment.cash.status.returnCheckoutNotReady" xml:space="preserve"><value>退货结账将在退款支付页实现。请先删除退货行，或后续进入退款支付页处理。</value></data>
 </root>

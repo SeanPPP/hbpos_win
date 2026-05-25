@@ -349,6 +349,11 @@ public sealed class PosTerminalWorkflowService : IPosTerminalWorkflowService
             return Status("cart.status.zeroPriceItem");
         }
 
+        if (_cart.HasReturnLine)
+        {
+            return Status("payment.cash.status.returnCheckoutNotReady");
+        }
+
         return new PosTerminalWorkflowResult { PaymentAllowed = true };
     }
 

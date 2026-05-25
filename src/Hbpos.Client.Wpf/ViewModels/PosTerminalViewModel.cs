@@ -28,6 +28,7 @@ public sealed partial class PosTerminalViewModel : ObservableObject, IScannerInp
     private readonly PosCartService _cart;
     private readonly IPosTerminalWorkflowService _workflowService;
     private readonly Action? _onOpenPayment;
+    private readonly Action? _onOpenReturns;
     private readonly Func<Task>? _onOpenSpecialProductsAsync;
     private readonly Func<Task>? _onHoldOrderAsync;
     private readonly Func<Task>? _onRecallOrderAsync;
@@ -92,13 +93,15 @@ public sealed partial class PosTerminalViewModel : ObservableObject, IScannerInp
         Func<Task>? onReregisterDeviceAsync = null,
         IPosTerminalWorkflowService? workflowService = null,
         Func<Task>? onHoldOrderAsync = null,
-        Func<Task>? onRecallOrderAsync = null)
+        Func<Task>? onRecallOrderAsync = null,
+        Action? onOpenReturns = null)
     {
         _priceIndex = priceIndex;
         _cart = cart;
         _workflowService = workflowService ?? new PosTerminalWorkflowService(priceIndex, cart, remoteLookupRefreshAsync, reloadCatalogAsync);
         _session = session;
         _onOpenPayment = onOpenPayment;
+        _onOpenReturns = onOpenReturns;
         _onOpenSpecialProductsAsync = onOpenSpecialProductsAsync;
         _onHoldOrderAsync = onHoldOrderAsync;
         _onRecallOrderAsync = onRecallOrderAsync;
@@ -125,8 +128,8 @@ public sealed partial class PosTerminalViewModel : ObservableObject, IScannerInp
         AddSelectedCommand = new RelayCommand(AddSelected, () => SelectedItem is not null);
         SelectMatchCommand = new RelayCommand<SellableItemDto>(SelectMatch);
         RemoveLineCommand = new RelayCommand<CartLine>(RemoveLine);
-        IncreaseLineCommand = new RelayCommand<CartLine>(IncreaseLine, line => line is not null && _cart.Lines.Contains(line));
-        DecreaseLineCommand = new RelayCommand<CartLine>(DecreaseLine, line => line is not null && _cart.Lines.Contains(line));
+        IncreaseLineCommand = new RelayCommand<CartLine>(IncreaseLine, line => line is not null && !line.IsLocked && _cart.Lines.Contains(line));
+        DecreaseLineCommand = new RelayCommand<CartLine>(DecreaseLine, line => line is not null && !line.IsLocked && _cart.Lines.Contains(line));
         ModifySelectedLineQuantityCommand = new RelayCommand(ModifySelectedLineQuantity);
         ModifySelectedLinePriceCommand = new RelayCommand(ModifySelectedLinePrice);
         ApplySelectedLineDiscountAmountCommand = new RelayCommand(ApplySelectedLineDiscountAmount);
@@ -135,6 +138,7 @@ public sealed partial class PosTerminalViewModel : ObservableObject, IScannerInp
         ClearSearchCommand = new RelayCommand(ClearSearch, () => !string.IsNullOrWhiteSpace(ScanText));
         ClearCartCommand = new RelayCommand(ClearCart, () => !_cart.IsEmpty);
         OpenPaymentCommand = new RelayCommand(OpenPayment, () => !_cart.IsEmpty);
+        OpenReturnsCommand = new RelayCommand(OpenReturns);
         OpenSpecialProductsCommand = new AsyncRelayCommand(OpenSpecialProductsAsync);
         HoldOrderCommand = new AsyncRelayCommand(HoldOrderAsync, () => !_cart.IsEmpty);
         RecallOrderCommand = new AsyncRelayCommand(RecallOrderAsync);
@@ -180,6 +184,8 @@ public sealed partial class PosTerminalViewModel : ObservableObject, IScannerInp
     public IRelayCommand ClearCartCommand { get; }
 
     public IRelayCommand OpenPaymentCommand { get; }
+
+    public IRelayCommand OpenReturnsCommand { get; }
 
     public IAsyncRelayCommand OpenSpecialProductsCommand { get; }
 
@@ -235,7 +241,7 @@ public sealed partial class PosTerminalViewModel : ObservableObject, IScannerInp
 
     public decimal ActualAmount => _cart.ActualAmount;
 
-    public decimal CartItemQuantity => _cart.Lines.Sum(line => line.Quantity);
+    public decimal CartItemQuantity => _cart.Lines.Sum(line => line.SignedQuantity);
 
     public int CartSkuCount => _cart.Lines.Count;
 
@@ -746,6 +752,11 @@ public sealed partial class PosTerminalViewModel : ObservableObject, IScannerInp
         _onOpenPayment?.Invoke();
         stopwatch.Stop();
         LogCartOperation("open-payment", (CartLine?)null, success: true, stopwatch.ElapsedMilliseconds);
+    }
+
+    private void OpenReturns()
+    {
+        _onOpenReturns?.Invoke();
     }
 
     private async Task OpenSpecialProductsAsync()

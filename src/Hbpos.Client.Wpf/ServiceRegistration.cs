@@ -72,6 +72,7 @@ public static class ServiceRegistration
         services.AddSingleton<IReceiptQueryService, ReceiptQueryService>();
         services.AddSingleton<IDeviceRegistrationWorkflowService, DeviceRegistrationWorkflowService>();
         services.AddSingleton<ISpecialProductsWorkflowService, SpecialProductsWorkflowService>();
+        services.AddSingleton<IReceiptReturnsWorkflowService, ReceiptReturnsWorkflowService>();
         services.AddSingleton<ICustomerDisplayOrchestrator, CustomerDisplayOrchestrator>();
         services.AddSingleton<IUserFeedbackService, WindowsMessageBeepUserFeedbackService>();
         services.AddTransient<IPosTerminalWorkflowService>(sp => new PosTerminalWorkflowService(
@@ -118,7 +119,8 @@ public static class ServiceRegistration
             sp.GetRequiredService<PosTerminalWorkflowFactory>(),
             sp.GetRequiredService<ISuspendedOrderService>(),
             sp.GetRequiredService<IRemoteOrderHistoryService>(),
-            userFeedbackService: sp.GetRequiredService<IUserFeedbackService>()));
+            userFeedbackService: sp.GetRequiredService<IUserFeedbackService>(),
+            receiptReturnsWorkflowService: sp.GetRequiredService<IReceiptReturnsWorkflowService>()));
         services.AddSingleton<MainWindow>();
 
         return services;

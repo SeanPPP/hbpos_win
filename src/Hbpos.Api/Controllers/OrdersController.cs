@@ -11,7 +11,8 @@ namespace Hbpos.Api.Controllers;
 [Route("api/v1/orders")]
 public sealed class OrdersController(
     IOrderSyncService orderSyncService,
-    IOrderHistoryService orderHistoryService) : ControllerBase
+    IOrderHistoryService orderHistoryService,
+    IOrderReturnService orderReturnService) : ControllerBase
 {
     [Authorize]
     [HttpPost("sync")]
@@ -83,5 +84,52 @@ public sealed class OrdersController(
         }
 
         return Ok(ApiResult<OrderHistoryDetailsDto?>.Ok(details));
+    }
+
+    [Authorize]
+    [HttpGet("history/{orderGuid:guid}/return-context")]
+    public async Task<ActionResult<ApiResult<OrderReturnContextDto?>>> ReturnContext(
+        Guid orderGuid,
+        CancellationToken cancellationToken)
+    {
+        var context = await orderReturnService.GetReturnContextAsync(orderGuid, cancellationToken);
+        if (context is null)
+        {
+            return Ok(ApiResult<OrderReturnContextDto?>.Ok(null));
+        }
+
+        if (!this.IsDeviceScopeAllowed(context.Order.StoreCode))
+        {
+            return DeviceAuthorizationExtensions.DeviceScopeForbidden<OrderReturnContextDto?>("Device is not authorized for this store.");
+        }
+
+        return Ok(ApiResult<OrderReturnContextDto?>.Ok(context));
+    }
+
+    [Authorize]
+    [HttpPost("returns")]
+    public async Task<ActionResult<ApiResult<OrderReturnRecordCreateResponse>>> CreateReturns(
+        [FromBody] OrderReturnRecordCreateRequest request,
+        CancellationToken cancellationToken)
+    {
+        if (!this.IsDeviceScopeAllowed(request.StoreCode, request.DeviceCode))
+        {
+            return DeviceAuthorizationExtensions.DeviceScopeForbidden<OrderReturnRecordCreateResponse>("Device is not authorized for this store.");
+        }
+
+        if (request.Lines.Count == 0)
+        {
+            return BadRequest(ApiResult<OrderReturnRecordCreateResponse>.Fail("RETURN_LINES_REQUIRED", "退货明细不能为空"));
+        }
+
+        try
+        {
+            var response = await orderReturnService.CreateRecordsAsync(request, cancellationToken);
+            return Ok(ApiResult<OrderReturnRecordCreateResponse>.Ok(response));
+        }
+        catch (InvalidOperationException ex)
+        {
+            return BadRequest(ApiResult<OrderReturnRecordCreateResponse>.Fail("RETURN_RECORD_INVALID", ex.Message));
+        }
     }
 }

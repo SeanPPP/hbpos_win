@@ -100,3 +100,39 @@ public sealed record OrderHistoryPaymentDto(
     PaymentMethodKind Method,
     decimal Amount,
     string? Reference);
+
+public sealed record OrderReturnContextDto(
+    OrderHistoryDetailsDto Order,
+    IReadOnlyList<OrderReturnRecordDto> ReturnRecords);
+
+public sealed record OrderReturnRecordDto(
+    Guid ReturnDetailGuid,
+    Guid? ReturnOrderGuid,
+    Guid? OriginalOrderGuid,
+    Guid? OriginalOrderDetailGuid,
+    string ProductCode,
+    string? ReferenceCode,
+    decimal ReturnQuantity,
+    decimal ReturnAmount,
+    string StaffCode,
+    DateTimeOffset CreatedAt);
+
+public sealed record OrderReturnRecordCreateRequest(
+    Guid ReturnOrderGuid,
+    string StoreCode,
+    string DeviceCode,
+    string CashierId,
+    string CashierName,
+    IReadOnlyList<OrderReturnRecordCreateLineDto> Lines);
+
+public sealed record OrderReturnRecordCreateLineDto(
+    Guid? OriginalOrderGuid,
+    Guid? OriginalOrderDetailGuid,
+    string ProductCode,
+    string? ReferenceCode,
+    decimal ReturnQuantity,
+    decimal ReturnAmount);
+
+public sealed record OrderReturnRecordCreateResponse(
+    Guid ReturnOrderGuid,
+    IReadOnlyList<OrderReturnRecordDto> ReturnRecords);

@@ -20,12 +20,21 @@
                     <Setter Property="Foreground" Value="{StaticResource PosDangerBrush}" />
                     <Setter Property="BorderBrush" Value="{StaticResource PosDangerBrush}" />
                 </DataTrigger>
+                <DataTrigger Binding="{Binding IsReturnLine}" Value="True">
+                    <Setter Property="Background" Value="#FFFFEEF0" />
+                    <Setter Property="Foreground" Value="{StaticResource PosDangerBrush}" />
+                    <Setter Property="BorderBrush" Value="{StaticResource PosDangerBrush}" />
+                </DataTrigger>
             </Style.Triggers>
         </Style>
 
         <Style x:Key="ZeroPriceCashAmountTextStyle" TargetType="TextBlock">
             <Style.Triggers>
                 <DataTrigger Binding="{Binding HasZeroUnitPrice}" Value="True">
+                    <Setter Property="Foreground" Value="{StaticResource PosDangerBrush}" />
+                    <Setter Property="FontWeight" Value="Black" />
+                </DataTrigger>
+                <DataTrigger Binding="{Binding IsReturnLine}" Value="True">
                     <Setter Property="Foreground" Value="{StaticResource PosDangerBrush}" />
                     <Setter Property="FontWeight" Value="Black" />
                 </DataTrigger>
@@ -75,7 +84,7 @@
                       Style="{StaticResource PosCartDataGridStyle}">
                 <DataGrid.Columns>
                     <DataGridTextColumn Header="{loc:Loc Item}" Binding="{Binding DisplayName}" Width="*" />
-                    <DataGridTextColumn Header="{loc:Loc Quantity}" Binding="{Binding Quantity, StringFormat={}{0:0.##}}" Width="70" />
+                    <DataGridTextColumn Header="{loc:Loc Quantity}" Binding="{Binding SignedQuantity, StringFormat={}{0:0.##}}" Width="70" />
                     <DataGridTextColumn Header="{loc:Loc Total}" Binding="{Binding ActualAmount, StringFormat={}{0:C2}}" Width="104">
                         <DataGridTextColumn.ElementStyle>
                             <Style TargetType="TextBlock" BasedOn="{StaticResource ZeroPriceCashAmountTextStyle}" />

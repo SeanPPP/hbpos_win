@@ -1,4 +1,5 @@
 using Hbpos.Client.Wpf.Services;
+using Hbpos.Client.Wpf.Models;
 using Hbpos.Contracts.Catalog;
 
 namespace Hbpos.Client.Tests;
@@ -317,6 +318,70 @@ public sealed class PosCartServiceTests
     }
 
     [Fact]
+    public void AddReturnLine_creates_locked_negative_line_without_merging_with_sale_line()
+    {
+        var cart = new PosCartService();
+        var sale = cart.AddItem(CreateItem(productCode: "SKU-001", lookupCode: "690001", price: 10m));
+
+        var returned = cart.AddReturnLine(CreateReturnLine("receipt-order-line-1"));
+
+        Assert.Equal(2, cart.Lines.Count);
+        Assert.Same(sale, cart.FindLineByLookupCode("S001", "690001"));
+        Assert.True(returned.IsReturnLine);
+        Assert.True(returned.IsLocked);
+        Assert.Equal(-1m, returned.SignedQuantity);
+        Assert.Equal(-10m, returned.GrossAmount);
+        Assert.Equal(0m, cart.ActualAmount);
+        Assert.True(cart.HasReturnLine);
+    }
+
+    [Fact]
+    public void ReturnLine_merges_only_by_return_source_key_and_can_be_removed()
+    {
+        var cart = new PosCartService();
+
+        var first = cart.AddReturnLine(CreateReturnLine("receipt-order-line-1"));
+        var second = cart.AddReturnLine(CreateReturnLine("receipt-order-line-1"));
+
+        Assert.Same(first, second);
+        Assert.Single(cart.Lines);
+        Assert.Equal(2m, first.Quantity);
+        Assert.Equal(-20m, cart.ActualAmount);
+
+        Assert.False(cart.IncreaseLine(first));
+        Assert.False(cart.DecreaseLine(first));
+        Assert.False(cart.SetLineQuantity(first, 3m));
+        Assert.False(cart.SetLineUnitPrice(first, 9m));
+        Assert.False(cart.SetLineDiscountAmount(first, 1m));
+        Assert.True(cart.RemoveLine(first));
+        Assert.Empty(cart.Lines);
+    }
+
+    [Fact]
+    public void Snapshot_and_restore_preserve_return_line_metadata()
+    {
+        var cart = new PosCartService();
+        var originalOrderGuid = Guid.NewGuid();
+        var originalLineGuid = Guid.NewGuid();
+        cart.AddReturnLine(CreateReturnLine(
+            "receipt-order-line-1",
+            originalOrderGuid,
+            originalLineGuid));
+
+        var snapshot = cart.CreateSnapshot();
+        cart.Clear();
+
+        cart.RestoreSnapshot(snapshot);
+
+        var line = Assert.Single(cart.Lines);
+        Assert.True(line.IsReturnLine);
+        Assert.Equal("receipt-order-line-1", line.ReturnSourceKey);
+        Assert.Equal(originalOrderGuid, line.OriginalOrderGuid);
+        Assert.Equal(originalLineGuid, line.OriginalOrderLineGuid);
+        Assert.Equal(-10m, line.ActualAmount);
+    }
+
+    [Fact]
     public void Snapshot_and_restore_preserve_percent_discount_behavior_and_line_metadata()
     {
         var cart = new PosCartService();
@@ -394,5 +459,27 @@ public sealed class PosCartServiceTests
             QuantityFactor: quantityFactor,
             UpdatedAt: DateTimeOffset.UtcNow,
             ProductImage: productImage);
+    }
+
+    private static ReturnCartLineRequest CreateReturnLine(
+        string sourceKey,
+        Guid? originalOrderGuid = null,
+        Guid? originalOrderLineGuid = null)
+    {
+        return new ReturnCartLineRequest(
+            "S001",
+            "SKU-001",
+            "REF-001",
+            "Milk 1L",
+            "690001",
+            "SKU-001",
+            null,
+            1m,
+            10m,
+            PriceSourceKind.StoreRetailPrice,
+            PriceSourceKind.StoreRetailPrice.ToString(),
+            sourceKey,
+            originalOrderGuid,
+            originalOrderLineGuid);
     }
 }

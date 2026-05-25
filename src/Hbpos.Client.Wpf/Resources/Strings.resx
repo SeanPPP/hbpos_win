@@ -276,4 +276,15 @@
   <data name="specialProducts.download.completed" xml:space="preserve"><value>Special product download complete {0}%</value></data>
   <data name="specialProducts.download.failed" xml:space="preserve"><value>Special product download failed {0}%</value></data>
   <data name="specialProducts.download.detail" xml:space="preserve"><value>{0}/{1}  Pages: {2}  Upserted: {3}  Unmarked: {4}  Elapsed: {5}</value></data>
+  <data name="returns.title" xml:space="preserve"><value>Receipt Returns</value></data>
+  <data name="returns.noReceipt" xml:space="preserve"><value>No-receipt return</value></data>
+  <data name="returns.back" xml:space="preserve"><value>Back to POS</value></data>
+  <data name="returns.searchHint" xml:space="preserve"><value>Scan order number, or scan product when no-receipt return is on</value></data>
+  <data name="returns.originalReceipt" xml:space="preserve"><value>Original Receipt</value></data>
+  <data name="returns.staleWarning" xml:space="preserve"><value>Return records may be stale while using local fallback.</value></data>
+  <data name="returns.available" xml:space="preserve"><value>Available</value></data>
+  <data name="returns.pending" xml:space="preserve"><value>Items to Return</value></data>
+  <data name="returns.totalRefund" xml:space="preserve"><value>Total Refund</value></data>
+  <data name="returns.addToCart" xml:space="preserve"><value>Add to Cart</value></data>
+  <data name="payment.cash.status.returnCheckoutNotReady" xml:space="preserve"><value>Refund checkout is not implemented yet. Remove return lines or use the refund payment page later.</value></data>
 </root>
