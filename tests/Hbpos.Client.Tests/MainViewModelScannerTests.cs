@@ -198,6 +198,171 @@ public sealed class MainViewModelScannerTests
     }
 
     [Fact]
+    public async Task KeyboardScannerInput_FromSpecialProductsNormalModeIsConsumedWithoutAddingCart()
+    {
+        var index = new LocalSellableItemIndex();
+        var catalog = new FakeCatalogRepository
+        {
+            Items = [CreateItem("1042", "SKU-001", "319844731768")],
+            SpecialItems = [CreateItem("1042", "SKU-SP", "9528502522399")]
+        };
+        var viewModel = new MainViewModel(
+            index,
+            new PosCartService(),
+            new CashCheckoutService(),
+            new FakeLocalSchemaService(),
+            new FakeSettingsRepository(),
+            catalog,
+            new FakeCatalogSyncService(),
+            new FakeRemoteLookupRefreshService(),
+            new FakeSpecialProductService(),
+            new FakeConnectivityApiClient(),
+            new FakeLocalDeviceRepository { Latest = CreateAllowedDevice("1042") },
+            new FakeDeviceApiClient(),
+            new FakeDeviceFingerprintService(),
+            new DeviceAuthorizationState(),
+            new FakeLocalOrderRepository(),
+            new FakeSyncQueueRepository(),
+            new LocalizationService(),
+            new FakeCustomerDisplayWindowService(),
+            new FakeRawScannerService());
+
+        await viewModel.InitializeAsync(new AppStartupOptions([], false, null, null));
+        await viewModel.PosTerminal!.OpenSpecialProductsCommand.ExecuteAsync(null);
+
+        var processed = viewModel.TryProcessKeyboardScannerInput("319844731768");
+
+        Assert.True(processed);
+        Assert.Same(viewModel.SpecialProducts, viewModel.CurrentScreen);
+        Assert.Empty(viewModel.PosTerminal!.CartLines);
+        Assert.Empty(viewModel.SpecialProducts!.SearchResults);
+        Assert.Contains("edit", viewModel.SpecialProducts.StatusMessage, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task KeyboardScannerInput_FromSpecialProductsEditModeSearchesCandidatesWithoutAddingCart()
+    {
+        var index = new LocalSellableItemIndex();
+        var catalog = new FakeCatalogRepository
+        {
+            Items = [CreateItem("1042", "SKU-001", "319844731768")],
+            SpecialItems = [CreateItem("1042", "SKU-SP", "9528502522399")]
+        };
+        var viewModel = new MainViewModel(
+            index,
+            new PosCartService(),
+            new CashCheckoutService(),
+            new FakeLocalSchemaService(),
+            new FakeSettingsRepository(),
+            catalog,
+            new FakeCatalogSyncService(),
+            new FakeRemoteLookupRefreshService(),
+            new FakeSpecialProductService(),
+            new FakeConnectivityApiClient(),
+            new FakeLocalDeviceRepository { Latest = CreateAllowedDevice("1042") },
+            new FakeDeviceApiClient(),
+            new FakeDeviceFingerprintService(),
+            new DeviceAuthorizationState(),
+            new FakeLocalOrderRepository(),
+            new FakeSyncQueueRepository(),
+            new LocalizationService(),
+            new FakeCustomerDisplayWindowService(),
+            new FakeRawScannerService());
+
+        await viewModel.InitializeAsync(new AppStartupOptions([], false, null, null));
+        await viewModel.PosTerminal!.OpenSpecialProductsCommand.ExecuteAsync(null);
+        viewModel.SpecialProducts!.ToggleEditModeCommand.Execute(null);
+
+        var processed = viewModel.TryProcessKeyboardScannerInput("319844731768");
+
+        Assert.True(processed);
+        Assert.Same(viewModel.SpecialProducts, viewModel.CurrentScreen);
+        Assert.Empty(viewModel.PosTerminal.CartLines);
+        Assert.Equal("319844731768", viewModel.SpecialProducts.SearchText);
+        var candidate = Assert.Single(viewModel.SpecialProducts.SearchResults);
+        Assert.Equal("SKU-001", candidate.ProductCode);
+        Assert.Same(candidate, viewModel.SpecialProducts.SelectedSearchResult);
+    }
+
+    [Fact]
+    public async Task OpenSpecialProductsCommand_ActivatesSpecialProductsScannerPage()
+    {
+        var scanner = new FakeRawScannerService();
+        var viewModel = new MainViewModel(
+            new LocalSellableItemIndex(),
+            new PosCartService(),
+            new CashCheckoutService(),
+            new FakeLocalSchemaService(),
+            new FakeSettingsRepository(),
+            new FakeCatalogRepository
+            {
+                SpecialItems = [CreateItem("1042", "SKU-SP", "9528502522399")]
+            },
+            new FakeCatalogSyncService(),
+            new FakeRemoteLookupRefreshService(),
+            new FakeSpecialProductService(),
+            new FakeConnectivityApiClient(),
+            new FakeLocalDeviceRepository { Latest = CreateAllowedDevice("1042") },
+            new FakeDeviceApiClient(),
+            new FakeDeviceFingerprintService(),
+            new DeviceAuthorizationState(),
+            new FakeLocalOrderRepository(),
+            new FakeSyncQueueRepository(),
+            new LocalizationService(),
+            new FakeCustomerDisplayWindowService(),
+            scanner);
+
+        await viewModel.InitializeAsync(new AppStartupOptions([], false, null, null));
+
+        Assert.Equal(PosTerminalViewModel.PageId, scanner.ActivePageId);
+
+        await viewModel.PosTerminal!.OpenSpecialProductsCommand.ExecuteAsync(null);
+
+        Assert.Equal(SpecialProductsViewModel.PageId, scanner.ActivePageId);
+    }
+
+    [Fact]
+    public async Task RawScannerInput_FromSpecialProductsEditModeSearchesCandidatesWithoutAddingCart()
+    {
+        var scanner = new FakeRawScannerService();
+        var viewModel = new MainViewModel(
+            new LocalSellableItemIndex(),
+            new PosCartService(),
+            new CashCheckoutService(),
+            new FakeLocalSchemaService(),
+            new FakeSettingsRepository(),
+            new FakeCatalogRepository
+            {
+                Items = [CreateItem("1042", "SKU-001", "319844731768")],
+                SpecialItems = [CreateItem("1042", "SKU-SP", "9528502522399")]
+            },
+            new FakeCatalogSyncService(),
+            new FakeRemoteLookupRefreshService(),
+            new FakeSpecialProductService(),
+            new FakeConnectivityApiClient(),
+            new FakeLocalDeviceRepository { Latest = CreateAllowedDevice("1042") },
+            new FakeDeviceApiClient(),
+            new FakeDeviceFingerprintService(),
+            new DeviceAuthorizationState(),
+            new FakeLocalOrderRepository(),
+            new FakeSyncQueueRepository(),
+            new LocalizationService(),
+            new FakeCustomerDisplayWindowService(),
+            scanner);
+
+        await viewModel.InitializeAsync(new AppStartupOptions([], false, null, null));
+        await viewModel.PosTerminal!.OpenSpecialProductsCommand.ExecuteAsync(null);
+        viewModel.SpecialProducts!.ToggleEditModeCommand.Execute(null);
+
+        scanner.Emit("319844731768");
+
+        Assert.Same(viewModel.SpecialProducts, viewModel.CurrentScreen);
+        Assert.Empty(viewModel.PosTerminal.CartLines);
+        Assert.Equal("319844731768", viewModel.SpecialProducts.SearchText);
+        Assert.Equal("SKU-001", Assert.Single(viewModel.SpecialProducts.SearchResults).ProductCode);
+    }
+
+    [Fact]
     public async Task InitializeAsync_WhenLocalCatalogLoadFails_StillShowsPosWithStatusMessage()
     {
         var catalog = new FakeCatalogRepository
@@ -476,9 +641,13 @@ public sealed class MainViewModelScannerTests
 
     private sealed class FakeRawScannerService : IRawScannerService
     {
+        private readonly Dictionary<string, Action<RawBarcodeScannedEventArgs>> _handlers = [];
+
         public bool IsActive { get; private set; }
 
         public int ResetCount { get; private set; }
+
+        public string? ActivePageId { get; private set; }
 
         public Task InitializeAsync(CancellationToken cancellationToken = default)
         {
@@ -487,14 +656,17 @@ public sealed class MainViewModelScannerTests
 
         public void Subscribe(string pageId, Action<RawBarcodeScannedEventArgs> handler)
         {
+            _handlers[pageId] = handler;
         }
 
         public void Unsubscribe(string pageId)
         {
+            _handlers.Remove(pageId);
         }
 
         public void SetActivePage(string? pageId)
         {
+            ActivePageId = pageId;
         }
 
         public void Start(IntPtr hwnd)
@@ -516,6 +688,14 @@ public sealed class MainViewModelScannerTests
         public IntPtr ProcessWindowMessage(IntPtr hwnd, int msg, IntPtr wParam, IntPtr lParam, ref bool handled)
         {
             return IntPtr.Zero;
+        }
+
+        public void Emit(string barcode, DateTimeOffset? scannedAt = null)
+        {
+            if (ActivePageId is not null && _handlers.TryGetValue(ActivePageId, out var handler))
+            {
+                handler(new RawBarcodeScannedEventArgs(barcode, "scanner-device", scannedAt ?? DateTimeOffset.Now));
+            }
         }
 
         public void Dispose()
@@ -780,6 +960,14 @@ public sealed class MainViewModelScannerTests
         public Task<IReadOnlyList<LocalOrderSummary>> GetRecentOrdersAsync(int take = 50, CancellationToken cancellationToken = default)
         {
             return Task.FromResult<IReadOnlyList<LocalOrderSummary>>([]);
+        }
+
+        public Task<IReadOnlyList<LocalOrderSummary>> GetRecentOrdersAsync(
+            LocalOrderHistoryQuery query,
+            int take = 50,
+            CancellationToken cancellationToken = default)
+        {
+            return GetRecentOrdersAsync(take, cancellationToken);
         }
 
         public Task<LocalOrder?> GetOrderAsync(Guid orderGuid, CancellationToken cancellationToken = default)

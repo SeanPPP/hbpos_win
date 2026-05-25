@@ -226,6 +226,68 @@ public sealed class PosCartService
         OnCartChanged();
     }
 
+    public PosCartSnapshot CreateSnapshot()
+    {
+        return new PosCartSnapshot(_lines
+            .Select(line => new PosCartLineSnapshot(
+                line.StoreCode,
+                line.ProductCode,
+                line.ReferenceCode,
+                line.DisplayName,
+                line.LookupCode,
+                line.ItemNumber,
+                line.ProductImage,
+                line.Quantity,
+                line.UnitPrice,
+                line.DiscountAmount,
+                line.DiscountPercent,
+                line.PriceSource,
+                line.PriceSourceLabel))
+            .ToArray());
+    }
+
+    public void RestoreSnapshot(PosCartSnapshot snapshot)
+    {
+        _lines.Clear();
+        foreach (var snapshotLine in snapshot.Lines)
+        {
+            if (!IsPositiveIntegerQuantity(snapshotLine.Quantity))
+            {
+                throw new InvalidOperationException("Cart line quantity must be a positive integer.");
+            }
+
+            var item = new SellableItemDto(
+                snapshotLine.StoreCode,
+                snapshotLine.ProductCode,
+                snapshotLine.ReferenceCode,
+                snapshotLine.DisplayName,
+                snapshotLine.LookupCode,
+                snapshotLine.ItemNumber,
+                snapshotLine.LookupCode,
+                snapshotLine.UnitPrice,
+                snapshotLine.PriceSource,
+                snapshotLine.PriceSourceLabel,
+                1m,
+                null,
+                snapshotLine.ProductImage);
+            var line = new CartLine(item);
+            line.SetQuantity(snapshotLine.Quantity);
+            line.SetUnitPrice(snapshotLine.UnitPrice);
+            if (snapshotLine.DiscountPercent is decimal discountPercent)
+            {
+                line.SetDiscountPercent(discountPercent);
+            }
+            else
+            {
+                line.SetDiscountAmount(snapshotLine.DiscountAmount);
+            }
+
+            _lines.Add(line);
+        }
+
+        OnCartChanged();
+    }
+
     private void OnCartChanged()
     {
         CartChanged?.Invoke(this, EventArgs.Empty);
@@ -263,3 +325,20 @@ public sealed class PosCartService
         }
     }
 }
+
+public sealed record PosCartSnapshot(IReadOnlyList<PosCartLineSnapshot> Lines);
+
+public sealed record PosCartLineSnapshot(
+    string StoreCode,
+    string ProductCode,
+    string? ReferenceCode,
+    string DisplayName,
+    string LookupCode,
+    string? ItemNumber,
+    string? ProductImage,
+    decimal Quantity,
+    decimal UnitPrice,
+    decimal DiscountAmount,
+    decimal? DiscountPercent,
+    PriceSourceKind PriceSource,
+    string PriceSourceLabel);

@@ -70,8 +70,8 @@ public sealed class ReceiptQueryServiceTests
             discountAmount,
             actualAmount,
             [
-                new LocalOrderLine(Guid.NewGuid(), "SKU-401", null, "Receipt Noodles", "930401", 1m, firstLineActual, 0m, firstLineActual, PriceSourceKind.StoreRetailPrice),
-                new LocalOrderLine(Guid.NewGuid(), "SKU-402", null, "Receipt Juice", "930402", 1m, 4.2m, discountAmount, secondLineActual, PriceSourceKind.ProductBase)
+                new LocalOrderLine(Guid.NewGuid(), "SKU-401", null, "Receipt Noodles", "930401", "ITEM-401", 1m, firstLineActual, 0m, firstLineActual, PriceSourceKind.StoreRetailPrice),
+                new LocalOrderLine(Guid.NewGuid(), "SKU-402", null, "Receipt Juice", "930402", "ITEM-402", 1m, 4.2m, discountAmount, secondLineActual, PriceSourceKind.ProductBase)
             ],
             [new LocalPayment(Guid.NewGuid(), PaymentMethodKind.Cash, actualAmount, null)]);
     }
@@ -104,6 +104,14 @@ public sealed class ReceiptQueryServiceTests
         public Task<IReadOnlyList<LocalOrderSummary>> GetRecentOrdersAsync(int take = 50, CancellationToken cancellationToken = default)
         {
             return Task.FromResult<IReadOnlyList<LocalOrderSummary>>(_summaries.Take(take).ToList());
+        }
+
+        public Task<IReadOnlyList<LocalOrderSummary>> GetRecentOrdersAsync(
+            LocalOrderHistoryQuery query,
+            int take = 50,
+            CancellationToken cancellationToken = default)
+        {
+            return GetRecentOrdersAsync(take, cancellationToken);
         }
 
         public Task<LocalOrder?> GetOrderAsync(Guid orderGuid, CancellationToken cancellationToken = default)

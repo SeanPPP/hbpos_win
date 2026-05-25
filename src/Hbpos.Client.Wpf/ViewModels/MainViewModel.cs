@@ -33,6 +33,8 @@ public sealed partial class MainViewModel : ObservableObject
     private readonly ICustomerDisplayOrchestrator _customerDisplayOrchestrator;
     private readonly IRawScannerService _rawScannerService;
     private readonly IReceiptQueryService _receiptQueryService;
+    private readonly ISuspendedOrderService? _suspendedOrderService;
+    private readonly IRemoteOrderHistoryService? _remoteOrderHistoryService;
     private readonly ICashPaymentWorkflowService _cashPaymentWorkflowService;
     private readonly IDeviceRegistrationWorkflowService _deviceRegistrationWorkflowService;
     private readonly ISpecialProductsWorkflowService _specialProductsWorkflowService;
@@ -196,7 +198,9 @@ public sealed partial class MainViewModel : ObservableObject
         ICashPaymentWorkflowService cashPaymentWorkflowService,
         IDeviceRegistrationWorkflowService deviceRegistrationWorkflowService,
         ISpecialProductsWorkflowService specialProductsWorkflowService,
-        PosTerminalWorkflowFactory posTerminalWorkflowFactory)
+        PosTerminalWorkflowFactory posTerminalWorkflowFactory,
+        ISuspendedOrderService? suspendedOrderService = null,
+        IRemoteOrderHistoryService? remoteOrderHistoryService = null)
     {
         _priceIndex = priceIndex;
         _cart = cart;
@@ -215,6 +219,8 @@ public sealed partial class MainViewModel : ObservableObject
         _customerDisplayOrchestrator = customerDisplayOrchestrator;
         _rawScannerService = rawScannerService;
         _receiptQueryService = receiptQueryService;
+        _suspendedOrderService = suspendedOrderService;
+        _remoteOrderHistoryService = remoteOrderHistoryService;
         _cashPaymentWorkflowService = cashPaymentWorkflowService;
         _deviceRegistrationWorkflowService = deviceRegistrationWorkflowService;
         _specialProductsWorkflowService = specialProductsWorkflowService;
@@ -329,14 +335,22 @@ public sealed partial class MainViewModel : ObservableObject
 
     public bool TryProcessKeyboardScannerInput(string barcode)
     {
-        if (CurrentScreen != PosTerminal || PosTerminal is null)
+        if (CurrentScreen == PosTerminal && PosTerminal is not null)
         {
-            ConsoleLog.Write("RawScanner", $"keyboard fallback scan ignored because POS is not active barcode={barcode}");
-            return false;
+            PosTerminal.ProcessScannerBarcode(barcode, "keyboard-focus-fallback", "keyboard-fallback");
+            return true;
         }
 
-        PosTerminal.ProcessScannerBarcode(barcode, "keyboard-focus-fallback", "keyboard-fallback");
-        return true;
+        if (CurrentScreen == SpecialProducts && SpecialProducts is not null)
+        {
+            SpecialProducts.ProcessScannerBarcode(barcode, "keyboard-focus-fallback", "keyboard-fallback");
+            return true;
+        }
+
+        ConsoleLog.Write(
+            "RawScanner",
+            $"keyboard fallback scan ignored because active screen cannot handle scanner screen={CurrentScreen?.GetType().Name ?? "<none>"} barcode={barcode}");
+        return false;
     }
 
     private async Task ActivateDeviceAsync(DeviceActivatedEventArgs args, AppStartupOptions startupOptions)
@@ -365,6 +379,7 @@ public sealed partial class MainViewModel : ObservableObject
     private async Task InitializePosExperienceAsync(AppStartupOptions startupOptions)
     {
         PosTerminal?.Dispose();
+        SpecialProducts?.Dispose();
         IReadOnlyList<SellableItemDto> cachedItems = [];
         if (startupOptions.PreviewMode)
         {
@@ -384,6 +399,8 @@ public sealed partial class MainViewModel : ObservableObject
             ShowCashPayment,
             ShowSpecialProductsAsync,
             _localization,
+            onHoldOrderAsync: SuspendCurrentOrderAsync,
+            onRecallOrderAsync: ShowSuspendedHistoryAsync,
             syncCatalogAsync: SyncCatalogAndReloadAsync,
             resetCatalogAsync: ResetCatalogAndReloadAsync,
             refreshOnlineAsync: RefreshOnlineStateAsync,
@@ -399,13 +416,14 @@ public sealed partial class MainViewModel : ObservableObject
             _localization,
             ShowPos,
             line => PosTerminal?.RevealCartLine(line),
-            _specialProductsWorkflowService);
+            _specialProductsWorkflowService,
+            _rawScannerService);
         if (cachedItems.Count > 0)
         {
             PosTerminal.LoadMatches(cachedItems);
         }
 
-        TransactionHistory = new TransactionHistoryViewModel(_receiptQueryService);
+        TransactionHistory = CreateTransactionHistoryViewModel();
         PaymentSuccess.NewTransactionRequested += (_, _) => ResetForNewTransaction();
 
         if (startupOptions.PreviewMode)
@@ -474,7 +492,12 @@ public sealed partial class MainViewModel : ObservableObject
 
     partial void OnCurrentScreenChanged(object? value)
     {
-        _rawScannerService.SetActivePage(value == PosTerminal ? PosTerminalViewModel.PageId : null);
+        var activePageId = value == PosTerminal
+            ? PosTerminalViewModel.PageId
+            : value == SpecialProducts
+                ? SpecialProductsViewModel.PageId
+                : null;
+        _rawScannerService.SetActivePage(activePageId);
     }
 
     partial void OnCustomerDisplayWindowModeChanged(CustomerDisplayWindowMode value)
@@ -589,6 +612,11 @@ public sealed partial class MainViewModel : ObservableObject
         if (SpecialProducts is not null)
         {
             SpecialProducts.Session = Session;
+        }
+
+        if (TransactionHistory is not null)
+        {
+            TransactionHistory.Session = Session;
         }
     }
 
@@ -802,6 +830,7 @@ public sealed partial class MainViewModel : ObservableObject
         _mainShellStartupService.ClearAuthorization();
         _posPostShowStartupTask = null;
         PosTerminal?.Dispose();
+        SpecialProducts?.Dispose();
         PosTerminal = null;
         SpecialProducts = null;
         CashPayment = null;
@@ -911,9 +940,56 @@ public sealed partial class MainViewModel : ObservableObject
 
     private async Task ShowHistoryAsync()
     {
-        TransactionHistory ??= new TransactionHistoryViewModel(_receiptQueryService);
+        TransactionHistory ??= CreateTransactionHistoryViewModel();
         await TransactionHistory.LoadAsync();
         CurrentScreen = TransactionHistory;
+    }
+
+    private async Task ShowSuspendedHistoryAsync()
+    {
+        TransactionHistory ??= CreateTransactionHistoryViewModel();
+        await TransactionHistory.ShowSuspendedOrdersAsync();
+        CurrentScreen = TransactionHistory;
+    }
+
+    private async Task SuspendCurrentOrderAsync()
+    {
+        if (_suspendedOrderService is null)
+        {
+            StatusMessage = "挂单服务不可用。";
+            return;
+        }
+
+        try
+        {
+            var suspended = await _suspendedOrderService.SuspendCurrentOrderAsync(Session);
+            PosTerminal?.RefreshCart();
+            CashPayment?.RefreshCart();
+            StatusMessage = $"已挂单 #{suspended.SuspendedOrderGuid.ToString("N")[..8].ToUpperInvariant()}";
+        }
+        catch (Exception ex)
+        {
+            StatusMessage = ex.Message;
+        }
+    }
+
+    private TransactionHistoryViewModel CreateTransactionHistoryViewModel()
+    {
+        return new TransactionHistoryViewModel(
+            _receiptQueryService,
+            _suspendedOrderService,
+            _remoteOrderHistoryService,
+            Session,
+            OnSuspendedOrderRecalledAsync);
+    }
+
+    private Task OnSuspendedOrderRecalledAsync()
+    {
+        PosTerminal?.RefreshCart();
+        CashPayment?.RefreshCart();
+        ShowPos();
+        StatusMessage = "挂单已取回。";
+        return Task.CompletedTask;
     }
 
     private void ShowCustomerDisplay()

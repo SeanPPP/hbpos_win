@@ -54,7 +54,9 @@ public sealed class OrderSyncPlanner : IOrderSyncPlanner
             UpdatedBy = request.CashierId,
             UpdatedTime = now,
             LastUploadTime = now,
-            Remark = $"priceSource={(int)line.PriceSource}"
+            Remark = string.IsNullOrWhiteSpace(line.ItemNumber)
+                ? $"priceSource={(int)line.PriceSource}"
+                : $"priceSource={(int)line.PriceSource};itemNo={line.ItemNumber.Trim()}"
         }).ToList();
 
         var payments = request.Payments.Select(payment => new PaymentDetail

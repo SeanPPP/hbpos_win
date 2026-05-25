@@ -1,5 +1,6 @@
 using System.ComponentModel;
 using System.Globalization;
+using System.Resources;
 using System.Windows.Data;
 using System.Windows.Markup;
 
@@ -8,6 +9,10 @@ namespace Hbpos.Client.Wpf.Localization;
 public sealed class LocalizationResourceProvider : INotifyPropertyChanged
 {
     public static LocalizationResourceProvider Instance { get; } = new();
+
+    private static readonly ResourceManager FallbackResourceManager = new(
+        "Hbpos.Client.Wpf.Resources.Strings",
+        typeof(LocalizationResourceProvider).Assembly);
 
     private ILocalizationService? _localization;
 
@@ -19,7 +24,8 @@ public sealed class LocalizationResourceProvider : INotifyPropertyChanged
 
     public CultureInfo CurrentCulture => _localization?.CurrentCulture ?? CultureInfo.GetCultureInfo(LocalizationService.DefaultCultureName);
 
-    public string this[string key] => _localization?.T(key) ?? $"[[{key}]]";
+    public string this[string key] =>
+        _localization?.T(key) ?? FallbackResourceManager.GetString(key, CurrentCulture) ?? $"[[{key}]]";
 
     public void Configure(ILocalizationService localization)
     {

@@ -97,7 +97,16 @@ public sealed class RawScannerServiceTests
             ConsoleLog.LineWritten += OnLineWritten;
         }
 
-        public IReadOnlyList<string> Lines => _lines;
+        public IReadOnlyList<string> Lines
+        {
+            get
+            {
+                lock (_lines)
+                {
+                    return _lines.ToArray();
+                }
+            }
+        }
 
         public void Dispose()
         {
@@ -106,7 +115,10 @@ public sealed class RawScannerServiceTests
 
         private void OnLineWritten(string line)
         {
-            _lines.Add(line);
+            lock (_lines)
+            {
+                _lines.Add(line);
+            }
         }
     }
 }

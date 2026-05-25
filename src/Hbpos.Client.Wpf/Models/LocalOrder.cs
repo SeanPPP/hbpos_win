@@ -22,11 +22,18 @@ public sealed record LocalOrderLine(
     string? ReferenceCode,
     string DisplayName,
     string LookupCode,
+    string? ItemNumber,
     decimal Quantity,
     decimal UnitPrice,
     decimal DiscountAmount,
     decimal ActualAmount,
     PriceSourceKind PriceSource);
+
+public sealed record LocalOrderHistoryQuery(
+    DateTimeOffset? SoldFrom = null,
+    DateTimeOffset? SoldTo = null,
+    string? DeviceCode = null,
+    string? Keyword = null);
 
 public sealed record LocalPayment(
     Guid PaymentGuid,

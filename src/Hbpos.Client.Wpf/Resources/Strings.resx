@@ -16,6 +16,8 @@
   <data name="Amount" xml:space="preserve"><value>Amount</value></data>
   <data name="AmountDue" xml:space="preserve"><value>Amount Due</value></data>
   <data name="AppName" xml:space="preserve"><value>Apex Retail Pro</value></data>
+  <data name="startup.title" xml:space="preserve"><value>HB POS</value></data>
+  <data name="startup.loading" xml:space="preserve"><value>Preparing point of sale...</value></data>
   <data name="Backspace" xml:space="preserve"><value>Back</value></data>
   <data name="Barcode" xml:space="preserve"><value>Barcode</value></data>
   <data name="Cancel" xml:space="preserve"><value>Cancel</value></data>
@@ -198,6 +200,9 @@
   <data name="customerDisplay.window.closed" xml:space="preserve"><value>Customer display closed.</value></data>
   <data name="customerDisplay.window.noSecondDisplay" xml:space="preserve"><value>No second display detected. Customer display was not opened.</value></data>
   <data name="shell.customerDisplayWindow" xml:space="preserve"><value>Customer display window</value></data>
+  <data name="shell.languageToggle" xml:space="preserve"><value>中 / EN</value></data>
+  <data name="shell.scannerBinding" xml:space="preserve"><value>Scanner</value></data>
+  <data name="shell.scannerBinding.resetTooltip" xml:space="preserve"><value>Reset scanner binding</value></data>
   <data name="shell.window.minimize" xml:space="preserve"><value>Minimize</value></data>
   <data name="shell.window.maximize" xml:space="preserve"><value>Maximize</value></data>
   <data name="shell.window.close" xml:space="preserve"><value>Close</value></data>
@@ -245,6 +250,7 @@
   <data name="specialProducts.remove" xml:space="preserve"><value>Remove</value></data>
   <data name="specialProducts.moveUp" xml:space="preserve"><value>Move Up</value></data>
   <data name="specialProducts.moveDown" xml:space="preserve"><value>Move Down</value></data>
+  <data name="specialProducts.edit.noSelection" xml:space="preserve"><value>Select an item to reorder</value></data>
   <data name="specialProducts.tapToAdd" xml:space="preserve"><value>Tap to add to cart</value></data>
   <data name="specialProducts.search.results" xml:space="preserve"><value>Search results</value></data>
   <data name="specialProducts.empty" xml:space="preserve"><value>No special products cached for this store.</value></data>
@@ -260,6 +266,9 @@
   <data name="specialProducts.status.markFailed" xml:space="preserve"><value>Special product update failed: {0}</value></data>
   <data name="specialProducts.status.orderSaved" xml:space="preserve"><value>Local special product order saved.</value></data>
   <data name="specialProducts.status.onlineRequired" xml:space="preserve"><value>Go online to add or remove special product marks.</value></data>
+  <data name="specialProducts.status.scanRequiresEdit" xml:space="preserve"><value>Open edit mode before scanning special products.</value></data>
+  <data name="specialProducts.status.scanConfirm" xml:space="preserve"><value>Found {0}. Confirm to mark it as special.</value></data>
+  <data name="specialProducts.status.selectedForEdit" xml:space="preserve"><value>Selected {0} for editing.</value></data>
   <data name="specialProducts.status.downloadCompleted" xml:space="preserve"><value>Downloaded {0} special item lookups and unmarked {1} local products.</value></data>
   <data name="specialProducts.status.downloadFailed" xml:space="preserve"><value>Special product download failed: {0}</value></data>
   <data name="specialProducts.download.downloading" xml:space="preserve"><value>Special product download {0}%</value></data>

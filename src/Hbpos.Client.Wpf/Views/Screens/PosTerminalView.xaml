@@ -756,47 +756,47 @@
 
                 <UniformGrid Grid.Row="0" Columns="2">
                     <Button Command="{Binding ModifySelectedLineQuantityCommand}"
-                            Style="{StaticResource PosStitchFunctionButtonStyle}">
+                            Style="{StaticResource PosStitchQuantityButtonStyle}">
                         <Grid HorizontalAlignment="Stretch" VerticalAlignment="Center">
                             <Grid.ColumnDefinitions>
                                 <ColumnDefinition Width="28" />
                                 <ColumnDefinition Width="*" />
                             </Grid.ColumnDefinitions>
-                            <materialDesign:PackIcon Kind="Pencil" Width="20" Height="20" Foreground="{StaticResource PosPrimaryBrush}" VerticalAlignment="Center" HorizontalAlignment="Center" />
-                            <TextBlock Grid.Column="1" Text="{loc:Loc pos.terminal.actions.modifyQty}" Style="{StaticResource PosStitchTileLabelStyle}" TextTrimming="None" />
+                            <materialDesign:PackIcon Kind="Pencil" Width="20" Height="20" Foreground="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}" VerticalAlignment="Center" HorizontalAlignment="Center" />
+                            <TextBlock Grid.Column="1" Text="{loc:Loc pos.terminal.actions.modifyQty}" Style="{StaticResource PosStitchTileLabelStyle}" Foreground="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}" TextTrimming="None" />
                         </Grid>
                     </Button>
                     <Button Command="{Binding ModifySelectedLinePriceCommand}"
-                            Style="{StaticResource PosStitchFunctionButtonStyle}">
+                            Style="{StaticResource PosStitchPriceButtonStyle}">
                         <Grid HorizontalAlignment="Stretch" VerticalAlignment="Center">
                             <Grid.ColumnDefinitions>
                                 <ColumnDefinition Width="28" />
                                 <ColumnDefinition Width="*" />
                             </Grid.ColumnDefinitions>
-                            <materialDesign:PackIcon Kind="CurrencyUsd" Width="20" Height="20" Foreground="{StaticResource PosPrimaryBrush}" VerticalAlignment="Center" HorizontalAlignment="Center" />
-                            <TextBlock Grid.Column="1" Text="{loc:Loc Price}" Style="{StaticResource PosStitchTileLabelStyle}" TextTrimming="None" />
+                            <materialDesign:PackIcon Kind="CurrencyUsd" Width="20" Height="20" Foreground="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}" VerticalAlignment="Center" HorizontalAlignment="Center" />
+                            <TextBlock Grid.Column="1" Text="{loc:Loc Price}" Style="{StaticResource PosStitchTileLabelStyle}" Foreground="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}" TextTrimming="None" />
                         </Grid>
                     </Button>
                     <Button Command="{Binding ApplySelectedLineDiscountAmountCommand}"
-                            Style="{StaticResource PosStitchDiscountButtonStyle}">
+                            Style="{StaticResource PosStitchDiscountAmountButtonStyle}">
                         <Grid HorizontalAlignment="Stretch" VerticalAlignment="Center">
                             <Grid.ColumnDefinitions>
                                 <ColumnDefinition Width="28" />
                                 <ColumnDefinition Width="*" />
                             </Grid.ColumnDefinitions>
-                            <materialDesign:PackIcon Kind="Cash" Width="20" Height="20" Foreground="#FF623400" VerticalAlignment="Center" HorizontalAlignment="Center" />
-                            <TextBlock Grid.Column="1" Text="{loc:Loc pos.terminal.actions.discountAmount}" Style="{StaticResource PosStitchTileLabelStyle}" Foreground="#FF623400" TextTrimming="None" />
+                            <materialDesign:PackIcon Kind="Cash" Width="20" Height="20" Foreground="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}" VerticalAlignment="Center" HorizontalAlignment="Center" />
+                            <TextBlock Grid.Column="1" Text="{loc:Loc pos.terminal.actions.discountAmount}" Style="{StaticResource PosStitchTileLabelStyle}" Foreground="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}" TextTrimming="None" />
                         </Grid>
                     </Button>
                     <Button Command="{Binding ApplySelectedLineDiscountPercentCommand}"
-                            Style="{StaticResource PosStitchDiscountButtonStyle}">
+                            Style="{StaticResource PosStitchDiscountPercentButtonStyle}">
                         <Grid HorizontalAlignment="Stretch" VerticalAlignment="Center">
                             <Grid.ColumnDefinitions>
                                 <ColumnDefinition Width="28" />
                                 <ColumnDefinition Width="*" />
                             </Grid.ColumnDefinitions>
-                            <materialDesign:PackIcon Kind="Percent" Width="20" Height="20" Foreground="#FF623400" VerticalAlignment="Center" HorizontalAlignment="Center" />
-                            <TextBlock Grid.Column="1" Text="{loc:Loc pos.terminal.actions.discountPercent}" Style="{StaticResource PosStitchTileLabelStyle}" Foreground="#FF623400" TextTrimming="None" />
+                            <materialDesign:PackIcon Kind="Percent" Width="20" Height="20" Foreground="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}" VerticalAlignment="Center" HorizontalAlignment="Center" />
+                            <TextBlock Grid.Column="1" Text="{loc:Loc pos.terminal.actions.discountPercent}" Style="{StaticResource PosStitchTileLabelStyle}" Foreground="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}" TextTrimming="None" />
                         </Grid>
                     </Button>
                 </UniformGrid>
@@ -859,7 +859,7 @@
                         <TextBlock Text="{Binding ReregisterDeviceText}" Style="{StaticResource PosStitchTileLabelStyle}" />
                     </StackPanel>
                 </Button>
-                <Button IsEnabled="False" Style="{StaticResource PosStitchActionButtonStyle}">
+                <Button Command="{Binding HoldOrderCommand}" Style="{StaticResource PosStitchActionButtonStyle}">
                     <StackPanel>
                         <Border Style="{StaticResource PosStitchWarmIconCircleStyle}">
                             <materialDesign:PackIcon Kind="PauseCircle" Width="18" Height="18" Foreground="#FF8F4E00" HorizontalAlignment="Center" VerticalAlignment="Center" />
@@ -883,12 +883,12 @@
                         <TextBlock Text="{loc:Loc OpenCashDrawer}" Style="{StaticResource PosStitchTileLabelStyle}" />
                     </StackPanel>
                 </Button>
-                <Button IsEnabled="False" Style="{StaticResource PosStitchActionButtonStyle}">
+                <Button Command="{Binding RecallOrderCommand}" Style="{StaticResource PosStitchActionButtonStyle}">
                     <StackPanel>
                         <Border Style="{StaticResource PosStitchActionIconCircleStyle}">
-                            <materialDesign:PackIcon Kind="Printer" Width="18" Height="18" Foreground="{StaticResource PosMutedForegroundBrush}" HorizontalAlignment="Center" VerticalAlignment="Center" />
+                            <materialDesign:PackIcon Kind="ClipboardTextClock" Width="18" Height="18" Foreground="{StaticResource PosPrimaryBrush}" HorizontalAlignment="Center" VerticalAlignment="Center" />
                         </Border>
-                        <TextBlock Text="{loc:Loc history.reprint}" Style="{StaticResource PosStitchTileLabelStyle}" />
+                        <TextBlock Text="{Binding RecallOrderText}" Style="{StaticResource PosStitchTileLabelStyle}" />
                     </StackPanel>
                 </Button>
             </UniformGrid>

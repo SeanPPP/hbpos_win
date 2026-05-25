@@ -39,7 +39,19 @@ public sealed class OrderSyncServiceTests
         Assert.Equal("priceSource=1", repository.LastPlan?.Lines.Single().Remark);
     }
 
-    private static OrderSyncRequest CreateRequest(Guid orderGuid)
+    [Fact]
+    public void Planner_WritesItemNumberAsItemNoMetadata()
+    {
+        var request = CreateRequest(Guid.NewGuid(), itemNumber: "ITEM-1001");
+
+        var plan = new OrderSyncPlanner().CreatePlan(request);
+
+        var line = Assert.Single(plan.Lines);
+        Assert.Equal("P01", line.ProductCode);
+        Assert.Contains("itemNo=ITEM-1001", line.Remark);
+    }
+
+    private static OrderSyncRequest CreateRequest(Guid orderGuid, string? itemNumber = null)
     {
         return new OrderSyncRequest(
             orderGuid,
@@ -62,7 +74,8 @@ public sealed class OrderSyncServiceTests
                     9.99m,
                     0m,
                     9.99m,
-                    PriceSourceKind.StoreRetailPrice)
+                    PriceSourceKind.StoreRetailPrice,
+                    itemNumber)
             ],
             [
                 new PaymentSyncDto(

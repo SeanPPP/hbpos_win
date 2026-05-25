@@ -34,6 +34,7 @@ public sealed class CashCheckoutService
                 line.ReferenceCode,
                 line.DisplayName,
                 line.LookupCode,
+                line.ItemNumber,
                 line.Quantity,
                 line.UnitPrice,
                 line.DiscountAmount,

@@ -1442,6 +1442,14 @@ public sealed class PosTerminalCashPaymentViewModelTests
             return Task.FromResult<IReadOnlyList<LocalOrderSummary>>([]);
         }
 
+        public Task<IReadOnlyList<LocalOrderSummary>> GetRecentOrdersAsync(
+            LocalOrderHistoryQuery query,
+            int take = 50,
+            CancellationToken cancellationToken = default)
+        {
+            return GetRecentOrdersAsync(take, cancellationToken);
+        }
+
         public Task<LocalOrder?> GetOrderAsync(Guid orderGuid, CancellationToken cancellationToken = default)
         {
             return Task.FromResult<LocalOrder?>(LastOrder?.OrderGuid == orderGuid ? LastOrder : null);
@@ -1498,7 +1506,7 @@ public sealed class PosTerminalCashPaymentViewModelTests
 
         public bool? LastProcessScanPreferExactLookup { get; private set; }
 
-        public PosTerminalWorkflowResult ProcessScan(PosSessionState session, string scanText, bool preferExactLookup, string source)
+        public PosTerminalWorkflowResult ProcessScan(PosSessionState session, string scanText, bool preferExactLookup, string source, string? traceId = null)
         {
             LastProcessScanText = scanText;
             LastProcessScanPreferExactLookup = preferExactLookup;

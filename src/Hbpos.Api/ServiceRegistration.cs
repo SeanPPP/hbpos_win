@@ -14,6 +14,8 @@ public static class ServiceRegistration
         services.AddScoped<ICatalogService, CatalogService>();
         services.AddScoped<IOrderRepository, SqlSugarOrderRepository>();
         services.AddScoped<IOrderSyncService, OrderSyncService>();
+        services.AddScoped<IOrderHistoryRepository, SqlSugarOrderHistoryRepository>();
+        services.AddScoped<IOrderHistoryService, OrderHistoryService>();
         services.AddSingleton<ICatalogIndexCache, CatalogIndexCache>();
         services.AddSingleton<IPriceIndexBuilder, PriceIndexBuilder>();
         services.AddSingleton<IOrderSyncPlanner, OrderSyncPlanner>();

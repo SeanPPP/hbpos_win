@@ -44,7 +44,7 @@ public interface IPosTerminalWorkflowService
 {
     event EventHandler<PosTerminalCatalogReloadedEventArgs>? CatalogReloaded;
 
-    PosTerminalWorkflowResult ProcessScan(PosSessionState session, string scanText, bool preferExactLookup, string source);
+    PosTerminalWorkflowResult ProcessScan(PosSessionState session, string scanText, bool preferExactLookup, string source, string? traceId = null);
 
     PosTerminalWorkflowResult AddSelectedItem(PosSessionState session, SellableItemDto item, bool clearScanText, bool closeMatchesPopup, string operation);
 
@@ -100,7 +100,7 @@ public sealed class PosTerminalWorkflowService : IPosTerminalWorkflowService
 
     public event EventHandler<PosTerminalCatalogReloadedEventArgs>? CatalogReloaded;
 
-    public PosTerminalWorkflowResult ProcessScan(PosSessionState session, string scanText, bool preferExactLookup, string source)
+    public PosTerminalWorkflowResult ProcessScan(PosSessionState session, string scanText, bool preferExactLookup, string source, string? traceId = null)
     {
         using var uiOperation = _uiPriorityCoordinator.BeginUiOperation("process-scan");
         var submittedScanText = scanText;
@@ -137,7 +137,7 @@ public sealed class PosTerminalWorkflowService : IPosTerminalWorkflowService
                 }
             }
 
-            result = ApplyScanMatches(session, matches, submittedScanText, allowAutoAdd);
+            result = ApplyScanMatches(session, matches, submittedScanText, allowAutoAdd, traceId);
             matchCount = matches.Count;
             autoAdded = result.ClearScanText;
         }
@@ -158,7 +158,7 @@ public sealed class PosTerminalWorkflowService : IPosTerminalWorkflowService
             searchStopwatch.Stop();
             searchElapsedMs = searchStopwatch.ElapsedMilliseconds;
 
-            result = ApplyScanMatches(session, matches, submittedScanText, allowAutoAdd: !hasDuplicateExactMatch);
+            result = ApplyScanMatches(session, matches, submittedScanText, allowAutoAdd: !hasDuplicateExactMatch, traceId);
             matchCount = matches.Count;
             autoAdded = result.ClearScanText;
         }
@@ -166,7 +166,7 @@ public sealed class PosTerminalWorkflowService : IPosTerminalWorkflowService
         totalStopwatch.Stop();
         ConsoleLog.Write(
             "PosScan",
-            $"barcode={submittedScanText} storeCode={session.StoreCode} source={source} hit={matchKind} matchCount={matchCount} autoAdded={FormatBool(autoAdded)} cartLines={_cart.Lines.Count} exactLookupElapsedMs={exactLookupElapsedMs} searchElapsedMs={searchElapsedMs} totalElapsedMs={totalStopwatch.ElapsedMilliseconds}");
+            $"{FormatTraceId(traceId)}barcode={submittedScanText} storeCode={session.StoreCode} source={source} hit={matchKind} matchCount={matchCount} autoAdded={FormatBool(autoAdded)} cartLines={_cart.Lines.Count} exactLookupElapsedMs={exactLookupElapsedMs} searchElapsedMs={searchElapsedMs} totalElapsedMs={totalStopwatch.ElapsedMilliseconds}");
 
         return result;
     }
@@ -356,7 +356,8 @@ public sealed class PosTerminalWorkflowService : IPosTerminalWorkflowService
         PosSessionState session,
         IReadOnlyList<SellableItemDto> matches,
         string submittedScanText,
-        bool allowAutoAdd)
+        bool allowAutoAdd,
+        string? traceId = null)
     {
         var selectedItem = matches.FirstOrDefault();
         if (selectedItem is null)
@@ -370,7 +371,7 @@ public sealed class PosTerminalWorkflowService : IPosTerminalWorkflowService
 
         if (allowAutoAdd && (matches.Count == 1 || IsExactLookup(selectedItem, submittedScanText)))
         {
-            var addResult = AddItem(session, selectedItem, clearScanText: true, closeMatchesPopup: false, "scan-auto-add");
+            var addResult = AddItem(session, selectedItem, clearScanText: true, closeMatchesPopup: false, "scan-auto-add", traceId);
             return addResult with
             {
                 Matches = matches,
@@ -392,24 +393,41 @@ public sealed class PosTerminalWorkflowService : IPosTerminalWorkflowService
         SellableItemDto item,
         bool clearScanText,
         bool closeMatchesPopup,
-        string operation)
+        string operation,
+        string? traceId = null)
     {
+        var totalStopwatch = Stopwatch.StartNew();
         if (!PosCartService.IsPositiveIntegerQuantity(item.QuantityFactor))
         {
+            totalStopwatch.Stop();
+            ConsoleLog.Write(
+                "PosScan",
+                $"{FormatTraceId(traceId)}cart add skipped operation={operation} storeCode={session.StoreCode} lookupCode={LogValue(item.LookupCode)} productCode={LogValue(item.ProductCode)} reason=quantity-must-be-integer totalElapsedMs={totalStopwatch.ElapsedMilliseconds}");
             return Status("cart.status.quantityMustBeInteger");
         }
 
         CartLine line;
+        var addStopwatch = Stopwatch.StartNew();
         try
         {
             line = _cart.AddItem(item);
         }
         catch (InvalidOperationException)
         {
+            addStopwatch.Stop();
+            totalStopwatch.Stop();
+            ConsoleLog.Write(
+                "PosScan",
+                $"{FormatTraceId(traceId)}cart add failed operation={operation} storeCode={session.StoreCode} lookupCode={LogValue(item.LookupCode)} productCode={LogValue(item.ProductCode)} reason=quantity-must-be-integer addItemElapsedMs={addStopwatch.ElapsedMilliseconds} totalElapsedMs={totalStopwatch.ElapsedMilliseconds}");
             return Status("cart.status.quantityMustBeInteger");
         }
+        addStopwatch.Stop();
 
         BeginRemoteLookup(session, line, item);
+        totalStopwatch.Stop();
+        ConsoleLog.Write(
+            "PosScan",
+            $"{FormatTraceId(traceId)}cart add completed operation={operation} storeCode={session.StoreCode} lookupCode={LogValue(item.LookupCode)} productCode={LogValue(item.ProductCode)} lineQuantity={FormatAmount(line.Quantity)} cartLines={_cart.Lines.Count} addItemElapsedMs={addStopwatch.ElapsedMilliseconds} totalElapsedMs={totalStopwatch.ElapsedMilliseconds}");
         return Status("pos.status.added", item.DisplayName) with
         {
             SelectedCartLine = line,
@@ -706,6 +724,21 @@ public sealed class PosTerminalWorkflowService : IPosTerminalWorkflowService
     private static string FormatBool(bool value)
     {
         return value ? "true" : "false";
+    }
+
+    private static string FormatTraceId(string? traceId)
+    {
+        return string.IsNullOrWhiteSpace(traceId) ? string.Empty : $"traceId={traceId} ";
+    }
+
+    private static string FormatAmount(decimal value)
+    {
+        return value.ToString("0.##", CultureInfo.InvariantCulture);
+    }
+
+    private static string LogValue(string? value)
+    {
+        return string.IsNullOrWhiteSpace(value) ? "<null>" : value.Trim();
     }
 
     private sealed record RemoteLookupCartSnapshot(

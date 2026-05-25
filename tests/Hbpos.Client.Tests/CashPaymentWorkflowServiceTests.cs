@@ -96,6 +96,14 @@ public sealed class CashPaymentWorkflowServiceTests
             return Task.FromResult<IReadOnlyList<LocalOrderSummary>>([]);
         }
 
+        public Task<IReadOnlyList<LocalOrderSummary>> GetRecentOrdersAsync(
+            LocalOrderHistoryQuery query,
+            int take = 50,
+            CancellationToken cancellationToken = default)
+        {
+            return GetRecentOrdersAsync(take, cancellationToken);
+        }
+
         public Task<LocalOrder?> GetOrderAsync(Guid orderGuid, CancellationToken cancellationToken = default)
         {
             return Task.FromResult<LocalOrder?>(SavedOrders.LastOrDefault(order => order.OrderGuid == orderGuid));

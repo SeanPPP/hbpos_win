@@ -45,6 +45,41 @@ public sealed class SpecialProductsViewModelTests
     }
 
     [Fact]
+    public async Task SpecialItemCardCommand_normal_mode_adds_tapped_special_product()
+    {
+        var cart = new PosCartService();
+        var backCallCount = 0;
+        var item = CreateItem("SKU-001", "Alpha", "930001", isSpecialProduct: true);
+        var repository = new FakeCatalogRepository { SpecialItems = [item] };
+        var viewModel = CreateViewModel(cart: cart, repository: repository, onBack: () => backCallCount++);
+        await viewModel.LoadAsync();
+
+        viewModel.SpecialItemCardCommand.Execute(item);
+
+        var line = Assert.Single(cart.Lines);
+        Assert.Equal("SKU-001", line.ProductCode);
+        Assert.Equal(1, backCallCount);
+    }
+
+    [Fact]
+    public async Task SpecialItemCardCommand_edit_mode_selects_without_adding_to_cart()
+    {
+        var cart = new PosCartService();
+        var backCallCount = 0;
+        var item = CreateItem("SKU-001", "Alpha", "930001", isSpecialProduct: true);
+        var repository = new FakeCatalogRepository { SpecialItems = [item] };
+        var viewModel = CreateViewModel(cart: cart, repository: repository, onBack: () => backCallCount++);
+        await viewModel.LoadAsync();
+        viewModel.ToggleEditModeCommand.Execute(null);
+
+        viewModel.SpecialItemCardCommand.Execute(item);
+
+        Assert.Same(item, viewModel.SelectedSpecialItem);
+        Assert.Empty(cart.Lines);
+        Assert.Equal(0, backCallCount);
+    }
+
+    [Fact]
     public async Task AddToCartCommand_writes_diagnostic_log()
     {
         var cart = new PosCartService();
@@ -218,6 +253,37 @@ public sealed class SpecialProductsViewModelTests
     }
 
     [Fact]
+    public async Task Selected_item_commands_reorder_and_remove_selected_special_product()
+    {
+        var first = CreateItem("SKU-001", "Alpha", "930001", isSpecialProduct: true);
+        var second = CreateItem("SKU-002", "Beta", "930002", isSpecialProduct: true);
+        var repository = new FakeCatalogRepository { SpecialItems = [first, second] };
+        var service = new FakeSpecialProductService
+        {
+            OnMark = (productCode, isSpecialProduct) =>
+            {
+                if (!isSpecialProduct)
+                {
+                    repository.SpecialItems = repository.SpecialItems
+                        .Where(item => item.ProductCode != productCode)
+                        .ToArray();
+                }
+            }
+        };
+        var viewModel = CreateViewModel(repository: repository, service: service);
+        await viewModel.LoadAsync();
+        viewModel.ToggleEditModeCommand.Execute(null);
+
+        viewModel.SpecialItemCardCommand.Execute(second);
+        await viewModel.MoveUpCommand.ExecuteAsync(viewModel.SelectedSpecialItem);
+        await viewModel.RemoveSpecialProductCommand.ExecuteAsync(viewModel.SelectedSpecialItem);
+
+        Assert.Equal(["SKU-002", "SKU-001"], Assert.Single(repository.SavedOrders));
+        Assert.Equal(("S001", "SKU-002", false), service.LastCall);
+        Assert.DoesNotContain(viewModel.SpecialItems, item => item.ProductCode == "SKU-002");
+    }
+
+    [Fact]
     public async Task LoadAsync_with_more_than_twenty_items_pages_the_special_product_list()
     {
         var repository = new FakeCatalogRepository { SpecialItems = CreateSpecialItems(21) };
@@ -256,6 +322,48 @@ public sealed class SpecialProductsViewModelTests
         viewModel.ToggleEditModeCommand.Execute(null);
 
         Assert.False(viewModel.IsEditMode);
+    }
+
+    [Fact]
+    public void ScannerBarcode_when_edit_mode_is_off_is_consumed_without_searching()
+    {
+        var item = CreateItem("SKU-001", "Alpha", "930001");
+        var workflow = new FakeSpecialProductsWorkflowService
+        {
+            SearchItems = [item]
+        };
+        var viewModel = CreateViewModel(workflow: workflow);
+
+        var processed = viewModel.ProcessScannerBarcode("930001", "scanner-device", "test");
+
+        Assert.True(processed);
+        Assert.Equal(0, workflow.SearchCallCount);
+        Assert.Equal(0, workflow.MarkCallCount);
+        Assert.Empty(viewModel.SearchResults);
+        Assert.Contains("edit", viewModel.StatusMessage, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void ScannerBarcode_when_edit_mode_is_on_searches_and_selects_candidate_without_marking()
+    {
+        var item = CreateItem("SKU-001", "Alpha", "930001");
+        var workflow = new FakeSpecialProductsWorkflowService
+        {
+            SearchItems = [item]
+        };
+        var viewModel = CreateViewModel(workflow: workflow);
+        viewModel.ToggleEditModeCommand.Execute(null);
+
+        var processed = viewModel.ProcessScannerBarcode("930001", "scanner-device", "test");
+
+        Assert.True(processed);
+        Assert.Equal("930001", viewModel.SearchText);
+        Assert.Equal(1, workflow.SearchCallCount);
+        Assert.Equal("930001", workflow.LastSearchText);
+        Assert.Equal("SKU-001", Assert.Single(viewModel.SearchResults).ProductCode);
+        Assert.Same(item, viewModel.SelectedSearchResult);
+        Assert.Equal(0, workflow.MarkCallCount);
+        Assert.Contains("Alpha", viewModel.StatusMessage, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -664,6 +772,10 @@ public sealed class SpecialProductsViewModelTests
 
         public int MarkCallCount { get; private set; }
 
+        public int SearchCallCount { get; private set; }
+
+        public string? LastSearchText { get; private set; }
+
         public (string StoreCode, string ProductCode, bool IsSpecialProduct)? LastMarkCall { get; private set; }
 
         public SpecialProductsLoadResult PreloadResult { get; init; } = new("S001", []);
@@ -671,6 +783,8 @@ public sealed class SpecialProductsViewModelTests
         public SpecialProductsLoadResult EnsureLoadedResult { get; init; } = new("S001", []);
 
         public SpecialProductsLoadResult LoadResult { get; init; } = new("S001", []);
+
+        public IReadOnlyList<SellableItemDto> SearchItems { get; init; } = [];
 
         public SpecialProductsDownloadWorkflowResult DownloadResult { get; init; } =
             new(new SpecialProductDownloadResult("S001", 0, 0, 0, 0, 0), []);
@@ -710,7 +824,9 @@ public sealed class SpecialProductsViewModelTests
 
         public SpecialProductsSearchResult Search(string storeCode, string searchText)
         {
-            return new SpecialProductsSearchResult(storeCode, searchText, []);
+            SearchCallCount++;
+            LastSearchText = searchText;
+            return new SpecialProductsSearchResult(storeCode, searchText, SearchItems);
         }
 
         public Task<SpecialProductsDownloadWorkflowResult> DownloadAsync(

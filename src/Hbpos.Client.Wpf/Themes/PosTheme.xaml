@@ -392,9 +392,28 @@
         <Setter Property="VerticalContentAlignment" Value="Center" />
     </Style>
 
-    <Style x:Key="PosStitchDiscountButtonStyle" TargetType="Button" BasedOn="{StaticResource PosStitchFunctionButtonStyle}">
-        <Setter Property="Background" Value="#FFFFE9D2" />
-        <Setter Property="BorderBrush" Value="#FFFFE9D2" />
+    <Style x:Key="PosStitchQuantityButtonStyle" TargetType="Button" BasedOn="{StaticResource PosStitchFunctionButtonStyle}">
+        <Setter Property="Background" Value="#FFE0F2FE" />
+        <Setter Property="BorderBrush" Value="#FF7DD3FC" />
+        <Setter Property="Foreground" Value="#FF0C4A6E" />
+    </Style>
+
+    <Style x:Key="PosStitchPriceButtonStyle" TargetType="Button" BasedOn="{StaticResource PosStitchFunctionButtonStyle}">
+        <Setter Property="Background" Value="#FFDCFDF7" />
+        <Setter Property="BorderBrush" Value="#FF67E8F9" />
+        <Setter Property="Foreground" Value="#FF0F766E" />
+    </Style>
+
+    <Style x:Key="PosStitchDiscountAmountButtonStyle" TargetType="Button" BasedOn="{StaticResource PosStitchFunctionButtonStyle}">
+        <Setter Property="Background" Value="#FFFEF3C7" />
+        <Setter Property="BorderBrush" Value="#FFFCD34D" />
+        <Setter Property="Foreground" Value="#FF92400E" />
+    </Style>
+
+    <Style x:Key="PosStitchDiscountPercentButtonStyle" TargetType="Button" BasedOn="{StaticResource PosStitchFunctionButtonStyle}">
+        <Setter Property="Background" Value="#FFF3E8FF" />
+        <Setter Property="BorderBrush" Value="#FFD8B4FE" />
+        <Setter Property="Foreground" Value="#FF7E22CE" />
     </Style>
 
     <Style x:Key="PosStitchCheckoutButtonStyle" TargetType="Button" BasedOn="{StaticResource PosPrimaryButtonStyle}">

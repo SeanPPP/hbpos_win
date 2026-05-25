@@ -32,7 +32,8 @@ public sealed record OrderLineSyncDto(
     decimal UnitPrice,
     decimal DiscountAmount,
     decimal ActualAmount,
-    PriceSourceKind PriceSource);
+    PriceSourceKind PriceSource,
+    string? ItemNumber = null);
 
 public sealed record PaymentSyncDto(
     Guid PaymentGuid,
@@ -45,3 +46,57 @@ public sealed record OrderSyncResponse(
     bool Accepted,
     bool AlreadySynced,
     string? Message = null);
+
+public sealed record OrderHistoryQueryRequest(
+    string StoreCode,
+    string? DeviceCode = null,
+    DateTimeOffset? SoldFrom = null,
+    DateTimeOffset? SoldTo = null,
+    string? Keyword = null,
+    int Take = 100);
+
+public sealed record OrderHistoryQueryResponse(
+    IReadOnlyList<OrderHistorySummaryDto> Orders);
+
+public sealed record OrderHistorySummaryDto(
+    Guid OrderGuid,
+    string StoreCode,
+    string DeviceCode,
+    string CashierName,
+    DateTimeOffset SoldAt,
+    decimal TotalAmount,
+    decimal DiscountAmount,
+    decimal ActualAmount,
+    int LineCount,
+    string PaymentSummary,
+    string StatusLabel);
+
+public sealed record OrderHistoryDetailsDto(
+    Guid OrderGuid,
+    string StoreCode,
+    string DeviceCode,
+    string CashierName,
+    DateTimeOffset SoldAt,
+    decimal TotalAmount,
+    decimal DiscountAmount,
+    decimal ActualAmount,
+    IReadOnlyList<OrderHistoryLineDto> Lines,
+    IReadOnlyList<OrderHistoryPaymentDto> Payments);
+
+public sealed record OrderHistoryLineDto(
+    Guid OrderLineGuid,
+    string ProductCode,
+    string? ReferenceCode,
+    string DisplayName,
+    string LookupCode,
+    string? ItemNumber,
+    decimal Quantity,
+    decimal UnitPrice,
+    decimal DiscountAmount,
+    decimal ActualAmount);
+
+public sealed record OrderHistoryPaymentDto(
+    Guid PaymentGuid,
+    PaymentMethodKind Method,
+    decimal Amount,
+    string? Reference);

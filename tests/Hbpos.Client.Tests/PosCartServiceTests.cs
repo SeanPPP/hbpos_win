@@ -316,6 +316,59 @@ public sealed class PosCartServiceTests
         Assert.Equal(10m, cart.ActualAmount);
     }
 
+    [Fact]
+    public void Snapshot_and_restore_preserve_percent_discount_behavior_and_line_metadata()
+    {
+        var cart = new PosCartService();
+        var line = cart.AddItem(CreateItem(
+            productCode: "SKU-RESTORE-01",
+            lookupCode: " look-01 ",
+            itemNumber: "ITEM-01",
+            price: 12m,
+            priceSource: PriceSourceKind.StoreClearancePrice,
+            productImage: "https://images.example/item-01.jpg"));
+        Assert.True(cart.SetLineQuantity(line, 3m));
+        Assert.True(cart.SetLineDiscountPercent(line, 10.5m));
+
+        var snapshot = cart.CreateSnapshot();
+        cart.Clear();
+
+        cart.RestoreSnapshot(snapshot);
+
+        line = Assert.Single(cart.Lines);
+        Assert.Equal(3m, line.Quantity);
+        Assert.Equal(12m, line.UnitPrice);
+        Assert.Equal(3.78m, line.DiscountAmount);
+        Assert.Equal("ITEM-01", line.ItemNumber);
+        Assert.Equal(" look-01 ", line.LookupCode);
+        Assert.Equal("LOOK-01", line.LookupCodeNormalized);
+        Assert.Equal("https://images.example/item-01.jpg", line.ProductImage);
+        Assert.Equal(PriceSourceKind.StoreClearancePrice, line.PriceSource);
+
+        Assert.True(cart.SetLineQuantity(line, 4m));
+        Assert.Equal(5.04m, line.DiscountAmount);
+    }
+
+    [Fact]
+    public void Snapshot_and_restore_preserve_fixed_discount_amount_behavior()
+    {
+        var cart = new PosCartService();
+        var line = cart.AddItem(CreateItem(productCode: "SKU-RESTORE-02", lookupCode: "look-02", price: 10m));
+        Assert.True(cart.SetLineQuantity(line, 2m));
+        Assert.True(cart.SetLineDiscountAmount(line, 4m));
+
+        var snapshot = cart.CreateSnapshot();
+        cart.Clear();
+
+        cart.RestoreSnapshot(snapshot);
+
+        line = Assert.Single(cart.Lines);
+        Assert.Equal(4m, line.DiscountAmount);
+
+        Assert.True(cart.SetLineQuantity(line, 3m));
+        Assert.Equal(4m, line.DiscountAmount);
+    }
+
     private static SellableItemDto CreateItem(
         string storeCode = "S001",
         string productCode = "SKU-001",

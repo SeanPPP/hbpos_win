@@ -21,6 +21,8 @@ public sealed class LocalSchemaService(LocalSqliteStore store) : ILocalSchemaSer
 
         await EnsureLocalSellableItemIndexColumnsAsync(connection, cancellationToken);
         await EnsureDeviceCacheColumnsAsync(connection, cancellationToken);
+        await EnsureLocalOrderLineColumnsAsync(connection, cancellationToken);
+        await EnsureSuspendedOrderLineColumnsAsync(connection, cancellationToken);
 
         foreach (var sql in IndexStatements)
         {
@@ -133,6 +135,28 @@ public sealed class LocalSchemaService(LocalSqliteStore store) : ILocalSchemaSer
             cancellationToken);
     }
 
+    private static async Task EnsureLocalOrderLineColumnsAsync(
+        SqliteConnection connection,
+        CancellationToken cancellationToken)
+    {
+        var columns = await ReadColumnNamesAsync(connection, "LocalOrderLines", cancellationToken);
+        if (!columns.Contains("ItemNumber"))
+        {
+            await ExecuteAsync(connection, "ALTER TABLE LocalOrderLines ADD COLUMN ItemNumber TEXT NULL;", cancellationToken);
+        }
+    }
+
+    private static async Task EnsureSuspendedOrderLineColumnsAsync(
+        SqliteConnection connection,
+        CancellationToken cancellationToken)
+    {
+        var columns = await ReadColumnNamesAsync(connection, "SuspendedOrderLines", cancellationToken);
+        if (!columns.Contains("DiscountPercent"))
+        {
+            await ExecuteAsync(connection, "ALTER TABLE SuspendedOrderLines ADD COLUMN DiscountPercent TEXT NULL;", cancellationToken);
+        }
+    }
+
     private static async Task<HashSet<string>> ReadColumnNamesAsync(
         SqliteConnection connection,
         string tableName,
@@ -230,6 +254,7 @@ public sealed class LocalSchemaService(LocalSqliteStore store) : ILocalSchemaSer
             ReferenceCode TEXT NULL,
             DisplayName TEXT NOT NULL,
             LookupCode TEXT NOT NULL,
+            ItemNumber TEXT NULL,
             Quantity TEXT NOT NULL,
             UnitPrice TEXT NOT NULL,
             DiscountAmount TEXT NOT NULL,
@@ -284,6 +309,40 @@ public sealed class LocalSchemaService(LocalSqliteStore store) : ILocalSchemaSer
             UpdatedAt TEXT NOT NULL,
             PRIMARY KEY (StoreCode, ProductCode)
         );
+        """,
+        """
+        CREATE TABLE IF NOT EXISTS SuspendedOrders (
+            SuspendedOrderGuid TEXT PRIMARY KEY,
+            StoreCode TEXT NOT NULL,
+            DeviceCode TEXT NOT NULL,
+            CashierId TEXT NOT NULL,
+            CashierName TEXT NOT NULL,
+            SuspendedAt TEXT NOT NULL,
+            TotalAmount TEXT NOT NULL,
+            DiscountAmount TEXT NOT NULL,
+            ActualAmount TEXT NOT NULL,
+            Status INTEGER NOT NULL
+        );
+        """,
+        """
+        CREATE TABLE IF NOT EXISTS SuspendedOrderLines (
+            SuspendedOrderLineGuid TEXT PRIMARY KEY,
+            SuspendedOrderGuid TEXT NOT NULL,
+            StoreCode TEXT NOT NULL,
+            ProductCode TEXT NOT NULL,
+            ReferenceCode TEXT NULL,
+            DisplayName TEXT NOT NULL,
+            LookupCode TEXT NOT NULL,
+            ItemNumber TEXT NULL,
+            ProductImage TEXT NULL,
+            Quantity TEXT NOT NULL,
+            UnitPrice TEXT NOT NULL,
+            DiscountAmount TEXT NOT NULL,
+            DiscountPercent TEXT NULL,
+            ActualAmount TEXT NOT NULL,
+            PriceSource INTEGER NOT NULL,
+            PriceSourceLabel TEXT NOT NULL
+        );
         """
     ];
 
@@ -300,6 +359,18 @@ public sealed class LocalSchemaService(LocalSqliteStore store) : ILocalSchemaSer
         """
         CREATE INDEX IF NOT EXISTS IX_LocalSellableItemIndex_Store_Special_Product
         ON LocalSellableItemIndex (StoreCode, IsSpecialProduct, ProductCode);
+        """,
+        """
+        CREATE INDEX IF NOT EXISTS IX_LocalOrderLines_OrderGuid_ItemNumber_LookupCode
+        ON LocalOrderLines (OrderGuid, ItemNumber, LookupCode);
+        """,
+        """
+        CREATE INDEX IF NOT EXISTS IX_SuspendedOrders_Store_Status_SuspendedAt
+        ON SuspendedOrders (StoreCode, Status, SuspendedAt);
+        """,
+        """
+        CREATE INDEX IF NOT EXISTS IX_SuspendedOrderLines_Order_ItemNumber_LookupCode
+        ON SuspendedOrderLines (SuspendedOrderGuid, ItemNumber, LookupCode);
         """
     ];
 }

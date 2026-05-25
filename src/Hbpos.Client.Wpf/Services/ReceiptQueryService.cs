@@ -6,6 +6,11 @@ public interface IReceiptQueryService
 {
     Task<IReadOnlyList<LocalOrderSummary>> GetRecentOrdersAsync(int take = 50, CancellationToken cancellationToken = default);
 
+    Task<IReadOnlyList<LocalOrderSummary>> GetRecentOrdersAsync(
+        LocalOrderHistoryQuery query,
+        int take = 50,
+        CancellationToken cancellationToken = default);
+
     Task<ReceiptDetails?> GetReceiptAsync(Guid orderGuid, CancellationToken cancellationToken = default);
 
     Task<ReceiptDetails?> GetLatestReceiptAsync(CancellationToken cancellationToken = default);
@@ -16,6 +21,14 @@ public sealed class ReceiptQueryService(ILocalOrderRepository orderRepository) :
     public Task<IReadOnlyList<LocalOrderSummary>> GetRecentOrdersAsync(int take = 50, CancellationToken cancellationToken = default)
     {
         return orderRepository.GetRecentOrdersAsync(take, cancellationToken);
+    }
+
+    public Task<IReadOnlyList<LocalOrderSummary>> GetRecentOrdersAsync(
+        LocalOrderHistoryQuery query,
+        int take = 50,
+        CancellationToken cancellationToken = default)
+    {
+        return orderRepository.GetRecentOrdersAsync(query, take, cancellationToken);
     }
 
     public async Task<ReceiptDetails?> GetReceiptAsync(Guid orderGuid, CancellationToken cancellationToken = default)

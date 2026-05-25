@@ -32,6 +32,21 @@ public sealed class LocalizationAndSettingsTests
     }
 
     [Fact]
+    public void Localization_has_startup_and_shell_control_text()
+    {
+        var localization = new LocalizationService();
+
+        Assert.Equal("Preparing point of sale...", localization.T("startup.loading"));
+        Assert.Equal("Scanner", localization.T("shell.scannerBinding"));
+
+        localization.SetCulture("zh-CN");
+
+        Assert.Equal("\u6b63\u5728\u51c6\u5907\u6536\u94f6\u7cfb\u7edf...", localization.T("startup.loading"));
+        Assert.Equal("\u626b\u7801\u67aa", localization.T("shell.scannerBinding"));
+        Assert.Equal("\u91cd\u65b0\u5b66\u4e60\u626b\u7801\u67aa", localization.T("shell.scannerBinding.resetTooltip"));
+    }
+
+    [Fact]
     public void Localization_returns_placeholder_for_missing_key()
     {
         var localization = new LocalizationService();

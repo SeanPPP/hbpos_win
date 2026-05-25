@@ -9,14 +9,17 @@ using Hbpos.Contracts.Catalog;
 
 namespace Hbpos.Client.Wpf.ViewModels;
 
-public sealed partial class SpecialProductsViewModel : ObservableObject
+public sealed partial class SpecialProductsViewModel : ObservableObject, IDisposable
 {
+    public const string PageId = "SpecialProducts";
+
     private const int PageSize = 20;
 
     private readonly ISpecialProductsWorkflowService _workflowService;
     private readonly ILocalizationService _localization;
     private readonly Action _onBack;
     private readonly Action<CartLine>? _onCartLineAdded;
+    private readonly IRawScannerService? _rawScannerService;
     private readonly object _specialItemsGate = new();
 
     [ObservableProperty]
@@ -52,6 +55,12 @@ public sealed partial class SpecialProductsViewModel : ObservableObject
     [ObservableProperty]
     private int _currentPage = 1;
 
+    [ObservableProperty]
+    private SellableItemDto? _selectedSpecialItem;
+
+    [ObservableProperty]
+    private SellableItemDto? _selectedSearchResult;
+
     public SpecialProductsViewModel(
         LocalSellableItemIndex priceIndex,
         PosCartService cart,
@@ -61,7 +70,8 @@ public sealed partial class SpecialProductsViewModel : ObservableObject
         ILocalizationService localization,
         Action onBack,
         Action<CartLine>? onCartLineAdded = null,
-        ISpecialProductsWorkflowService? workflowService = null)
+        ISpecialProductsWorkflowService? workflowService = null,
+        IRawScannerService? rawScannerService = null)
     {
         _workflowService = workflowService ?? new SpecialProductsWorkflowService(
             priceIndex,
@@ -72,6 +82,7 @@ public sealed partial class SpecialProductsViewModel : ObservableObject
         _localization = localization;
         _onBack = onBack;
         _onCartLineAdded = onCartLineAdded;
+        _rawScannerService = rawScannerService;
 
         BackCommand = new RelayCommand(_onBack);
         SearchCommand = new RelayCommand(SearchCatalog);
@@ -82,12 +93,14 @@ public sealed partial class SpecialProductsViewModel : ObservableObject
         PreviousPageCommand = new RelayCommand(ShowPreviousPage, CanShowPreviousPage);
         NextPageCommand = new RelayCommand(ShowNextPage, CanShowNextPage);
         AddToCartCommand = new RelayCommand<SellableItemDto>(AddToCart);
+        SpecialItemCardCommand = new RelayCommand<SellableItemDto>(HandleSpecialItemCard);
         AddSpecialProductCommand = new AsyncRelayCommand<SellableItemDto>(AddSpecialProductAsync, CanMutateItem);
         RemoveSpecialProductCommand = new AsyncRelayCommand<SellableItemDto>(RemoveSpecialProductAsync, CanMutateItem);
         MoveUpCommand = new AsyncRelayCommand<SellableItemDto>(item => MoveSpecialProductAsync(item, -1), CanMoveUp);
         MoveDownCommand = new AsyncRelayCommand<SellableItemDto>(item => MoveSpecialProductAsync(item, 1), CanMoveDown);
 
         _localization.CultureChanged += (_, _) => RaiseLocalizedProperties();
+        _rawScannerService?.Subscribe(PageId, OnRawBarcodeScanned);
         StatusMessage = T("specialProducts.status.ready");
     }
 
@@ -114,6 +127,8 @@ public sealed partial class SpecialProductsViewModel : ObservableObject
     public IRelayCommand NextPageCommand { get; }
 
     public IRelayCommand<SellableItemDto> AddToCartCommand { get; }
+
+    public IRelayCommand<SellableItemDto> SpecialItemCardCommand { get; }
 
     public IAsyncRelayCommand<SellableItemDto> AddSpecialProductCommand { get; }
 
@@ -170,6 +185,8 @@ public sealed partial class SpecialProductsViewModel : ObservableObject
     public bool HasSearchResults => SearchResults.Count > 0;
 
     public bool IsSpecialListEmpty => SpecialItems.Count == 0;
+
+    public string SelectedSpecialItemText => SelectedSpecialItem?.DisplayName ?? T("specialProducts.edit.noSelection");
 
     public int TotalPages => Math.Max(1, (SpecialItems.Count + PageSize - 1) / PageSize);
 
@@ -267,6 +284,7 @@ public sealed partial class SpecialProductsViewModel : ObservableObject
         if (string.IsNullOrWhiteSpace(value))
         {
             SearchResults.Clear();
+            SelectedSearchResult = null;
             OnPropertyChanged(nameof(HasSearchResults));
         }
     }
@@ -282,9 +300,47 @@ public sealed partial class SpecialProductsViewModel : ObservableObject
         if (!value)
         {
             ClearSearch();
+            SelectedSpecialItem = null;
         }
 
         RefreshCommandStates();
+    }
+
+    partial void OnSelectedSpecialItemChanged(SellableItemDto? value)
+    {
+        OnPropertyChanged(nameof(SelectedSpecialItemText));
+        RefreshCommandStates();
+    }
+
+    public bool ProcessScannerBarcode(string barcode, string devicePath, string source)
+    {
+        var normalizedBarcode = barcode.Trim();
+        if (string.IsNullOrWhiteSpace(normalizedBarcode))
+        {
+            Log($"operation=scanner store={Session.StoreCode} source={source} device={devicePath} success=false reason=empty-barcode");
+            return true;
+        }
+
+        if (!IsEditMode)
+        {
+            SetStatus("specialProducts.status.scanRequiresEdit");
+            Log($"operation=scanner store={Session.StoreCode} source={source} device={devicePath} barcode={normalizedBarcode} consumed=true searched=false reason=edit-mode-off");
+            return true;
+        }
+
+        var stopwatch = Stopwatch.StartNew();
+        SearchText = normalizedBarcode;
+        SearchCatalog();
+        stopwatch.Stop();
+
+        var selected = SelectedSearchResult;
+        if (selected is not null)
+        {
+            SetStatus("specialProducts.status.scanConfirm", selected.DisplayName);
+        }
+
+        Log($"operation=scanner store={Session.StoreCode} source={source} device={devicePath} barcode={normalizedBarcode} consumed=true searched=true results={SearchResults.Count} selectedProductCode={selected?.ProductCode ?? "<none>"} elapsedMs={stopwatch.ElapsedMilliseconds}");
+        return true;
     }
 
     private void SearchCatalog()
@@ -292,12 +348,14 @@ public sealed partial class SpecialProductsViewModel : ObservableObject
         if (string.IsNullOrWhiteSpace(SearchText))
         {
             SearchResults.Clear();
+            SelectedSearchResult = null;
             OnPropertyChanged(nameof(HasSearchResults));
             return;
         }
 
         var results = _workflowService.Search(Session.StoreCode, SearchText);
         SearchResults.ReplaceWith(results.Items);
+        SelectedSearchResult = SearchResults.FirstOrDefault();
         OnPropertyChanged(nameof(HasSearchResults));
         SetStatus(results.Items.Count == 0
             ? "specialProducts.status.noSearchResults"
@@ -309,7 +367,25 @@ public sealed partial class SpecialProductsViewModel : ObservableObject
     {
         SearchText = string.Empty;
         SearchResults.Clear();
+        SelectedSearchResult = null;
         OnPropertyChanged(nameof(HasSearchResults));
+    }
+
+    private void HandleSpecialItemCard(SellableItemDto? item)
+    {
+        if (item is null)
+        {
+            return;
+        }
+
+        if (IsEditMode)
+        {
+            SelectedSpecialItem = item;
+            SetStatus("specialProducts.status.selectedForEdit", item.DisplayName);
+            return;
+        }
+
+        AddToCart(item);
     }
 
     private void AddToCart(SellableItemDto? item)
@@ -641,8 +717,15 @@ public sealed partial class SpecialProductsViewModel : ObservableObject
     {
         lock (_specialItemsGate)
         {
+            var selectedProductCode = SelectedSpecialItem?.ProductCode;
             SpecialItems.ReplaceWith(specialItems);
             RefreshPagedSpecialItems(focusProductCode, resetToFirstPage);
+            SelectedSpecialItem = string.IsNullOrWhiteSpace(selectedProductCode)
+                ? null
+                : SpecialItems.FirstOrDefault(item => string.Equals(
+                    NormalizeProductCode(item.ProductCode),
+                    NormalizeProductCode(selectedProductCode),
+                    StringComparison.OrdinalIgnoreCase));
             RefreshCommandStates();
         }
     }
@@ -670,6 +753,7 @@ public sealed partial class SpecialProductsViewModel : ObservableObject
         OnPropertyChanged(nameof(EmptyText));
         OnPropertyChanged(nameof(NoSearchResultsText));
         OnPropertyChanged(nameof(OnlineStateText));
+        OnPropertyChanged(nameof(SelectedSpecialItemText));
     }
 
     private string T(string key)
@@ -680,6 +764,16 @@ public sealed partial class SpecialProductsViewModel : ObservableObject
     private static void Log(string message)
     {
         ConsoleLog.Write("SpecialProducts", message);
+    }
+
+    private void OnRawBarcodeScanned(RawBarcodeScannedEventArgs args)
+    {
+        ProcessScannerBarcode(args.Barcode, args.DevicePath, "raw");
+    }
+
+    public void Dispose()
+    {
+        _rawScannerService?.Unsubscribe(PageId);
     }
 
     private void ApplyDownloadProgress(SpecialProductDownloadProgress progress)

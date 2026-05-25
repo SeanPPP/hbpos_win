@@ -85,7 +85,7 @@ public sealed class PosCoreTests
     {
         var cart = new PosCartService();
         var checkout = new CashCheckoutService();
-        var item = CreateItem("SKU-001", "Milk 1L", "690001", PriceSourceKind.StoreClearancePrice, 9.9m);
+        var item = CreateItem("SKU-001", "Milk 1L", "690001", PriceSourceKind.StoreClearancePrice, 9.9m, itemNumber: "ITEM-001");
 
         cart.AddItem(item);
         var result = checkout.CreateCashOrder(
@@ -95,7 +95,9 @@ public sealed class PosCoreTests
 
         Assert.Equal(9.9m, result.Order.ActualAmount);
         Assert.Equal(0.1m, result.ChangeAmount);
-        Assert.Equal("Milk 1L", Assert.Single(result.Order.Lines).DisplayName);
+        var line = Assert.Single(result.Order.Lines);
+        Assert.Equal("Milk 1L", line.DisplayName);
+        Assert.Equal("ITEM-001", line.ItemNumber);
         Assert.Equal(PriceSourceKind.StoreClearancePrice, result.Order.Lines[0].PriceSource);
         Assert.Equal(9.9m, Assert.Single(result.Order.Payments).Amount);
     }
@@ -192,6 +194,7 @@ public sealed class PosCoreTests
         }
         finally
         {
+            Microsoft.Data.Sqlite.SqliteConnection.ClearAllPools();
             if (File.Exists(databasePath))
             {
                 File.Delete(databasePath);
@@ -223,10 +226,12 @@ public sealed class PosCoreTests
             Assert.Equal("Cash", summary.PaymentSummary);
             Assert.NotNull(savedOrder);
             Assert.Equal(2, savedOrder.Lines.Count);
+            Assert.Equal("ITEM-101", savedOrder.Lines[0].ItemNumber);
             Assert.Equal(order.ActualAmount, Assert.Single(savedOrder.Payments).Amount);
         }
         finally
         {
+            Microsoft.Data.Sqlite.SqliteConnection.ClearAllPools();
             if (File.Exists(databasePath))
             {
                 File.Delete(databasePath);
@@ -259,6 +264,122 @@ public sealed class PosCoreTests
         }
         finally
         {
+            Microsoft.Data.Sqlite.SqliteConnection.ClearAllPools();
+            if (File.Exists(databasePath))
+            {
+                File.Delete(databasePath);
+            }
+        }
+    }
+
+    [Fact]
+    public async Task Local_order_repository_filters_recent_orders_by_date_device_and_item_number_keyword()
+    {
+        var databasePath = Path.Combine(Path.GetTempPath(), $"hbpos-client-history-{Guid.NewGuid():N}.db");
+
+        try
+        {
+            var store = new LocalSqliteStore(databasePath);
+            var schema = new LocalSchemaService(store);
+            var orders = new LocalOrderRepository(store);
+            var start = new DateTimeOffset(2026, 5, 24, 0, 0, 0, TimeSpan.Zero);
+            var matchingOrder = CreateLocalOrder(
+                orderGuid: Guid.Parse("11111111-2222-3333-4444-555555555555"),
+                deviceCode: "POS-01",
+                soldAt: start.AddHours(10),
+                firstLookupCode: "930101",
+                firstItemNumber: "ITEM-101");
+            var nonMatchingDevice = CreateLocalOrder(
+                orderGuid: Guid.Parse("AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE"),
+                deviceCode: "POS-02",
+                soldAt: start.AddHours(11),
+                firstLookupCode: "930201",
+                firstItemNumber: "ITEM-201");
+            var nonMatchingDate = CreateLocalOrder(
+                orderGuid: Guid.Parse("99999999-8888-7777-6666-555555555555"),
+                deviceCode: "POS-01",
+                soldAt: start.AddDays(-2),
+                firstLookupCode: "930301",
+                firstItemNumber: "ITEM-301");
+
+            await schema.InitializeAsync();
+            await orders.SavePendingOrderAsync(matchingOrder);
+            await orders.SavePendingOrderAsync(nonMatchingDevice);
+            await orders.SavePendingOrderAsync(nonMatchingDate);
+
+            var filtered = await orders.GetRecentOrdersAsync(
+                new LocalOrderHistoryQuery(
+                    SoldFrom: start,
+                    SoldTo: start.AddDays(1).AddTicks(-1),
+                    DeviceCode: "pos-01",
+                    Keyword: "item-101"));
+            var byShortOrderId = await orders.GetRecentOrdersAsync(
+                new LocalOrderHistoryQuery(Keyword: matchingOrder.OrderGuid.ToString("N")[..8]));
+            var byLookupCode = await orders.GetRecentOrdersAsync(
+                new LocalOrderHistoryQuery(Keyword: "930101"));
+
+            Assert.Equal(matchingOrder.OrderGuid, Assert.Single(filtered).OrderGuid);
+            Assert.Equal(matchingOrder.OrderGuid, Assert.Single(byShortOrderId).OrderGuid);
+            Assert.Equal(matchingOrder.OrderGuid, Assert.Single(byLookupCode).OrderGuid);
+        }
+        finally
+        {
+            if (File.Exists(databasePath))
+            {
+                File.Delete(databasePath);
+            }
+        }
+    }
+
+    [Fact]
+    public async Task Local_schema_service_migrates_existing_order_lines_with_item_number_column()
+    {
+        var databasePath = Path.Combine(Path.GetTempPath(), $"hbpos-client-migration-{Guid.NewGuid():N}.db");
+
+        try
+        {
+            await using (var connection = new Microsoft.Data.Sqlite.SqliteConnection($"Data Source={databasePath}"))
+            {
+                await connection.OpenAsync();
+                await using var command = connection.CreateCommand();
+                command.CommandText = """
+                    CREATE TABLE LocalOrderLines (
+                        OrderLineGuid TEXT PRIMARY KEY,
+                        OrderGuid TEXT NOT NULL,
+                        ProductCode TEXT NOT NULL,
+                        ReferenceCode TEXT NULL,
+                        DisplayName TEXT NOT NULL,
+                        LookupCode TEXT NOT NULL,
+                        Quantity TEXT NOT NULL,
+                        UnitPrice TEXT NOT NULL,
+                        DiscountAmount TEXT NOT NULL,
+                        ActualAmount TEXT NOT NULL,
+                        PriceSource INTEGER NOT NULL
+                    );
+                    """;
+                await command.ExecuteNonQueryAsync();
+            }
+
+            var schema = new LocalSchemaService(new LocalSqliteStore(databasePath));
+            await schema.InitializeAsync();
+
+            await using var verifyConnection = new Microsoft.Data.Sqlite.SqliteConnection($"Data Source={databasePath}");
+            await verifyConnection.OpenAsync();
+            await using var verifyCommand = verifyConnection.CreateCommand();
+            verifyCommand.CommandText = "PRAGMA table_info(LocalOrderLines);";
+            await using var reader = await verifyCommand.ExecuteReaderAsync();
+
+            var columns = new List<string>();
+            while (await reader.ReadAsync())
+            {
+                columns.Add(reader.GetString(1));
+            }
+
+            Assert.Contains("ItemNumber", columns);
+        }
+        finally
+        {
+            Microsoft.Data.Sqlite.SqliteConnection.ClearAllPools();
             if (File.Exists(databasePath))
             {
                 File.Delete(databasePath);
@@ -311,21 +432,26 @@ public sealed class PosCoreTests
         field.SetValue(line, quantity);
     }
 
-    private static LocalOrder CreateLocalOrder()
+    private static LocalOrder CreateLocalOrder(
+        Guid? orderGuid = null,
+        string deviceCode = "POS-01",
+        DateTimeOffset? soldAt = null,
+        string firstLookupCode = "690101",
+        string firstItemNumber = "ITEM-101")
     {
         var lines = new[]
         {
-            new LocalOrderLine(Guid.NewGuid(), "SKU-101", null, "Organic Gala Apples", "690101", 2m, 2.50m, 0m, 5.00m, PriceSourceKind.StoreRetailPrice),
-            new LocalOrderLine(Guid.NewGuid(), "SKU-102", null, "Whole Grain Bread", "690102", 1m, 4.20m, 0.20m, 4.00m, PriceSourceKind.ProductBase)
+            new LocalOrderLine(Guid.NewGuid(), "SKU-101", null, "Organic Gala Apples", firstLookupCode, firstItemNumber, 2m, 2.50m, 0m, 5.00m, PriceSourceKind.StoreRetailPrice),
+            new LocalOrderLine(Guid.NewGuid(), "SKU-102", null, "Whole Grain Bread", "690102", "ITEM-102", 1m, 4.20m, 0.20m, 4.00m, PriceSourceKind.ProductBase)
         };
 
         return new LocalOrder(
-            Guid.NewGuid(),
+            orderGuid ?? Guid.NewGuid(),
             "S001",
-            "POS-01",
+            deviceCode,
             "C001",
             "Alice",
-            DateTimeOffset.UtcNow,
+            soldAt ?? DateTimeOffset.UtcNow,
             9.20m,
             0.20m,
             9.00m,

@@ -12,6 +12,11 @@ public interface ILocalOrderRepository
 
     Task<IReadOnlyList<LocalOrderSummary>> GetRecentOrdersAsync(int take = 50, CancellationToken cancellationToken = default);
 
+    Task<IReadOnlyList<LocalOrderSummary>> GetRecentOrdersAsync(
+        LocalOrderHistoryQuery query,
+        int take = 50,
+        CancellationToken cancellationToken = default);
+
     Task<LocalOrder?> GetOrderAsync(Guid orderGuid, CancellationToken cancellationToken = default);
 }
 
@@ -48,8 +53,8 @@ public sealed class LocalOrderRepository(LocalSqliteStore store) : ILocalOrderRe
             command.Transaction = transaction;
             command.CommandText = """
                 INSERT INTO LocalOrderLines
-                (OrderLineGuid, OrderGuid, ProductCode, ReferenceCode, DisplayName, LookupCode, Quantity, UnitPrice, DiscountAmount, ActualAmount, PriceSource)
-                VALUES ($OrderLineGuid, $OrderGuid, $ProductCode, $ReferenceCode, $DisplayName, $LookupCode, $Quantity, $UnitPrice, $DiscountAmount, $ActualAmount, $PriceSource);
+                (OrderLineGuid, OrderGuid, ProductCode, ReferenceCode, DisplayName, LookupCode, ItemNumber, Quantity, UnitPrice, DiscountAmount, ActualAmount, PriceSource)
+                VALUES ($OrderLineGuid, $OrderGuid, $ProductCode, $ReferenceCode, $DisplayName, $LookupCode, $ItemNumber, $Quantity, $UnitPrice, $DiscountAmount, $ActualAmount, $PriceSource);
                 """;
             command.Parameters.AddWithValue("$OrderLineGuid", line.OrderLineGuid.ToString());
             command.Parameters.AddWithValue("$OrderGuid", order.OrderGuid.ToString());
@@ -57,6 +62,7 @@ public sealed class LocalOrderRepository(LocalSqliteStore store) : ILocalOrderRe
             command.Parameters.AddWithValue("$ReferenceCode", (object?)line.ReferenceCode ?? DBNull.Value);
             command.Parameters.AddWithValue("$DisplayName", line.DisplayName);
             command.Parameters.AddWithValue("$LookupCode", line.LookupCode);
+            command.Parameters.AddWithValue("$ItemNumber", (object?)line.ItemNumber ?? DBNull.Value);
             command.Parameters.AddWithValue("$Quantity", line.Quantity);
             command.Parameters.AddWithValue("$UnitPrice", line.UnitPrice);
             command.Parameters.AddWithValue("$DiscountAmount", line.DiscountAmount);
@@ -98,8 +104,19 @@ public sealed class LocalOrderRepository(LocalSqliteStore store) : ILocalOrderRe
 
     public async Task<IReadOnlyList<LocalOrderSummary>> GetRecentOrdersAsync(int take = 50, CancellationToken cancellationToken = default)
     {
+        return await GetRecentOrdersAsync(new LocalOrderHistoryQuery(), take, cancellationToken);
+    }
+
+    public async Task<IReadOnlyList<LocalOrderSummary>> GetRecentOrdersAsync(
+        LocalOrderHistoryQuery query,
+        int take = 50,
+        CancellationToken cancellationToken = default)
+    {
         await using var connection = await store.OpenConnectionAsync(cancellationToken);
         await using var command = connection.CreateCommand();
+        var keyword = query.Keyword?.Trim() ?? string.Empty;
+        var normalizedKeyword = keyword.ToUpperInvariant();
+        var normalizedOrderKeyword = normalizedKeyword.Replace("-", string.Empty);
         command.CommandText = """
             SELECT
                 o.OrderGuid,
@@ -116,10 +133,34 @@ public sealed class LocalOrderRepository(LocalSqliteStore store) : ILocalOrderRe
             FROM LocalOrders o
             LEFT JOIN LocalOrderLines l ON l.OrderGuid = o.OrderGuid
             LEFT JOIN LocalPayments p ON p.OrderGuid = o.OrderGuid
+            WHERE ($SoldFrom IS NULL OR julianday(o.SoldAt) >= julianday($SoldFrom))
+              AND ($SoldTo IS NULL OR julianday(o.SoldAt) <= julianday($SoldTo))
+              AND ($DeviceCode = '' OR UPPER(o.DeviceCode) = $DeviceCode)
+              AND (
+                    $KeywordLike = ''
+                    OR UPPER(o.OrderGuid) LIKE $KeywordLike
+                    OR REPLACE(UPPER(o.OrderGuid), '-', '') LIKE $NormalizedOrderKeywordLike
+                    OR EXISTS (
+                        SELECT 1
+                        FROM LocalOrderLines search
+                        WHERE search.OrderGuid = o.OrderGuid
+                          AND (
+                                UPPER(search.LookupCode) LIKE $KeywordLike
+                                OR UPPER(COALESCE(search.ItemNumber, '')) LIKE $KeywordLike
+                              )
+                    )
+                  )
             GROUP BY o.OrderGuid
             ORDER BY o.SoldAt DESC
             LIMIT $Take;
             """;
+        command.Parameters.AddWithValue("$SoldFrom", query.SoldFrom?.ToString("O") ?? (object)DBNull.Value);
+        command.Parameters.AddWithValue("$SoldTo", query.SoldTo?.ToString("O") ?? (object)DBNull.Value);
+        command.Parameters.AddWithValue("$DeviceCode", query.DeviceCode?.Trim().ToUpperInvariant() ?? string.Empty);
+        command.Parameters.AddWithValue("$KeywordLike", string.IsNullOrEmpty(normalizedKeyword) ? string.Empty : $"%{normalizedKeyword}%");
+        command.Parameters.AddWithValue(
+            "$NormalizedOrderKeywordLike",
+            string.IsNullOrEmpty(normalizedOrderKeyword) ? string.Empty : $"%{normalizedOrderKeyword}%");
         command.Parameters.AddWithValue("$Take", Math.Clamp(take, 1, 500));
 
         var summaries = new List<LocalOrderSummary>();
@@ -202,7 +243,7 @@ public sealed class LocalOrderRepository(LocalSqliteStore store) : ILocalOrderRe
     {
         await using var command = connection.CreateCommand();
         command.CommandText = """
-            SELECT OrderLineGuid, ProductCode, ReferenceCode, DisplayName, LookupCode, Quantity, UnitPrice, DiscountAmount, ActualAmount, PriceSource
+            SELECT OrderLineGuid, ProductCode, ReferenceCode, DisplayName, LookupCode, ItemNumber, Quantity, UnitPrice, DiscountAmount, ActualAmount, PriceSource
             FROM LocalOrderLines
             WHERE OrderGuid = $OrderGuid
             ORDER BY rowid;
@@ -219,6 +260,7 @@ public sealed class LocalOrderRepository(LocalSqliteStore store) : ILocalOrderRe
                 ReadNullableString(reader, "ReferenceCode"),
                 ReadString(reader, "DisplayName"),
                 ReadString(reader, "LookupCode"),
+                ReadNullableString(reader, "ItemNumber"),
                 ReadDecimal(reader, "Quantity"),
                 ReadDecimal(reader, "UnitPrice"),
                 ReadDecimal(reader, "DiscountAmount"),

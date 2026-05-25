@@ -182,9 +182,9 @@
                 <StackPanel Grid.Column="2" Orientation="Horizontal" VerticalAlignment="Center">
                     <TextBlock Text="{Binding StoreInfo}" Foreground="{StaticResource PosMutedForegroundBrush}" FontSize="11" VerticalAlignment="Center" Margin="0,0,12,0" />
                     <TextBlock Text="{Binding CashierInfo}" Foreground="{StaticResource PosMutedForegroundBrush}" FontSize="11" VerticalAlignment="Center" Margin="0,0,12,0" />
-                    <Button Content="中 / EN"
+                    <Button Content="{loc:Loc shell.languageToggle}"
                             Command="{Binding ToggleCultureCommand}"
-                            Width="68"
+                            Width="72"
                             Height="30"
                             Padding="0"
                             FontWeight="Black"
@@ -193,16 +193,16 @@
                             Style="{StaticResource PosShellNavButtonStyle}"
                             ToolTip="{loc:Loc Language}"
                             Margin="0,0,8,0" />
-                    <Button Content="扫码枪"
+                    <Button Content="{loc:Loc shell.scannerBinding}"
                             Command="{Binding ResetScannerBindingCommand}"
-                            Width="58"
+                            Width="76"
                             Height="30"
                             Padding="0"
                             FontWeight="Black"
                             Background="#FFF5F7FA"
                             Foreground="{StaticResource PosMutedForegroundBrush}"
                             Style="{StaticResource PosShellNavButtonStyle}"
-                            ToolTip="重新学习扫码枪"
+                            ToolTip="{loc:Loc shell.scannerBinding.resetTooltip}"
                             Margin="0,0,8,0" />
                     <Button Click="MinimizeButton_Click"
                             Style="{StaticResource TitleBarButtonStyle}"

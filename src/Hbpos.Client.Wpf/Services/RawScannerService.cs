@@ -267,8 +267,13 @@ public sealed class RawScannerService(
             _ = PersistBoundDevicePathAsync(result.DevicePath);
         }
 
-        ConsoleLog.Write("RawScanner", $"scan accepted barcode={result.Barcode} completion={result.CompletionKind}");
-        handler(new RawBarcodeScannedEventArgs(result.Barcode, result.DevicePath, DateTimeOffset.Now));
+        var dispatchAt = DateTimeOffset.Now;
+        var completedAt = result.CompletedAt == default ? dispatchAt : result.CompletedAt;
+        var dispatchDelayMs = Math.Max(0, (dispatchAt - completedAt).TotalMilliseconds);
+        ConsoleLog.Write(
+            "RawScanner",
+            $"scan accepted barcode={result.Barcode} completion={result.CompletionKind} activePage={_activePageId} dispatchDelayMs={dispatchDelayMs:0.###}");
+        handler(new RawBarcodeScannedEventArgs(result.Barcode, result.DevicePath, completedAt));
     }
 
     private void LogEmptyDevicePath()

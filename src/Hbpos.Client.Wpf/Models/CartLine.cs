@@ -140,6 +140,8 @@ public sealed class CartLine : ObservableObject
         }
     }
 
+    public decimal? DiscountPercent => _discountPercent;
+
     public PriceSourceKind PriceSource
     {
         get => _priceSource;

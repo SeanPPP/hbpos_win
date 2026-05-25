@@ -19,6 +19,8 @@ public sealed partial class PosTerminalViewModel : ObservableObject, IDisposable
     private readonly IPosTerminalWorkflowService _workflowService;
     private readonly Action? _onOpenPayment;
     private readonly Func<Task>? _onOpenSpecialProductsAsync;
+    private readonly Func<Task>? _onHoldOrderAsync;
+    private readonly Func<Task>? _onRecallOrderAsync;
     private readonly Func<Task>? _onReregisterDeviceAsync;
     private readonly ILocalizationService? _localization;
     private readonly IRawScannerService? _rawScannerService;
@@ -28,6 +30,9 @@ public sealed partial class PosTerminalViewModel : ObservableObject, IDisposable
     private string _statusKey = "pos.status.ready";
     private object[] _statusArgs = [];
     private string? _statusText;
+    private int _scanTraceSequence;
+    private string? _activeScanTraceId;
+    private DateTimeOffset? _activeScanStartedAt;
 
     [ObservableProperty]
     private PosSessionState _session;
@@ -67,7 +72,9 @@ public sealed partial class PosTerminalViewModel : ObservableObject, IDisposable
         Func<CancellationToken, Task<bool>>? refreshOnlineAsync = null,
         IRawScannerService? rawScannerService = null,
         Func<Task>? onReregisterDeviceAsync = null,
-        IPosTerminalWorkflowService? workflowService = null)
+        IPosTerminalWorkflowService? workflowService = null,
+        Func<Task>? onHoldOrderAsync = null,
+        Func<Task>? onRecallOrderAsync = null)
     {
         _priceIndex = priceIndex;
         _cart = cart;
@@ -75,6 +82,8 @@ public sealed partial class PosTerminalViewModel : ObservableObject, IDisposable
         _session = session;
         _onOpenPayment = onOpenPayment;
         _onOpenSpecialProductsAsync = onOpenSpecialProductsAsync;
+        _onHoldOrderAsync = onHoldOrderAsync;
+        _onRecallOrderAsync = onRecallOrderAsync;
         _onReregisterDeviceAsync = onReregisterDeviceAsync;
         _localization = localization;
         _syncCatalogAsync = syncCatalogAsync;
@@ -108,6 +117,8 @@ public sealed partial class PosTerminalViewModel : ObservableObject, IDisposable
         ClearCartCommand = new RelayCommand(ClearCart, () => !_cart.IsEmpty);
         OpenPaymentCommand = new RelayCommand(OpenPayment, () => !_cart.IsEmpty);
         OpenSpecialProductsCommand = new AsyncRelayCommand(OpenSpecialProductsAsync);
+        HoldOrderCommand = new AsyncRelayCommand(HoldOrderAsync, () => !_cart.IsEmpty);
+        RecallOrderCommand = new AsyncRelayCommand(RecallOrderAsync);
         SyncCommand = new AsyncRelayCommand(SyncAsync);
         ResetCatalogCommand = new AsyncRelayCommand(ResetCatalogAsync);
         ReregisterDeviceCommand = new AsyncRelayCommand(ReregisterDeviceAsync);
@@ -152,6 +163,10 @@ public sealed partial class PosTerminalViewModel : ObservableObject, IDisposable
     public IRelayCommand OpenPaymentCommand { get; }
 
     public IAsyncRelayCommand OpenSpecialProductsCommand { get; }
+
+    public IAsyncRelayCommand HoldOrderCommand { get; }
+
+    public IAsyncRelayCommand RecallOrderCommand { get; }
 
     public IAsyncRelayCommand SyncCommand { get; }
 
@@ -259,7 +274,7 @@ public sealed partial class PosTerminalViewModel : ObservableObject, IDisposable
         LogCartOperation("reveal-cart-line", line, success: true, stopwatch.ElapsedMilliseconds);
     }
 
-    private void RefreshCartCore(string operation)
+    private void RefreshCartCore(string operation, string? traceId = null, DateTimeOffset? scanStartedAt = null)
     {
         var totalStopwatch = Stopwatch.StartNew();
         var syncCartStopwatch = Stopwatch.StartNew();
@@ -272,7 +287,7 @@ public sealed partial class PosTerminalViewModel : ObservableObject, IDisposable
         totalStopwatch.Stop();
 
         LogCartPerf(
-            $"operation={operation} storeCode={Session.StoreCode} cartLines={_cart.Lines.Count} syncCartElapsedMs={syncCartStopwatch.ElapsedMilliseconds} stateRefreshElapsedMs={stateRefreshStopwatch.ElapsedMilliseconds} totalElapsedMs={totalStopwatch.ElapsedMilliseconds}");
+            $"{FormatTraceId(traceId)}operation={operation} storeCode={Session.StoreCode} cartLines={_cart.Lines.Count} scanAgeMs={FormatElapsedSince(scanStartedAt)} syncCartElapsedMs={syncCartStopwatch.ElapsedMilliseconds} stateRefreshElapsedMs={stateRefreshStopwatch.ElapsedMilliseconds} totalElapsedMs={totalStopwatch.ElapsedMilliseconds}");
     }
 
     private void RefreshCartState()
@@ -286,6 +301,7 @@ public sealed partial class PosTerminalViewModel : ObservableObject, IDisposable
         DecreaseLineCommand.NotifyCanExecuteChanged();
         ClearCartCommand.NotifyCanExecuteChanged();
         OpenPaymentCommand.NotifyCanExecuteChanged();
+        HoldOrderCommand.NotifyCanExecuteChanged();
     }
 
     private void SyncCartLines(IReadOnlyList<CartLine> sourceLines)
@@ -320,7 +336,7 @@ public sealed partial class PosTerminalViewModel : ObservableObject, IDisposable
 
     private void OnCartChanged(object? sender, EventArgs e)
     {
-        RefreshCartCore("cart-changed");
+        RefreshCartCore("cart-changed", _activeScanTraceId, _activeScanStartedAt);
     }
 
     private void OnWorkflowCatalogReloaded(object? sender, PosTerminalCatalogReloadedEventArgs e)
@@ -432,14 +448,43 @@ public sealed partial class PosTerminalViewModel : ObservableObject, IDisposable
 
     private void SearchAndAdd()
     {
+        var traceId = NextScanTraceId("manual");
+        var startedAt = DateTimeOffset.Now;
+        var submittedScanText = ScanText;
         var stopwatch = Stopwatch.StartNew();
-        var result = _workflowService.ProcessScan(Session, ScanText, preferExactLookup: false, source: "manual");
-        ApplyWorkflowResult(result);
+        var cartLinesBefore = _cart.Lines.Count;
+        ConsoleLog.Write(
+            "PosScan",
+            $"traceId={traceId} manual scan flow start barcode={submittedScanText} storeCode={Session.StoreCode} cartLinesBefore={cartLinesBefore}");
+
+        _activeScanTraceId = traceId;
+        _activeScanStartedAt = startedAt;
+        var workflowStopwatch = Stopwatch.StartNew();
+        PosTerminalWorkflowResult result;
+        var applyStopwatch = new Stopwatch();
+        try
+        {
+            result = _workflowService.ProcessScan(Session, submittedScanText, preferExactLookup: false, source: "manual", traceId);
+            workflowStopwatch.Stop();
+            applyStopwatch.Start();
+            ApplyWorkflowResult(result);
+            applyStopwatch.Stop();
+        }
+        finally
+        {
+            _activeScanTraceId = null;
+            _activeScanStartedAt = null;
+        }
+
         stopwatch.Stop();
         if (result.SelectedCartLine is not null && string.Equals(result.StatusKey, "pos.status.added", StringComparison.Ordinal))
         {
-            LogCartOperation("scan-auto-add", result.SelectedCartLine, success: true, stopwatch.ElapsedMilliseconds);
+            LogCartOperation("scan-auto-add", result.SelectedCartLine, success: true, stopwatch.ElapsedMilliseconds, traceId: traceId);
         }
+
+        ConsoleLog.Write(
+            "PosScan",
+            $"traceId={traceId} manual scan flow end barcode={submittedScanText} statusKey={result.StatusKey ?? "<null>"} autoAdded={FormatBool(result.SelectedCartLine is not null)} cartLinesBefore={cartLinesBefore} cartLinesAfter={_cart.Lines.Count} workflowElapsedMs={workflowStopwatch.ElapsedMilliseconds} applyResultElapsedMs={applyStopwatch.ElapsedMilliseconds} totalElapsedMs={stopwatch.ElapsedMilliseconds}");
     }
 
     private void AddSelected()
@@ -535,10 +580,11 @@ public sealed partial class PosTerminalViewModel : ObservableObject, IDisposable
         SellableItemDto item,
         bool success,
         long totalElapsedMs,
-        string? reason = null)
+        string? reason = null,
+        string? traceId = null)
     {
         LogCartPerf(
-            $"operation={operation} storeCode={Session.StoreCode} productCode={LogValue(item.ProductCode)} lookupCode={LogValue(item.LookupCode)} success={FormatBool(success)} cartLines={_cart.Lines.Count} totalAmount={FormatAmount(_cart.TotalAmount)} actualAmount={FormatAmount(_cart.ActualAmount)} totalElapsedMs={totalElapsedMs}{FormatReason(reason)}");
+            $"{FormatTraceId(traceId)}operation={operation} storeCode={Session.StoreCode} productCode={LogValue(item.ProductCode)} lookupCode={LogValue(item.LookupCode)} success={FormatBool(success)} cartLines={_cart.Lines.Count} totalAmount={FormatAmount(_cart.TotalAmount)} actualAmount={FormatAmount(_cart.ActualAmount)} totalElapsedMs={totalElapsedMs}{FormatReason(reason)}");
     }
 
     private void LogCartOperation(
@@ -546,10 +592,11 @@ public sealed partial class PosTerminalViewModel : ObservableObject, IDisposable
         CartLine? line,
         bool success,
         long totalElapsedMs,
-        string? reason = null)
+        string? reason = null,
+        string? traceId = null)
     {
         LogCartPerf(
-            $"operation={operation} storeCode={Session.StoreCode} productCode={LogValue(line?.ProductCode)} lookupCode={LogValue(line?.LookupCode)} success={FormatBool(success)} cartLines={_cart.Lines.Count} totalAmount={FormatAmount(_cart.TotalAmount)} actualAmount={FormatAmount(_cart.ActualAmount)} totalElapsedMs={totalElapsedMs}{FormatReason(reason)}");
+            $"{FormatTraceId(traceId)}operation={operation} storeCode={Session.StoreCode} productCode={LogValue(line?.ProductCode)} lookupCode={LogValue(line?.LookupCode)} success={FormatBool(success)} cartLines={_cart.Lines.Count} totalAmount={FormatAmount(_cart.TotalAmount)} actualAmount={FormatAmount(_cart.ActualAmount)} totalElapsedMs={totalElapsedMs}{FormatReason(reason)}");
     }
 
     private static void LogCartPerf(string message)
@@ -572,29 +619,84 @@ public sealed partial class PosTerminalViewModel : ObservableObject, IDisposable
         return string.IsNullOrWhiteSpace(reason) ? string.Empty : $" reason={reason.Trim()}";
     }
 
+    private static string FormatTraceId(string? traceId)
+    {
+        return string.IsNullOrWhiteSpace(traceId) ? string.Empty : $"traceId={traceId} ";
+    }
+
+    private static string FormatElapsedSince(DateTimeOffset? startedAt)
+    {
+        return startedAt is null
+            ? "<none>"
+            : Math.Max(0, (DateTimeOffset.Now - startedAt.Value).TotalMilliseconds).ToString("0.###", CultureInfo.InvariantCulture);
+    }
+
     private static string LogValue(string? value)
     {
         return string.IsNullOrWhiteSpace(value) ? "<null>" : value.Trim();
     }
 
+    private string NextScanTraceId(string source)
+    {
+        var normalizedSource = string.IsNullOrWhiteSpace(source) ? "scan" : source.Trim();
+        return $"{normalizedSource}-{++_scanTraceSequence}";
+    }
+
     private void OnRawBarcodeScanned(RawBarcodeScannedEventArgs e)
     {
-        ProcessScannerBarcode(e.Barcode, e.DevicePath, "raw");
+        ProcessScannerBarcode(e.Barcode, e.DevicePath, "raw", e.ScannedAt);
     }
 
     public void ProcessScannerBarcode(string barcode, string devicePath, string source)
     {
-        ConsoleLog.Write("PosScan", $"{source} scanner event received barcode={barcode} devicePath={devicePath}");
+        ProcessScannerBarcode(barcode, devicePath, source, null);
+    }
+
+    private void ProcessScannerBarcode(string barcode, string devicePath, string source, DateTimeOffset? scannedAt)
+    {
+        var traceId = NextScanTraceId(source);
+        var startedAt = DateTimeOffset.Now;
+        var stopwatch = Stopwatch.StartNew();
+        var cartLinesBefore = _cart.Lines.Count;
+        ConsoleLog.Write(
+            "PosScan",
+            $"traceId={traceId} {source} scanner event received barcode={barcode} devicePath={devicePath} eventAgeMs={FormatElapsedSince(scannedAt)} cartLinesBefore={cartLinesBefore}");
+        var setScanTextStopwatch = Stopwatch.StartNew();
         ScanText = barcode;
         IsTouchKeyboardOpen = false;
-        var stopwatch = Stopwatch.StartNew();
-        var result = _workflowService.ProcessScan(Session, barcode, preferExactLookup: true, source);
-        ApplyWorkflowResult(result);
+        setScanTextStopwatch.Stop();
+        ConsoleLog.Write(
+            "PosScan",
+            $"traceId={traceId} scanner ui input applied barcode={barcode} setInputElapsedMs={setScanTextStopwatch.ElapsedMilliseconds}");
+
+        _activeScanTraceId = traceId;
+        _activeScanStartedAt = startedAt;
+        var workflowStopwatch = Stopwatch.StartNew();
+        PosTerminalWorkflowResult result;
+        var applyStopwatch = new Stopwatch();
+        try
+        {
+            result = _workflowService.ProcessScan(Session, barcode, preferExactLookup: true, source, traceId);
+            workflowStopwatch.Stop();
+            applyStopwatch.Start();
+            ApplyWorkflowResult(result);
+            applyStopwatch.Stop();
+        }
+        finally
+        {
+            _activeScanTraceId = null;
+            _activeScanStartedAt = null;
+        }
+
         stopwatch.Stop();
         if (result.SelectedCartLine is not null && string.Equals(result.StatusKey, "pos.status.added", StringComparison.Ordinal))
         {
-            LogCartOperation("scan-auto-add", result.SelectedCartLine, success: true, stopwatch.ElapsedMilliseconds);
+            LogCartOperation("scan-auto-add", result.SelectedCartLine, success: true, stopwatch.ElapsedMilliseconds, traceId: traceId);
         }
+
+        ConsoleLog.Write(
+            "PosScan",
+            $"traceId={traceId} scanner flow end barcode={barcode} statusKey={result.StatusKey ?? "<null>"} autoAdded={FormatBool(result.SelectedCartLine is not null)} cartLinesBefore={cartLinesBefore} cartLinesAfter={_cart.Lines.Count} workflowElapsedMs={workflowStopwatch.ElapsedMilliseconds} applyResultElapsedMs={applyStopwatch.ElapsedMilliseconds} totalElapsedMs={stopwatch.ElapsedMilliseconds}");
     }
 
     private void ClearSearch()
@@ -631,6 +733,22 @@ public sealed partial class PosTerminalViewModel : ObservableObject, IDisposable
         if (_onOpenSpecialProductsAsync is not null)
         {
             await _onOpenSpecialProductsAsync();
+        }
+    }
+
+    private async Task HoldOrderAsync()
+    {
+        if (_onHoldOrderAsync is not null)
+        {
+            await _onHoldOrderAsync();
+        }
+    }
+
+    private async Task RecallOrderAsync()
+    {
+        if (_onRecallOrderAsync is not null)
+        {
+            await _onRecallOrderAsync();
         }
     }
 

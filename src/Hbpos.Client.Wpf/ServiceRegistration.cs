@@ -33,6 +33,7 @@ public static class ServiceRegistration
         services.AddSingleton<ILocalDeviceRepository, LocalDeviceRepository>();
         services.AddSingleton<ILocalCatalogRepository, LocalCatalogRepository>();
         services.AddSingleton<ILocalOrderRepository, LocalOrderRepository>();
+        services.AddSingleton<ISuspendedOrderRepository, SuspendedOrderRepository>();
         services.AddSingleton<ISyncQueueRepository, SyncQueueRepository>();
         services.AddHttpClient<ICatalogApiClient, CatalogApiClient>(client =>
         {
@@ -50,6 +51,12 @@ public static class ServiceRegistration
             client.BaseAddress = GetCatalogApiBaseAddress();
             client.Timeout = TimeSpan.FromSeconds(3);
         });
+        services.AddHttpClient<IOrderHistoryApiClient, OrderHistoryApiClient>(client =>
+        {
+            client.BaseAddress = GetCatalogApiBaseAddress();
+            client.Timeout = TimeSpan.FromSeconds(10);
+        })
+        .AddHttpMessageHandler<DeviceAuthorizationMessageHandler>();
         services.AddSingleton<IDeviceFingerprintService, DeviceFingerprintService>();
         services.AddSingleton<IUiPriorityCoordinator, UiPriorityCoordinator>();
         services.AddSingleton<ILocalCatalogSyncService, LocalCatalogSyncService>();
@@ -60,6 +67,8 @@ public static class ServiceRegistration
         services.AddSingleton<IMainShellStartupService, MainShellStartupService>();
         services.AddSingleton<IShellSyncCenterService, ShellSyncCenterService>();
         services.AddSingleton<ICashPaymentWorkflowService, CashPaymentWorkflowService>();
+        services.AddSingleton<ISuspendedOrderService, SuspendedOrderService>();
+        services.AddSingleton<IRemoteOrderHistoryService, RemoteOrderHistoryService>();
         services.AddSingleton<IReceiptQueryService, ReceiptQueryService>();
         services.AddSingleton<IDeviceRegistrationWorkflowService, DeviceRegistrationWorkflowService>();
         services.AddSingleton<ISpecialProductsWorkflowService, SpecialProductsWorkflowService>();
@@ -105,7 +114,9 @@ public static class ServiceRegistration
             sp.GetRequiredService<ICashPaymentWorkflowService>(),
             sp.GetRequiredService<IDeviceRegistrationWorkflowService>(),
             sp.GetRequiredService<ISpecialProductsWorkflowService>(),
-            sp.GetRequiredService<PosTerminalWorkflowFactory>()));
+            sp.GetRequiredService<PosTerminalWorkflowFactory>(),
+            sp.GetRequiredService<ISuspendedOrderService>(),
+            sp.GetRequiredService<IRemoteOrderHistoryService>()));
         services.AddSingleton<MainWindow>();
 
         return services;

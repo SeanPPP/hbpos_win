@@ -9,7 +9,8 @@ public enum RawScannerCompletionKind
 public sealed record RawScannerInputResult(
     string Barcode,
     string DevicePath,
-    RawScannerCompletionKind CompletionKind);
+    RawScannerCompletionKind CompletionKind,
+    DateTimeOffset CompletedAt = default);
 
 public sealed class RawScannerInputProcessor
 {
@@ -68,7 +69,7 @@ public sealed class RawScannerInputProcessor
             return null;
         }
 
-        return CompleteBuffer(devicePath, buffer, RawScannerCompletionKind.Enter);
+        return CompleteBuffer(devicePath, buffer, RawScannerCompletionKind.Enter, timestamp);
     }
 
     public IReadOnlyList<RawScannerInputResult> FlushExpired(
@@ -86,7 +87,7 @@ public sealed class RawScannerInputProcessor
 
             if (pair.Value.Text.Length > 0 && timestamp - pair.Value.LastInputAt >= _scanTimeout)
             {
-                var result = CompleteBuffer(pair.Key, pair.Value, RawScannerCompletionKind.Timeout);
+                var result = CompleteBuffer(pair.Key, pair.Value, RawScannerCompletionKind.Timeout, timestamp);
                 if (result is not null)
                 {
                     results.Add(result);
@@ -126,13 +127,14 @@ public sealed class RawScannerInputProcessor
     private RawScannerInputResult? CompleteBuffer(
         string devicePath,
         ScannerBuffer buffer,
-        RawScannerCompletionKind completionKind)
+        RawScannerCompletionKind completionKind,
+        DateTimeOffset completedAt)
     {
         var barcode = buffer.Text.ToString();
         buffer.Text.Clear();
 
         return barcode.Length >= _minBarcodeLength
-            ? new RawScannerInputResult(barcode, devicePath, completionKind)
+            ? new RawScannerInputResult(barcode, devicePath, completionKind, completedAt)
             : null;
     }
 
