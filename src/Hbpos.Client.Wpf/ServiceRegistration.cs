@@ -77,7 +77,28 @@ public static class ServiceRegistration
         services.AddSingleton<LocalSellableItemIndex>();
         services.AddSingleton<PosCartService>();
         services.AddSingleton<CashCheckoutService>();
-        services.AddSingleton<MainViewModel>();
+        services.AddSingleton(sp => new MainViewModel(
+            sp.GetRequiredService<LocalSellableItemIndex>(),
+            sp.GetRequiredService<PosCartService>(),
+            sp.GetRequiredService<CashCheckoutService>(),
+            sp.GetRequiredService<ILocalSchemaService>(),
+            sp.GetRequiredService<IShellCultureService>(),
+            sp.GetRequiredService<IShellCatalogService>(),
+            sp.GetRequiredService<ILocalCatalogRepository>(),
+            sp.GetRequiredService<IRemoteLookupRefreshService>(),
+            sp.GetRequiredService<ISpecialProductService>(),
+            sp.GetRequiredService<IConnectivityApiClient>(),
+            sp.GetRequiredService<IMainShellStartupService>(),
+            sp.GetRequiredService<ILocalOrderRepository>(),
+            sp.GetRequiredService<IShellSyncCenterService>(),
+            sp.GetRequiredService<ILocalizationService>(),
+            sp.GetRequiredService<ICustomerDisplayOrchestrator>(),
+            sp.GetRequiredService<IRawScannerService>(),
+            sp.GetRequiredService<IReceiptQueryService>(),
+            sp.GetRequiredService<ICashPaymentWorkflowService>(),
+            sp.GetRequiredService<IDeviceRegistrationWorkflowService>(),
+            sp.GetRequiredService<ISpecialProductsWorkflowService>(),
+            sp.GetRequiredService<PosTerminalWorkflowFactory>()));
         services.AddSingleton<MainWindow>();
 
         return services;
