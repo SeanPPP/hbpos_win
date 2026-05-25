@@ -319,6 +319,191 @@ public sealed class MainViewModelScannerTests
         await viewModel.PosTerminal!.OpenSpecialProductsCommand.ExecuteAsync(null);
 
         Assert.Equal(SpecialProductsViewModel.PageId, scanner.ActivePageId);
+
+        viewModel.SpecialProducts!.BackCommand.Execute(null);
+
+        Assert.Same(viewModel.PosTerminal, viewModel.CurrentScreen);
+        Assert.Equal(PosTerminalViewModel.PageId, scanner.ActivePageId);
+    }
+
+    [Fact]
+    public async Task ScannerActivePage_IsClearedForScreensWithoutScannerInputTarget()
+    {
+        var scanner = new FakeRawScannerService();
+        var catalog = new FakeCatalogRepository
+        {
+            Items = [CreateItem("1042", "SKU-001", "930110")]
+        };
+        var viewModel = new MainViewModel(
+            new LocalSellableItemIndex(),
+            new PosCartService(),
+            new CashCheckoutService(),
+            new FakeLocalSchemaService(),
+            new FakeSettingsRepository(),
+            catalog,
+            new FakeCatalogSyncService(),
+            new FakeRemoteLookupRefreshService(),
+            new FakeSpecialProductService(),
+            new FakeConnectivityApiClient(),
+            new FakeLocalDeviceRepository { Latest = CreateAllowedDevice("1042") },
+            new FakeDeviceApiClient(),
+            new FakeDeviceFingerprintService(),
+            new DeviceAuthorizationState(),
+            new FakeLocalOrderRepository(),
+            new FakeSyncQueueRepository(),
+            new LocalizationService(),
+            new FakeCustomerDisplayWindowService(),
+            scanner);
+
+        await viewModel.InitializeAsync(new AppStartupOptions([], false, null, null));
+
+        Assert.Equal(PosTerminalViewModel.PageId, scanner.ActivePageId);
+
+        scanner.Emit("930110");
+        viewModel.ShowCashPaymentCommand.Execute(null);
+
+        Assert.Same(viewModel.CashPayment, viewModel.CurrentScreen);
+        Assert.Null(scanner.ActivePageId);
+
+        await viewModel.ShowPaymentSuccessCommand.ExecuteAsync(null);
+
+        Assert.Same(viewModel.PaymentSuccess, viewModel.CurrentScreen);
+        Assert.Null(scanner.ActivePageId);
+
+        await viewModel.ShowHistoryCommand.ExecuteAsync(null);
+
+        Assert.Same(viewModel.TransactionHistory, viewModel.CurrentScreen);
+        Assert.Null(scanner.ActivePageId);
+    }
+
+    [Fact]
+    public async Task ScannerActivePage_IsNullOnDeviceRegistrationScreen()
+    {
+        var scanner = new FakeRawScannerService();
+        var viewModel = new MainViewModel(
+            new LocalSellableItemIndex(),
+            new PosCartService(),
+            new CashCheckoutService(),
+            new FakeLocalSchemaService(),
+            new FakeSettingsRepository(),
+            new FakeCatalogRepository(),
+            new FakeCatalogSyncService(),
+            new FakeRemoteLookupRefreshService(),
+            new FakeSpecialProductService(),
+            new FakeConnectivityApiClient(),
+            new FakeLocalDeviceRepository(),
+            new FakeDeviceApiClient(),
+            new FakeDeviceFingerprintService(),
+            new DeviceAuthorizationState(),
+            new FakeLocalOrderRepository(),
+            new FakeSyncQueueRepository(),
+            new LocalizationService(),
+            new FakeCustomerDisplayWindowService(),
+            scanner);
+
+        await viewModel.InitializeAsync(new AppStartupOptions([], false, null, null));
+
+        Assert.Same(viewModel.DeviceRegistration, viewModel.CurrentScreen);
+        Assert.Null(scanner.ActivePageId);
+    }
+
+    [Fact]
+    public async Task RawScannerInput_OnNonScannerScreenIsIgnoredWithoutChangingCartOrScreen()
+    {
+        var scanner = new FakeRawScannerService();
+        var catalog = new FakeCatalogRepository
+        {
+            Items =
+            [
+                CreateItem("1042", "SKU-001", "930110"),
+                CreateItem("1042", "SKU-002", "930111")
+            ]
+        };
+        var viewModel = new MainViewModel(
+            new LocalSellableItemIndex(),
+            new PosCartService(),
+            new CashCheckoutService(),
+            new FakeLocalSchemaService(),
+            new FakeSettingsRepository(),
+            catalog,
+            new FakeCatalogSyncService(),
+            new FakeRemoteLookupRefreshService(),
+            new FakeSpecialProductService(),
+            new FakeConnectivityApiClient(),
+            new FakeLocalDeviceRepository { Latest = CreateAllowedDevice("1042") },
+            new FakeDeviceApiClient(),
+            new FakeDeviceFingerprintService(),
+            new DeviceAuthorizationState(),
+            new FakeLocalOrderRepository(),
+            new FakeSyncQueueRepository(),
+            new LocalizationService(),
+            new FakeCustomerDisplayWindowService(),
+            scanner);
+
+        await viewModel.InitializeAsync(new AppStartupOptions([], false, null, null));
+        scanner.Emit("930110");
+        viewModel.ShowCashPaymentCommand.Execute(null);
+        var screen = viewModel.CurrentScreen;
+        var status = viewModel.StatusMessage;
+        var line = Assert.Single(viewModel.PosTerminal!.CartLines);
+
+        scanner.Emit("930111");
+
+        Assert.Same(screen, viewModel.CurrentScreen);
+        Assert.Null(scanner.ActivePageId);
+        Assert.Equal(status, viewModel.StatusMessage);
+        Assert.Same(line, Assert.Single(viewModel.PosTerminal.CartLines));
+        Assert.Equal(1m, line.Quantity);
+    }
+
+    [Fact]
+    public async Task KeyboardScannerInput_OnNonScannerScreenIsConsumedWithoutChangingCartOrScreen()
+    {
+        var scanner = new FakeRawScannerService();
+        var catalog = new FakeCatalogRepository
+        {
+            Items =
+            [
+                CreateItem("1042", "SKU-001", "930110"),
+                CreateItem("1042", "SKU-002", "930111")
+            ]
+        };
+        var viewModel = new MainViewModel(
+            new LocalSellableItemIndex(),
+            new PosCartService(),
+            new CashCheckoutService(),
+            new FakeLocalSchemaService(),
+            new FakeSettingsRepository(),
+            catalog,
+            new FakeCatalogSyncService(),
+            new FakeRemoteLookupRefreshService(),
+            new FakeSpecialProductService(),
+            new FakeConnectivityApiClient(),
+            new FakeLocalDeviceRepository { Latest = CreateAllowedDevice("1042") },
+            new FakeDeviceApiClient(),
+            new FakeDeviceFingerprintService(),
+            new DeviceAuthorizationState(),
+            new FakeLocalOrderRepository(),
+            new FakeSyncQueueRepository(),
+            new LocalizationService(),
+            new FakeCustomerDisplayWindowService(),
+            scanner);
+
+        await viewModel.InitializeAsync(new AppStartupOptions([], false, null, null));
+        scanner.Emit("930110");
+        viewModel.ShowCashPaymentCommand.Execute(null);
+        var screen = viewModel.CurrentScreen;
+        var status = viewModel.StatusMessage;
+        var line = Assert.Single(viewModel.PosTerminal!.CartLines);
+
+        var processed = viewModel.TryProcessKeyboardScannerInput("930111");
+
+        Assert.True(processed);
+        Assert.Same(screen, viewModel.CurrentScreen);
+        Assert.Null(scanner.ActivePageId);
+        Assert.Equal(status, viewModel.StatusMessage);
+        Assert.Same(line, Assert.Single(viewModel.PosTerminal.CartLines));
+        Assert.Equal(1m, line.Quantity);
     }
 
     [Fact]

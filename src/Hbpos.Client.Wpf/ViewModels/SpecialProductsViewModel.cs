@@ -9,9 +9,11 @@ using Hbpos.Contracts.Catalog;
 
 namespace Hbpos.Client.Wpf.ViewModels;
 
-public sealed partial class SpecialProductsViewModel : ObservableObject, IDisposable
+public sealed partial class SpecialProductsViewModel : ObservableObject, IScannerInputTarget, IDisposable
 {
     public const string PageId = "SpecialProducts";
+
+    public string ScannerPageId => PageId;
 
     private const int PageSize = 20;
 

@@ -18,9 +18,11 @@ public enum StatusFeedbackKind
     Error
 }
 
-public sealed partial class PosTerminalViewModel : ObservableObject, IDisposable
+public sealed partial class PosTerminalViewModel : ObservableObject, IScannerInputTarget, IDisposable
 {
     public const string PageId = "PosTerminal";
+
+    public string ScannerPageId => PageId;
 
     private readonly LocalSellableItemIndex _priceIndex;
     private readonly PosCartService _cart;
@@ -664,9 +666,10 @@ public sealed partial class PosTerminalViewModel : ObservableObject, IDisposable
         ProcessScannerBarcode(e.Barcode, e.DevicePath, "raw", e.ScannedAt);
     }
 
-    public void ProcessScannerBarcode(string barcode, string devicePath, string source)
+    public bool ProcessScannerBarcode(string barcode, string devicePath, string source)
     {
         ProcessScannerBarcode(barcode, devicePath, source, null);
+        return true;
     }
 
     private void ProcessScannerBarcode(string barcode, string devicePath, string source, DateTimeOffset? scannedAt)

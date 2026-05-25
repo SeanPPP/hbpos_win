@@ -340,22 +340,18 @@ public sealed partial class MainViewModel : ObservableObject
 
     public bool TryProcessKeyboardScannerInput(string barcode)
     {
-        if (CurrentScreen == PosTerminal && PosTerminal is not null)
+        if (CurrentScreen is IScannerInputTarget scannerInputTarget)
         {
-            PosTerminal.ProcessScannerBarcode(barcode, "keyboard-focus-fallback", "keyboard-fallback");
-            return true;
-        }
-
-        if (CurrentScreen == SpecialProducts && SpecialProducts is not null)
-        {
-            SpecialProducts.ProcessScannerBarcode(barcode, "keyboard-focus-fallback", "keyboard-fallback");
-            return true;
+            return scannerInputTarget.ProcessScannerBarcode(
+                barcode,
+                "keyboard-focus-fallback",
+                "keyboard-fallback");
         }
 
         ConsoleLog.Write(
             "RawScanner",
             $"keyboard fallback scan ignored because active screen cannot handle scanner screen={CurrentScreen?.GetType().Name ?? "<none>"} barcode={barcode}");
-        return false;
+        return true;
     }
 
     private async Task ActivateDeviceAsync(DeviceActivatedEventArgs args, AppStartupOptions startupOptions)
@@ -498,12 +494,7 @@ public sealed partial class MainViewModel : ObservableObject
 
     partial void OnCurrentScreenChanged(object? value)
     {
-        var activePageId = value == PosTerminal
-            ? PosTerminalViewModel.PageId
-            : value == SpecialProducts
-                ? SpecialProductsViewModel.PageId
-                : null;
-        _rawScannerService.SetActivePage(activePageId);
+        _rawScannerService.SetActivePage((value as IScannerInputTarget)?.ScannerPageId);
     }
 
     partial void OnCustomerDisplayWindowModeChanged(CustomerDisplayWindowMode value)
