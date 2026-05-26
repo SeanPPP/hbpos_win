@@ -272,6 +272,26 @@ public sealed class LocalSchemaService(LocalSqliteStore store) : ILocalSchemaSer
         );
         """,
         """
+        CREATE TABLE IF NOT EXISTS LocalCardTransactions (
+            Id TEXT PRIMARY KEY,
+            PaymentGuid TEXT NOT NULL,
+            OrderGuid TEXT NOT NULL,
+            Processor TEXT NOT NULL,
+            TxnRef TEXT NULL,
+            AuthCode TEXT NULL,
+            CardType TEXT NULL,
+            CardBin INTEGER NULL,
+            MaskedCardNumber TEXT NULL,
+            MerchantId TEXT NULL,
+            ResponseCode TEXT NULL,
+            ResponseText TEXT NULL,
+            Stan TEXT NULL,
+            BankDateTime TEXT NULL,
+            Amount TEXT NOT NULL,
+            ReceiptText TEXT NULL
+        );
+        """,
+        """
         CREATE TABLE IF NOT EXISTS SyncQueue (
             Id INTEGER PRIMARY KEY AUTOINCREMENT,
             EntityId TEXT NOT NULL,
@@ -363,6 +383,14 @@ public sealed class LocalSchemaService(LocalSqliteStore store) : ILocalSchemaSer
         """
         CREATE INDEX IF NOT EXISTS IX_LocalOrderLines_OrderGuid_ItemNumber_LookupCode
         ON LocalOrderLines (OrderGuid, ItemNumber, LookupCode);
+        """,
+        """
+        CREATE INDEX IF NOT EXISTS IX_LocalCardTransactions_PaymentGuid
+        ON LocalCardTransactions (PaymentGuid);
+        """,
+        """
+        CREATE INDEX IF NOT EXISTS IX_LocalCardTransactions_OrderGuid
+        ON LocalCardTransactions (OrderGuid);
         """,
         """
         CREATE INDEX IF NOT EXISTS IX_SuspendedOrders_Store_Status_SuspendedAt

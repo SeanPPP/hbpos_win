@@ -39,13 +39,15 @@ public sealed record LocalPayment(
     Guid PaymentGuid,
     PaymentMethodKind Method,
     decimal Amount,
-    string? Reference);
+    string? Reference,
+    IReadOnlyList<CardTransactionDto>? CardTransactions = null);
 
 public sealed record PaymentTender(
     PaymentMethodKind Method,
     decimal Amount,
     string? Reference = null,
-    string? DisplayLabel = null)
+    string? DisplayLabel = null,
+    IReadOnlyList<CardTransactionDto>? CardTransactions = null)
 {
     public string? DisplayReference => PaymentReferenceDisplay.Format(Method, Reference);
 }

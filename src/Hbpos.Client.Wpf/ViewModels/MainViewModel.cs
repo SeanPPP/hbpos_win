@@ -39,6 +39,7 @@ public sealed partial class MainViewModel : ObservableObject
     private readonly ICashPaymentWorkflowService _cashPaymentWorkflowService;
     private readonly IVoucherApiClient? _voucherApiClient;
     private readonly ICardTerminalClient? _cardTerminalClient;
+    private readonly ICardTerminalSetupService? _cardTerminalSetupService;
     private readonly IDeviceRegistrationWorkflowService _deviceRegistrationWorkflowService;
     private readonly ISpecialProductsWorkflowService _specialProductsWorkflowService;
     private readonly IReceiptReturnsWorkflowService _receiptReturnsWorkflowService;
@@ -216,7 +217,8 @@ public sealed partial class MainViewModel : ObservableObject
         IUserFeedbackService? userFeedbackService = null,
         IReceiptReturnsWorkflowService? receiptReturnsWorkflowService = null,
         IVoucherApiClient? voucherApiClient = null,
-        ICardTerminalClient? cardTerminalClient = null)
+        ICardTerminalClient? cardTerminalClient = null,
+        ICardTerminalSetupService? cardTerminalSetupService = null)
     {
         _priceIndex = priceIndex;
         _cart = cart;
@@ -241,6 +243,7 @@ public sealed partial class MainViewModel : ObservableObject
         _cashPaymentWorkflowService = cashPaymentWorkflowService;
         _voucherApiClient = voucherApiClient;
         _cardTerminalClient = cardTerminalClient;
+        _cardTerminalSetupService = cardTerminalSetupService;
         _deviceRegistrationWorkflowService = deviceRegistrationWorkflowService;
         _specialProductsWorkflowService = specialProductsWorkflowService;
         _receiptReturnsWorkflowService = receiptReturnsWorkflowService ?? new ReceiptReturnsWorkflowService(
@@ -259,6 +262,7 @@ public sealed partial class MainViewModel : ObservableObject
         ShowPaymentSuccessCommand = new AsyncRelayCommand(ShowPaymentSuccessLatestAsync);
         ShowHistoryCommand = new AsyncRelayCommand(ShowHistoryAsync);
         ShowCustomerDisplayCommand = new RelayCommand(ShowCustomerDisplay);
+        ShowSettingsCommand = new AsyncRelayCommand(ShowSettingsAsync);
         ToggleSyncCenterCommand = new AsyncRelayCommand(ToggleSyncCenterAsync);
         ToggleCustomerDisplayWindowCommand = new RelayCommand(ToggleCustomerDisplayWindow);
         CloseCustomerDisplayWindowCommand = new RelayCommand(CloseCustomerDisplayWindow);
@@ -296,6 +300,8 @@ public sealed partial class MainViewModel : ObservableObject
 
     public DeviceRegistrationViewModel? DeviceRegistration { get; private set; }
 
+    public SettingsViewModel? Settings { get; private set; }
+
     public ObservableCollection<SyncQueueListItem> SyncCenterOrders { get; } = [];
 
     public IRelayCommand ShowPosCommand { get; }
@@ -309,6 +315,8 @@ public sealed partial class MainViewModel : ObservableObject
     public IAsyncRelayCommand ShowHistoryCommand { get; }
 
     public IRelayCommand ShowCustomerDisplayCommand { get; }
+
+    public IAsyncRelayCommand ShowSettingsCommand { get; }
 
     public IAsyncRelayCommand ToggleSyncCenterCommand { get; }
 
@@ -999,6 +1007,21 @@ public sealed partial class MainViewModel : ObservableObject
         CurrentScreen = TransactionHistory;
     }
 
+    private async Task ShowSettingsAsync()
+    {
+        if (_cardTerminalSetupService is null)
+        {
+            StatusMessage = "Settings services are not configured.";
+            return;
+        }
+
+        Settings ??= new SettingsViewModel(
+            _cardTerminalSetupService,
+            _localization);
+        await Settings.LoadAsync();
+        CurrentScreen = Settings;
+    }
+
     private async Task ShowSuspendedHistoryAsync()
     {
         TransactionHistory ??= CreateTransactionHistoryViewModel();
@@ -1148,6 +1171,9 @@ public sealed partial class MainViewModel : ObservableObject
                 break;
             case "history":
                 _ = ShowHistoryAsync();
+                break;
+            case "settings":
+                _ = ShowSettingsAsync();
                 break;
             case "customer":
             case "display":

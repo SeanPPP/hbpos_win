@@ -1,7 +1,9 @@
 using System.Net.Http;
 using System.Net.Http.Json;
+using System.Net.Http.Headers;
 using System.Text.Json;
 using Hbpos.Client.Wpf.Models;
+using Hbpos.Contracts.Orders;
 
 namespace Hbpos.Client.Wpf.Services;
 
@@ -12,8 +14,36 @@ public enum CardProcessorKind
     Square
 }
 
+public enum CardTerminalEnvironment
+{
+    Production,
+    Sandbox
+}
+
+public sealed record CardTerminalConfiguration(
+    CardProcessorKind Processor,
+    CardTerminalEnvironment Environment,
+    string LinklyHost,
+    int LinklyPort,
+    string? SquareLocationId,
+    string? SquareDeviceId,
+    bool HasProtectedSquareAccessToken,
+    int TerminalTimeoutSeconds)
+{
+    public static CardTerminalConfiguration Default { get; } = new(
+        CardProcessorKind.None,
+        CardTerminalEnvironment.Production,
+        "127.0.0.1",
+        2011,
+        null,
+        null,
+        false,
+        90);
+}
+
 public sealed record CardTerminalSettings(
     CardProcessorKind Processor,
+    CardTerminalEnvironment Environment,
     string LinklyHost,
     int LinklyPort,
     string? SquareAccessToken,
@@ -22,9 +52,11 @@ public sealed record CardTerminalSettings(
     string SquareApiBaseUrl,
     TimeSpan TerminalTimeout)
 {
+    public const string SquareVersion = "2026-01-22";
+
     public static CardTerminalSettings FromEnvironment()
     {
-        var processorText = Environment.GetEnvironmentVariable("HBPOS_CARD_PROCESSOR") ?? string.Empty;
+        var processorText = System.Environment.GetEnvironmentVariable("HBPOS_CARD_PROCESSOR") ?? string.Empty;
         var processor = processorText.Trim().ToUpperInvariant() switch
         {
             "LINKLY" or "ANZ" => CardProcessorKind.Linkly,
@@ -32,30 +64,131 @@ public sealed record CardTerminalSettings(
             _ => CardProcessorKind.None
         };
 
+        var terminalEnvironment = ReadEnvironment();
+        var apiBase = System.Environment.GetEnvironmentVariable("HBPOS_SQUARE_API_BASE_URL")?.Trim();
+
         return new CardTerminalSettings(
             processor,
-            Environment.GetEnvironmentVariable("HBPOS_LINKLY_HOST")?.Trim() is { Length: > 0 } host ? host : "127.0.0.1",
-            int.TryParse(Environment.GetEnvironmentVariable("HBPOS_LINKLY_PORT"), out var port) ? port : 2011,
-            Environment.GetEnvironmentVariable("HBPOS_SQUARE_ACCESS_TOKEN") ??
-                Environment.GetEnvironmentVariable("HBPOS_SQUARE_TOKEN") ??
-                Environment.GetEnvironmentVariable("SQUARE_TOKEN"),
-            Environment.GetEnvironmentVariable("HBPOS_SQUARE_LOCATION_ID"),
-            Environment.GetEnvironmentVariable("HBPOS_SQUARE_DEVICE_ID"),
-            Environment.GetEnvironmentVariable("HBPOS_SQUARE_API_BASE_URL")?.Trim() is { Length: > 0 } squareApiBaseUrl
-                ? squareApiBaseUrl
-                : "https://connect.squareup.com/",
+            terminalEnvironment,
+            System.Environment.GetEnvironmentVariable("HBPOS_LINKLY_HOST")?.Trim() is { Length: > 0 } host ? host : "127.0.0.1",
+            int.TryParse(System.Environment.GetEnvironmentVariable("HBPOS_LINKLY_PORT"), out var port) ? port : 2011,
+            null,
+            System.Environment.GetEnvironmentVariable("HBPOS_SQUARE_LOCATION_ID"),
+            System.Environment.GetEnvironmentVariable("HBPOS_SQUARE_DEVICE_ID"),
+            string.IsNullOrWhiteSpace(apiBase)
+                ? GetSquareApiBaseUrl(terminalEnvironment)
+                : NormalizeSquareApiBaseUrl(apiBase),
             TimeSpan.FromSeconds(
-                int.TryParse(Environment.GetEnvironmentVariable("HBPOS_CARD_TERMINAL_TIMEOUT_SECONDS"), out var timeoutSeconds) && timeoutSeconds > 0
+                int.TryParse(System.Environment.GetEnvironmentVariable("HBPOS_CARD_TERMINAL_TIMEOUT_SECONDS"), out var timeoutSeconds) && timeoutSeconds > 0
                     ? timeoutSeconds
                     : 90));
     }
+
+    public static string GetSquareApiBaseUrl(CardTerminalEnvironment environment)
+    {
+        return environment == CardTerminalEnvironment.Sandbox
+            ? "https://connect.squareupsandbox.com/v2/"
+            : "https://connect.squareup.com/v2/";
+    }
+
+    public static string NormalizeSquareApiBaseUrl(string apiBaseUrl)
+    {
+        var trimmed = apiBaseUrl.Trim();
+        if (trimmed.Length == 0)
+        {
+            return GetSquareApiBaseUrl(CardTerminalEnvironment.Production);
+        }
+
+        trimmed = trimmed.TrimEnd('/');
+        if (!trimmed.EndsWith("/v2", StringComparison.OrdinalIgnoreCase))
+        {
+            trimmed += "/v2";
+        }
+
+        return trimmed + "/";
+    }
+
+    private static CardTerminalEnvironment ReadEnvironment()
+    {
+        var environmentText = System.Environment.GetEnvironmentVariable("HBPOS_CARD_TERMINAL_ENVIRONMENT") ??
+            System.Environment.GetEnvironmentVariable("HBPOS_SQUARE_ENVIRONMENT") ??
+            System.Environment.GetEnvironmentVariable("SQUARE_ENVIRONMENT") ??
+            string.Empty;
+
+        return environmentText.Trim().ToUpperInvariant() switch
+        {
+            "SANDBOX" or "TEST" => CardTerminalEnvironment.Sandbox,
+            _ => CardTerminalEnvironment.Production
+        };
+    }
 }
 
-public sealed class ConfiguredCardTerminalClient(CardTerminalSettings settings) : ICardTerminalClient
+public interface ICardTerminalSettingsProvider
 {
-    private static readonly HttpClient SquareHttpClient = new();
+    Task<CardTerminalSettings> GetSettingsAsync(CancellationToken cancellationToken = default);
+}
+
+public interface ISquareAccessTokenProvider
+{
+    Task<string?> GetSquareAccessTokenAsync(
+        CardTerminalEnvironment environment,
+        bool forceRefresh,
+        CancellationToken cancellationToken = default);
+}
+
+public interface ISquareTokenResolver : ISquareAccessTokenProvider
+{
+    Task<string?> GetTokenAsync(
+        CardTerminalEnvironment environment,
+        CancellationToken cancellationToken = default);
+
+    Task<string?> RefreshTokenAsync(
+        CardTerminalEnvironment environment,
+        CancellationToken cancellationToken = default);
+}
+
+public interface ICardTerminalSettingsStore : ICardTerminalSettingsProvider, ISquareTokenResolver
+{
+    Task<CardTerminalConfiguration> LoadAsync(CancellationToken cancellationToken = default);
+
+    Task SaveAsync(
+        CardTerminalConfiguration configuration,
+        string? squareAccessToken,
+        CancellationToken cancellationToken = default);
+
+    Task<string?> GetSquareAccessTokenAsync(CancellationToken cancellationToken = default);
+}
+
+public sealed class StaticCardTerminalSettingsProvider(CardTerminalSettings settings) : ICardTerminalSettingsProvider
+{
+    public Task<CardTerminalSettings> GetSettingsAsync(CancellationToken cancellationToken = default)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        return Task.FromResult(settings);
+    }
+}
+
+public sealed class ConfiguredCardTerminalClient : ICardTerminalClient
+{
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
     private static readonly TimeSpan SquarePollInterval = TimeSpan.FromSeconds(2);
+
+    private readonly ICardTerminalSettingsProvider _settingsProvider;
+    private readonly HttpClient _httpClient;
+    private readonly ILinklyTerminalClient? _linklyTerminalClient;
+    private readonly ISquareAccessTokenProvider? _squareAccessTokenProvider;
+
+    public ConfiguredCardTerminalClient(
+        ICardTerminalSettingsProvider settingsProvider,
+        HttpClient httpClient,
+        ILinklyTerminalClient? linklyTerminalClient = null,
+        ISquareAccessTokenProvider? squareAccessTokenProvider = null)
+    {
+        _settingsProvider = settingsProvider;
+        _httpClient = httpClient;
+        _linklyTerminalClient = linklyTerminalClient;
+        _squareAccessTokenProvider = squareAccessTokenProvider;
+    }
 
     public async Task<PaymentAuthorizationResult> AuthorizeAsync(
         decimal amount,
@@ -67,18 +200,19 @@ public sealed class ConfiguredCardTerminalClient(CardTerminalSettings settings) 
             return new PaymentAuthorizationResult(false, null, "Card amount must be greater than zero.");
         }
 
+        var settings = await _settingsProvider.GetSettingsAsync(cancellationToken);
         return settings.Processor switch
         {
-            CardProcessorKind.Linkly => new PaymentAuthorizationResult(
-                false,
-                null,
-                "ANZ Linkly terminal adapter is not wired to the official SDK in this build."),
-            CardProcessorKind.Square => await AuthorizeSquareAsync(amount, session, cancellationToken),
+            CardProcessorKind.Linkly => _linklyTerminalClient is null
+                ? new PaymentAuthorizationResult(false, null, "ANZ Linkly terminal adapter is unavailable.")
+                : await _linklyTerminalClient.PurchaseAsync(amount, session, settings, cancellationToken),
+            CardProcessorKind.Square => await AuthorizeSquareAsync(settings, amount, session, cancellationToken),
             _ => new PaymentAuthorizationResult(false, null, "Card terminal is not configured.")
         };
     }
 
     private async Task<PaymentAuthorizationResult> AuthorizeSquareAsync(
+        CardTerminalSettings settings,
         decimal amount,
         PosSessionState session,
         CancellationToken cancellationToken)
@@ -93,6 +227,8 @@ public sealed class ConfiguredCardTerminalClient(CardTerminalSettings settings) 
         using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         timeoutCts.CancelAfter(settings.TerminalTimeout);
 
+        var currentSettings = settings;
+        var hasRefreshedToken = false;
         var reference = Limit($"{session.DeviceCode}-{DateTimeOffset.UtcNow:yyyyMMddHHmmssfff}", 40);
         var createRequest = new
         {
@@ -114,15 +250,20 @@ public sealed class ConfiguredCardTerminalClient(CardTerminalSettings settings) 
             }
         };
 
-        using var createResponse = await SendSquareAsync(
+        var createResult = await SendSquareWithTokenRefreshAsync(
+            currentSettings,
             HttpMethod.Post,
-            "v2/terminals/checkouts",
+            "terminals/checkouts",
             createRequest,
-            timeoutCts.Token);
+            allowRefresh: !hasRefreshedToken,
+            cancellationToken: timeoutCts.Token);
+        currentSettings = createResult.Settings;
+        hasRefreshedToken = hasRefreshedToken || createResult.Refreshed;
+        using var createResponse = createResult.Response;
         var createBody = await createResponse.Content.ReadAsStringAsync(timeoutCts.Token);
         if (!createResponse.IsSuccessStatusCode)
         {
-            return new PaymentAuthorizationResult(false, null, $"Square checkout failed: {createBody}");
+            return new PaymentAuthorizationResult(false, null, $"Square checkout failed with HTTP {(int)createResponse.StatusCode}.");
         }
 
         using var createDocument = JsonDocument.Parse(createBody);
@@ -136,15 +277,20 @@ public sealed class ConfiguredCardTerminalClient(CardTerminalSettings settings) 
         while (true)
         {
             timeoutCts.Token.ThrowIfCancellationRequested();
-            using var getResponse = await SendSquareAsync(
+            var getResult = await SendSquareWithTokenRefreshAsync(
+                currentSettings,
                 HttpMethod.Get,
-                $"v2/terminals/checkouts/{Uri.EscapeDataString(checkoutId)}",
+                $"terminals/checkouts/{Uri.EscapeDataString(checkoutId)}",
                 body: null,
-                timeoutCts.Token);
+                allowRefresh: !hasRefreshedToken,
+                cancellationToken: timeoutCts.Token);
+            currentSettings = getResult.Settings;
+            hasRefreshedToken = hasRefreshedToken || getResult.Refreshed;
+            using var getResponse = getResult.Response;
             var getBody = await getResponse.Content.ReadAsStringAsync(timeoutCts.Token);
             if (!getResponse.IsSuccessStatusCode)
             {
-                return new PaymentAuthorizationResult(false, null, $"Square checkout status failed: {getBody}");
+                return new PaymentAuthorizationResult(false, null, $"Square checkout status failed with HTTP {(int)getResponse.StatusCode}.");
             }
 
             using var getDocument = JsonDocument.Parse(getBody);
@@ -159,7 +305,27 @@ public sealed class ConfiguredCardTerminalClient(CardTerminalSettings settings) 
                 }
 
                 var paymentId = ReadFirstPaymentId(currentCheckout) ?? checkoutId;
-                return new PaymentAuthorizationResult(true, $"SQ:{paymentId}", "Square", authorizedAmount);
+                return new PaymentAuthorizationResult(
+                    true,
+                    $"SQ:{paymentId}",
+                    "Square",
+                    authorizedAmount,
+                    [
+                        new CardTransactionDto(
+                            "Square",
+                            paymentId,
+                            null,
+                            null,
+                            null,
+                            null,
+                            null,
+                            null,
+                            status,
+                            null,
+                            DateTimeOffset.UtcNow,
+                            authorizedAmount,
+                            null)
+                    ]);
             }
 
             if (string.Equals(status, "CANCELED", StringComparison.OrdinalIgnoreCase))
@@ -171,7 +337,42 @@ public sealed class ConfiguredCardTerminalClient(CardTerminalSettings settings) 
         }
     }
 
+    private async Task<SquareSendResult> SendSquareWithTokenRefreshAsync(
+        CardTerminalSettings settings,
+        HttpMethod method,
+        string relativeUrl,
+        object? body,
+        bool allowRefresh,
+        CancellationToken cancellationToken)
+    {
+        var response = await SendSquareAsync(settings, method, relativeUrl, body, cancellationToken);
+        if (!allowRefresh || !IsSquareAuthenticationFailure(response) || _squareAccessTokenProvider is null)
+        {
+            return new SquareSendResult(response, settings, false);
+        }
+
+        response.Dispose();
+        var refreshedToken = await _squareAccessTokenProvider.GetSquareAccessTokenAsync(
+            settings.Environment,
+            forceRefresh: true,
+            cancellationToken);
+        if (string.IsNullOrWhiteSpace(refreshedToken))
+        {
+            return new SquareSendResult(
+                new HttpResponseMessage(System.Net.HttpStatusCode.Unauthorized),
+                settings,
+                false);
+        }
+
+        var refreshedSettings = settings with { SquareAccessToken = refreshedToken };
+        return new SquareSendResult(
+            await SendSquareAsync(refreshedSettings, method, relativeUrl, body, cancellationToken),
+            refreshedSettings,
+            true);
+    }
+
     private async Task<HttpResponseMessage> SendSquareAsync(
+        CardTerminalSettings settings,
         HttpMethod method,
         string relativeUrl,
         object? body,
@@ -181,14 +382,14 @@ public sealed class ConfiguredCardTerminalClient(CardTerminalSettings settings) 
             ? new Uri(settings.SquareApiBaseUrl, UriKind.Absolute)
             : new Uri(settings.SquareApiBaseUrl + "/", UriKind.Absolute);
         using var request = new HttpRequestMessage(method, new Uri(baseUri, relativeUrl));
-        request.Headers.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", settings.SquareAccessToken);
-        request.Headers.Add("Square-Version", "2026-01-22");
+        request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", settings.SquareAccessToken);
+        request.Headers.Add("Square-Version", CardTerminalSettings.SquareVersion);
         if (body is not null)
         {
             request.Content = JsonContent.Create(body, options: JsonOptions);
         }
 
-        return await SquareHttpClient.SendAsync(request, cancellationToken);
+        return await _httpClient.SendAsync(request, cancellationToken);
     }
 
     private static long ToMinorUnits(decimal amount)
@@ -218,4 +419,14 @@ public sealed class ConfiguredCardTerminalClient(CardTerminalSettings settings) 
     {
         return value.Length <= maxLength ? value : value[..maxLength];
     }
+
+    private static bool IsSquareAuthenticationFailure(HttpResponseMessage response)
+    {
+        return response.StatusCode is System.Net.HttpStatusCode.Unauthorized or System.Net.HttpStatusCode.Forbidden;
+    }
+
+    private sealed record SquareSendResult(
+        HttpResponseMessage Response,
+        CardTerminalSettings Settings,
+        bool Refreshed);
 }

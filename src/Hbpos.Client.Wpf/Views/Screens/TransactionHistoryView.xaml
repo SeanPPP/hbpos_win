@@ -194,16 +194,24 @@
                             <ItemsControl ItemsSource="{Binding Payments}" Margin="0,8,0,0">
                                 <ItemsControl.ItemTemplate>
                                     <DataTemplate>
-                                        <DockPanel Margin="0,0,0,6">
-                                            <TextBlock FontSize="10" Foreground="{StaticResource PosMutedForegroundBrush}">
-                                                <Run Text="{Binding MethodLabel, Mode=OneWay}" />
-                                                <Run Text="{Binding DisplayReference, StringFormat={}  {0}}" />
-                                            </TextBlock>
-                                            <TextBlock DockPanel.Dock="Right"
+                                        <Grid Margin="0,0,0,6">
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="*" />
+                                                <ColumnDefinition Width="Auto" />
+                                            </Grid.ColumnDefinitions>
+                                            <StackPanel>
+                                                <TextBlock FontSize="10" Foreground="{StaticResource PosMutedForegroundBrush}">
+                                                    <Run Text="{Binding MethodLabel, Mode=OneWay}" />
+                                                    <Run Text="{Binding DisplayReference, StringFormat={}  {0}}" />
+                                                </TextBlock>
+                                                <TextBlock Text="{Binding CardSummary}" FontSize="9" Foreground="{StaticResource PosMutedForegroundBrush}" TextWrapping="Wrap" />
+                                                <TextBlock Text="{Binding ReceiptText}" FontSize="8" Foreground="{StaticResource PosMutedForegroundBrush}" TextWrapping="Wrap" FontFamily="Consolas" />
+                                            </StackPanel>
+                                            <TextBlock Grid.Column="1"
                                                        Text="{Binding Amount, StringFormat={}{0:C2}}"
                                                        FontSize="10"
                                                        FontWeight="Bold" />
-                                        </DockPanel>
+                                        </Grid>
                                     </DataTemplate>
                                 </ItemsControl.ItemTemplate>
                             </ItemsControl>

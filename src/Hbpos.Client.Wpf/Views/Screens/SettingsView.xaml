@@ -1,0 +1,327 @@
+<UserControl x:Class="Hbpos.Client.Wpf.Views.Screens.SettingsView"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+             xmlns:materialDesign="http://materialdesigninxaml.net/winfx/xaml/themes"
+             xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+             mc:Ignorable="d"
+             d:DesignHeight="688"
+             d:DesignWidth="1366"
+             Background="{StaticResource PosScreenBackgroundBrush}">
+    <UserControl.Resources>
+        <BooleanToVisibilityConverter x:Key="BoolToVis" />
+
+        <Style x:Key="SettingsLabelStyle" TargetType="TextBlock">
+            <Setter Property="FontSize" Value="11" />
+            <Setter Property="FontWeight" Value="Bold" />
+            <Setter Property="Foreground" Value="{StaticResource PosMutedForegroundBrush}" />
+            <Setter Property="Margin" Value="0,0,0,6" />
+        </Style>
+
+        <Style x:Key="SettingsFieldTextBoxStyle" TargetType="TextBox" BasedOn="{StaticResource PosSearchTextBoxStyle}">
+            <Setter Property="Height" Value="42" />
+            <Setter Property="FontSize" Value="13" />
+        </Style>
+
+        <Style x:Key="SettingsComboBoxStyle" TargetType="ComboBox">
+            <Setter Property="Height" Value="42" />
+            <Setter Property="Padding" Value="10,0" />
+            <Setter Property="Background" Value="White" />
+            <Setter Property="BorderBrush" Value="{StaticResource PosBorderBrush}" />
+            <Setter Property="BorderThickness" Value="1" />
+        </Style>
+    </UserControl.Resources>
+
+    <Grid>
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="*" />
+            <RowDefinition Height="Auto" />
+        </Grid.RowDefinitions>
+
+        <Border Grid.Row="0"
+                Background="{StaticResource PosSurfaceBrush}"
+                BorderBrush="#FFE1E5EC"
+                BorderThickness="0,0,0,1"
+                Padding="24,18">
+            <StackPanel>
+                <TextBlock Text="{Binding ScreenTitleText}"
+                           FontSize="24"
+                           FontWeight="Black"
+                           Foreground="{StaticResource PosTextBrush}" />
+                <TextBlock Text="{Binding CardTerminalTitleText}"
+                           FontSize="12"
+                           Foreground="{StaticResource PosMutedForegroundBrush}"
+                           Margin="0,4,0,0" />
+            </StackPanel>
+        </Border>
+
+        <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto">
+            <Grid Margin="24">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="2*" />
+                    <ColumnDefinition Width="16" />
+                    <ColumnDefinition Width="*" />
+                </Grid.ColumnDefinitions>
+
+                <Border Grid.Column="0"
+                        Background="{StaticResource PosSurfaceBrush}"
+                        BorderBrush="#FFE0E4EC"
+                        BorderThickness="1"
+                        CornerRadius="8"
+                        Padding="20">
+                    <Grid>
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="Auto" />
+                            <RowDefinition Height="Auto" />
+                            <RowDefinition Height="Auto" />
+                            <RowDefinition Height="Auto" />
+                            <RowDefinition Height="Auto" />
+                            <RowDefinition Height="Auto" />
+                        </Grid.RowDefinitions>
+
+                        <DockPanel Grid.Row="0" Margin="0,0,0,18">
+                            <Border DockPanel.Dock="Left"
+                                    Width="38"
+                                    Height="38"
+                                    Background="#FFE8F0FE"
+                                    CornerRadius="8"
+                                    Margin="0,0,12,0">
+                                <materialDesign:PackIcon Kind="ContactlessPayment"
+                                                         Width="22"
+                                                         Height="22"
+                                                         Foreground="{StaticResource PosPrimaryBrush}"
+                                                         HorizontalAlignment="Center"
+                                                         VerticalAlignment="Center" />
+                            </Border>
+                            <StackPanel>
+                                <TextBlock Text="{Binding SquareTitleText}"
+                                           FontSize="18"
+                                           FontWeight="Black" />
+                                <TextBlock Text="Use a Square Access Token to load locations and terminal devices."
+                                           FontSize="11"
+                                           Foreground="{StaticResource PosMutedForegroundBrush}"
+                                           Margin="0,4,0,0" />
+                            </StackPanel>
+                        </DockPanel>
+
+                        <Grid Grid.Row="1" Margin="0,0,0,14">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="180" />
+                            </Grid.ColumnDefinitions>
+                            <StackPanel Grid.Column="0">
+                                <TextBlock Text="Token Source" Style="{StaticResource SettingsLabelStyle}" />
+                                <Border MinHeight="42"
+                                        Background="#FFF6F8FB"
+                                        BorderBrush="{StaticResource PosBorderBrush}"
+                                        BorderThickness="1"
+                                        CornerRadius="6"
+                                        Padding="12,8">
+                                    <TextBlock Text="{Binding SquareTokenStatusText}"
+                                               FontSize="12"
+                                               Foreground="{StaticResource PosMutedForegroundBrush}"
+                                               TextWrapping="Wrap" />
+                                </Border>
+                                <TextBlock Text="Square token is stored encrypted on this device and fetched from HBPOS when missing or rejected."
+                                           FontSize="11"
+                                           Foreground="{StaticResource PosMutedForegroundBrush}"
+                                           Margin="0,6,0,0" />
+                            </StackPanel>
+                            <StackPanel Grid.Column="1" Margin="14,0,0,0">
+                                <TextBlock Text="Sandbox" Style="{StaticResource SettingsLabelStyle}" />
+                                <CheckBox IsChecked="{Binding IsSandbox, Mode=TwoWay}"
+                                          VerticalAlignment="Center"
+                                          Margin="0,10,0,0">
+                                    <TextBlock Text="Test mode only" FontWeight="Bold" />
+                                </CheckBox>
+                            </StackPanel>
+                        </Grid>
+
+                        <Grid Grid.Row="2" Margin="0,0,0,14">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="Auto" />
+                            </Grid.ColumnDefinitions>
+                            <StackPanel Grid.Column="0">
+                                <TextBlock Text="Location" Style="{StaticResource SettingsLabelStyle}" />
+                                <ComboBox ItemsSource="{Binding SquareLocations}"
+                                          SelectedItem="{Binding SelectedSquareLocation, Mode=TwoWay}"
+                                          Style="{StaticResource SettingsComboBoxStyle}">
+                                    <ComboBox.ItemTemplate>
+                                        <DataTemplate>
+                                            <StackPanel>
+                                                <TextBlock Text="{Binding Name}" FontWeight="Bold" />
+                                                <TextBlock Text="{Binding Id}" FontSize="10" Foreground="{StaticResource PosMutedForegroundBrush}" />
+                                            </StackPanel>
+                                        </DataTemplate>
+                                    </ComboBox.ItemTemplate>
+                                </ComboBox>
+                            </StackPanel>
+                            <Button Grid.Column="1"
+                                    Command="{Binding LoadLocationsCommand}"
+                                    Style="{StaticResource PosSecondaryButtonStyle}"
+                                    MinWidth="156"
+                                    Height="42"
+                                    Margin="14,22,0,0"
+                                    ToolTip="Load Square locations">
+                                <StackPanel Orientation="Horizontal">
+                                    <materialDesign:PackIcon Kind="CloudDownloadOutline" Width="18" Height="18" Margin="0,0,8,0" />
+                                    <TextBlock Text="Load Locations" />
+                                </StackPanel>
+                            </Button>
+                        </Grid>
+
+                        <Grid Grid.Row="3" Margin="0,0,0,14">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="Auto" />
+                            </Grid.ColumnDefinitions>
+                            <StackPanel Grid.Column="0">
+                                <TextBlock Text="Device" Style="{StaticResource SettingsLabelStyle}" />
+                                <ComboBox ItemsSource="{Binding SquareDevices}"
+                                          SelectedItem="{Binding SelectedSquareDevice, Mode=TwoWay}"
+                                          Style="{StaticResource SettingsComboBoxStyle}">
+                                    <ComboBox.ItemTemplate>
+                                        <DataTemplate>
+                                            <StackPanel>
+                                                <TextBlock Text="{Binding Name}" FontWeight="Bold" />
+                                                <TextBlock FontSize="10" Foreground="{StaticResource PosMutedForegroundBrush}">
+                                                    <Run Text="{Binding Id}" />
+                                                    <Run Text="  " />
+                                                    <Run Text="{Binding Status}" />
+                                                </TextBlock>
+                                            </StackPanel>
+                                        </DataTemplate>
+                                    </ComboBox.ItemTemplate>
+                                </ComboBox>
+                            </StackPanel>
+                            <Button Grid.Column="1"
+                                    Command="{Binding LoadDevicesCommand}"
+                                    Style="{StaticResource PosSecondaryButtonStyle}"
+                                    MinWidth="156"
+                                    Height="42"
+                                    Margin="14,22,0,0"
+                                    ToolTip="Load Square devices">
+                                <StackPanel Orientation="Horizontal">
+                                    <materialDesign:PackIcon Kind="TabletCellphone" Width="18" Height="18" Margin="0,0,8,0" />
+                                    <TextBlock Text="Load Devices" />
+                                </StackPanel>
+                            </Button>
+                        </Grid>
+
+                        <StackPanel Grid.Row="4" Margin="0,0,0,16">
+                            <TextBlock Text="Terminal Timeout Seconds" Style="{StaticResource SettingsLabelStyle}" />
+                            <TextBox Text="{Binding TimeoutSecondsText, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                     Style="{StaticResource SettingsFieldTextBoxStyle}"
+                                     Width="180"
+                                     HorizontalAlignment="Left" />
+                        </StackPanel>
+
+                        <Button Grid.Row="5"
+                                Command="{Binding SaveSquareCommand}"
+                                Style="{StaticResource PosPrimaryButtonStyle}"
+                                Height="46"
+                                HorizontalAlignment="Left"
+                                MinWidth="170">
+                            <StackPanel Orientation="Horizontal">
+                                <materialDesign:PackIcon Kind="ContentSave" Width="18" Height="18" Margin="0,0,8,0" Foreground="White" />
+                                <TextBlock Text="Save Square" Foreground="White" />
+                            </StackPanel>
+                        </Button>
+                    </Grid>
+                </Border>
+
+                <Border Grid.Column="2"
+                        Background="{StaticResource PosSurfaceBrush}"
+                        BorderBrush="#FFE0E4EC"
+                        BorderThickness="1"
+                        CornerRadius="8"
+                        Padding="20">
+                    <StackPanel>
+                        <DockPanel Margin="0,0,0,18">
+                            <Border DockPanel.Dock="Left"
+                                    Width="38"
+                                    Height="38"
+                                    Background="#FFFFF4DE"
+                                    CornerRadius="8"
+                                    Margin="0,0,12,0">
+                                <materialDesign:PackIcon Kind="LanConnect"
+                                                         Width="22"
+                                                         Height="22"
+                                                         Foreground="#FF8F4E00"
+                                                         HorizontalAlignment="Center"
+                                                         VerticalAlignment="Center" />
+                            </Border>
+                            <StackPanel>
+                                <TextBlock Text="{Binding LinklyTitleText}"
+                                           FontSize="18"
+                                           FontWeight="Black" />
+                                <TextBlock Text="Connect to the local Linkly EFT-Client, then enable ANZ Linkly for card payments."
+                                           FontSize="11"
+                                           Foreground="#FF8F4E00"
+                                           TextWrapping="Wrap"
+                                           Margin="0,4,0,0" />
+                            </StackPanel>
+                        </DockPanel>
+
+                        <TextBlock Text="Host" Style="{StaticResource SettingsLabelStyle}" />
+                        <TextBox Text="{Binding LinklyHostText, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                 Style="{StaticResource SettingsFieldTextBoxStyle}"
+                                 Margin="0,0,0,14" />
+
+                        <TextBlock Text="Port" Style="{StaticResource SettingsLabelStyle}" />
+                        <TextBox Text="{Binding LinklyPortText, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                 Style="{StaticResource SettingsFieldTextBoxStyle}"
+                                 Margin="0,0,0,18" />
+
+                        <StackPanel Orientation="Horizontal">
+                            <Button Command="{Binding TestLinklyCommand}"
+                                    Style="{StaticResource PosSecondaryButtonStyle}"
+                                    Height="42"
+                                    MinWidth="150"
+                                    Margin="0,0,10,0">
+                                <StackPanel Orientation="Horizontal">
+                                    <materialDesign:PackIcon Kind="LanConnect" Width="18" Height="18" Margin="0,0,8,0" />
+                                    <TextBlock Text="Test Linkly" />
+                                </StackPanel>
+                            </Button>
+                            <Button Command="{Binding SaveLinklyCommand}"
+                                    Style="{StaticResource PosPrimaryButtonStyle}"
+                                    Height="42"
+                                    MinWidth="150">
+                                <StackPanel Orientation="Horizontal">
+                                    <materialDesign:PackIcon Kind="ContentSave" Width="18" Height="18" Margin="0,0,8,0" Foreground="White" />
+                                    <TextBlock Text="Enable Linkly" Foreground="White" />
+                                </StackPanel>
+                            </Button>
+                        </StackPanel>
+                    </StackPanel>
+                </Border>
+            </Grid>
+        </ScrollViewer>
+
+        <Border Grid.Row="2"
+                Background="#FFFAFAFA"
+                BorderBrush="#FFE1E5EC"
+                BorderThickness="0,1,0,0"
+                Padding="24,10">
+            <StackPanel Orientation="Horizontal">
+                <materialDesign:PackIcon Kind="InformationOutline"
+                                         Width="16"
+                                         Height="16"
+                                         Foreground="{StaticResource PosMutedForegroundBrush}"
+                                         Margin="0,0,8,0" />
+                <TextBlock Text="{Binding StatusMessage}"
+                           FontSize="12"
+                           Foreground="{StaticResource PosMutedForegroundBrush}"
+                           TextTrimming="CharacterEllipsis" />
+                <ProgressBar Width="90"
+                             Height="4"
+                             Margin="14,0,0,0"
+                             IsIndeterminate="True"
+                             Visibility="{Binding IsBusy, Converter={StaticResource BoolToVis}}" />
+            </StackPanel>
+        </Border>
+    </Grid>
+</UserControl>

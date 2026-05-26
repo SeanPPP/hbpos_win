@@ -75,11 +75,43 @@ public sealed class OrderSyncPlanner : IOrderSyncPlanner
             LastUploadTime = now
         }).ToList();
 
-        return new OrderSyncPlan(order, lines, payments);
+        var bankTransactions = request.Payments
+            .Where(payment => payment.Method == PaymentMethodKind.Card)
+            .SelectMany(payment => (payment.CardTransactions ?? []).Select(transaction => new BankTransaction
+            {
+                Id = Guid.NewGuid(),
+                PaymentGuid = payment.PaymentGuid.ToString("D"),
+                OrderGuid = orderGuid,
+                TxnRef = transaction.TxnRef,
+                Caid = transaction.MerchantId,
+                AuthCode = transaction.AuthCode,
+                CardType = transaction.CardType,
+                CardBIN = transaction.CardBin,
+                CardNumber = transaction.MaskedCardNumber,
+                BankDateTime = transaction.BankDateTime?.UtcDateTime,
+                ResponseCode = transaction.ResponseCode,
+                ResponseText = transaction.ResponseText,
+                Stan = transaction.Stan,
+                Amount = transaction.Amount,
+                ReceiptText = Limit(transaction.ReceiptText, 1000)
+            })).ToList();
+
+        return new OrderSyncPlan(order, lines, payments, bankTransactions);
+    }
+
+    private static string? Limit(string? value, int maxLength)
+    {
+        if (string.IsNullOrEmpty(value))
+        {
+            return value;
+        }
+
+        return value.Length <= maxLength ? value : value[..maxLength];
     }
 }
 
 public sealed record OrderSyncPlan(
     SalesOrder Order,
     IReadOnlyList<SalesOrderDetail> Lines,
-    IReadOnlyList<PaymentDetail> Payments);
+    IReadOnlyList<PaymentDetail> Payments,
+    IReadOnlyList<BankTransaction> BankTransactions);

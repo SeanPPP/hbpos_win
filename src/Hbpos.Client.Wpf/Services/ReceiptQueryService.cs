@@ -69,7 +69,8 @@ public sealed class ReceiptQueryService(ILocalOrderRepository orderRepository) :
             order.Payments.Select(payment => new ReceiptPaymentLine(
                 payment.Method,
                 payment.Amount,
-                payment.Reference)).ToList());
+                payment.Reference,
+                payment.CardTransactions)).ToList());
     }
 }
 

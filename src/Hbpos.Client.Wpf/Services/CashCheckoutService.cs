@@ -130,7 +130,8 @@ public sealed class CashCheckoutService
                 Guid.NewGuid(),
                 tender.Method,
                 decimal.Round(appliedAmount, 2, MidpointRounding.AwayFromZero),
-                tender.Reference));
+                tender.Reference,
+                tender.CardTransactions));
             remainingAmount = decimal.Round(remainingAmount - appliedAmount, 2, MidpointRounding.AwayFromZero);
         }
 

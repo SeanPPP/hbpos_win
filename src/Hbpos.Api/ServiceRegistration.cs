@@ -20,6 +20,10 @@ public static class ServiceRegistration
         services.AddScoped<IOrderReturnService, OrderReturnService>();
         services.AddScoped<IStoreVoucherRepository, SqlSugarStoreVoucherRepository>();
         services.AddScoped<IStoreVoucherService, StoreVoucherService>();
+        services.AddScoped<ISquareTokenRepository, SqlSugarSquareTokenRepository>();
+        services.AddScoped<ISquareTokenService, SquareTokenService>();
+        services.AddScoped<ISquareTokenSchemaSqlExecutor, SqlSugarSquareTokenSchemaSqlExecutor>();
+        services.AddScoped<ISquareTokenSchemaInitializer, SqlSugarSquareTokenSchemaInitializer>();
         services.AddSingleton<ICatalogIndexCache, CatalogIndexCache>();
         services.AddSingleton<IPriceIndexBuilder, PriceIndexBuilder>();
         services.AddSingleton<IOrderSyncPlanner, OrderSyncPlanner>();

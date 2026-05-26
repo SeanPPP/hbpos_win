@@ -10,6 +10,7 @@
     <PackageReference Include="Microsoft.Data.Sqlite" Version="10.0.8" />
     <PackageReference Include="Microsoft.Extensions.Hosting" Version="10.0.8" />
     <PackageReference Include="Microsoft.Extensions.Http" Version="10.0.8" />
+    <PackageReference Include="PCEFTPOS.EFTClient.IPInterface" Version="1.7.3" />
   </ItemGroup>
 
   <PropertyGroup>

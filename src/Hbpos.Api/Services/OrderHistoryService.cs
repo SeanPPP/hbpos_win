@@ -137,6 +137,16 @@ public sealed class SqlSugarOrderHistoryRepository(HbposSqlSugarContext dbContex
         var payments = await dbContext.PosmDb.Queryable<PaymentDetail>()
             .Where(x => x.OrderGuid == orderGuidText)
             .ToListAsync(cancellationToken);
+        var bankTransactions = await dbContext.PosmDb.Queryable<BankTransaction>()
+            .Where(x => x.OrderGuid == orderGuidText)
+            .ToListAsync(cancellationToken);
+        var bankTransactionsByPayment = bankTransactions
+            .Where(transaction => !string.IsNullOrWhiteSpace(transaction.PaymentGuid))
+            .GroupBy(transaction => transaction.PaymentGuid!)
+            .ToDictionary(
+                group => group.Key,
+                group => group.ToList(),
+                StringComparer.OrdinalIgnoreCase);
 
         return new OrderHistoryDetailsDto(
             orderGuid,
@@ -162,7 +172,42 @@ public sealed class SqlSugarOrderHistoryRepository(HbposSqlSugarContext dbContex
                 ParseGuid(payment.PaymentGuid),
                 (PaymentMethodKind)payment.PaymentMethod,
                 Amount(payment.Amount),
-                payment.Reference)).ToList());
+                payment.Reference,
+                payment.PaymentGuid is not null && bankTransactionsByPayment.TryGetValue(payment.PaymentGuid, out var cardTransactions)
+                    ? cardTransactions.Select(transaction => ToCardTransactionDto(payment.Reference, transaction)).ToList()
+                    : null)).ToList());
+    }
+
+    private static CardTransactionDto ToCardTransactionDto(string? paymentReference, BankTransaction transaction)
+    {
+        return new CardTransactionDto(
+            InferCardProcessor(paymentReference),
+            transaction.TxnRef,
+            transaction.AuthCode,
+            transaction.CardType,
+            transaction.CardBIN,
+            transaction.CardNumber,
+            transaction.Caid,
+            transaction.ResponseCode,
+            transaction.ResponseText,
+            transaction.Stan,
+            transaction.BankDateTime is null
+                ? null
+                : new DateTimeOffset(DateTime.SpecifyKind(transaction.BankDateTime.Value, DateTimeKind.Utc)),
+            Amount(transaction.Amount),
+            transaction.ReceiptText);
+    }
+
+    private static string InferCardProcessor(string? paymentReference)
+    {
+        if (paymentReference?.StartsWith("ANZ:", StringComparison.OrdinalIgnoreCase) == true)
+        {
+            return "ANZ";
+        }
+
+        return paymentReference?.StartsWith("SQ:", StringComparison.OrdinalIgnoreCase) == true
+            ? "Square"
+            : "Card";
     }
 
     private static Guid ParseGuid(string? value)

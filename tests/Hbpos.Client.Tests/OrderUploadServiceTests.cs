@@ -94,6 +94,76 @@ public sealed class OrderUploadServiceTests
         }
     }
 
+    [Fact]
+    public async Task Local_order_repository_roundtrips_card_transactions()
+    {
+        var databasePath = Path.Combine(Path.GetTempPath(), $"hbpos-card-transaction-{Guid.NewGuid():N}.db");
+
+        try
+        {
+            var store = new LocalSqliteStore(databasePath);
+            var schema = new LocalSchemaService(store);
+            var orders = new LocalOrderRepository(store);
+            var order = CreateLocalOrder();
+
+            await schema.InitializeAsync();
+            await orders.SavePendingOrderAsync(order);
+
+            var saved = await orders.GetOrderAsync(order.OrderGuid);
+
+            var payment = Assert.Single(saved!.Payments);
+            var transaction = Assert.Single(payment.CardTransactions!);
+            Assert.Equal("ANZ", transaction.Processor);
+            Assert.Equal("TXN-1", transaction.TxnRef);
+            Assert.Equal("****1234", transaction.MaskedCardNumber);
+            Assert.Equal("merchant receipt", transaction.ReceiptText);
+        }
+        finally
+        {
+            Microsoft.Data.Sqlite.SqliteConnection.ClearAllPools();
+            if (File.Exists(databasePath))
+            {
+                File.Delete(databasePath);
+            }
+        }
+    }
+
+    [Fact]
+    public async Task UploadOrderAsync_sends_card_transactions_to_sync_api()
+    {
+        var databasePath = Path.Combine(Path.GetTempPath(), $"hbpos-card-upload-{Guid.NewGuid():N}.db");
+
+        try
+        {
+            var store = new LocalSqliteStore(databasePath);
+            var schema = new LocalSchemaService(store);
+            var orders = new LocalOrderRepository(store);
+            var uploadRepository = new LocalOrderUploadRepository(store);
+            var order = CreateLocalOrder();
+            var apiClient = new CapturingOrderSyncApiClient(order.OrderGuid);
+
+            await schema.InitializeAsync();
+            await orders.SavePendingOrderAsync(order);
+
+            var uploadService = new OrderUploadService(orders, apiClient, uploadRepository);
+            await uploadService.UploadOrderAsync(order.OrderGuid);
+
+            var payment = Assert.Single(apiClient.LastRequest!.Payments);
+            var transaction = Assert.Single(payment.CardTransactions!);
+            Assert.Equal("ANZ", transaction.Processor);
+            Assert.Equal("TXN-1", transaction.TxnRef);
+            Assert.Equal("merchant receipt", transaction.ReceiptText);
+        }
+        finally
+        {
+            Microsoft.Data.Sqlite.SqliteConnection.ClearAllPools();
+            if (File.Exists(databasePath))
+            {
+                File.Delete(databasePath);
+            }
+        }
+    }
+
     private static LocalOrder CreateLocalOrder()
     {
         return new LocalOrder(
@@ -110,7 +180,29 @@ public sealed class OrderUploadServiceTests
                 new LocalOrderLine(Guid.NewGuid(), "SKU-101", null, "Organic Gala Apples", "690101", "ITEM-101", 2m, 2.50m, 0m, 5.00m, PriceSourceKind.StoreRetailPrice),
                 new LocalOrderLine(Guid.NewGuid(), "SKU-102", null, "Whole Grain Bread", "690102", "ITEM-102", 1m, 4.20m, 0.20m, 4.00m, PriceSourceKind.ProductBase)
             ],
-            [new LocalPayment(Guid.NewGuid(), PaymentMethodKind.Card, 9.00m, "CARD-REF-01")]);
+            [
+                new LocalPayment(
+                    Guid.NewGuid(),
+                    PaymentMethodKind.Card,
+                    9.00m,
+                    "ANZ:TXN-1",
+                    [
+                        new CardTransactionDto(
+                            "ANZ",
+                            "TXN-1",
+                            "123456",
+                            "VISA",
+                            4,
+                            "****1234",
+                            "MID-1",
+                            "00",
+                            "APPROVED",
+                            "42",
+                            DateTimeOffset.Parse("2026-05-26T00:00:00Z"),
+                            9.00m,
+                            "merchant receipt")
+                    ])
+            ]);
     }
 
     private sealed class StubOrderSyncApiClient(OrderSyncResponse response) : IOrderSyncApiClient
@@ -118,6 +210,17 @@ public sealed class OrderUploadServiceTests
         public Task<OrderSyncResponse> SyncAsync(OrderSyncRequest request, CancellationToken cancellationToken = default)
         {
             return Task.FromResult(response);
+        }
+    }
+
+    private sealed class CapturingOrderSyncApiClient(Guid orderGuid) : IOrderSyncApiClient
+    {
+        public OrderSyncRequest? LastRequest { get; private set; }
+
+        public Task<OrderSyncResponse> SyncAsync(OrderSyncRequest request, CancellationToken cancellationToken = default)
+        {
+            LastRequest = request;
+            return Task.FromResult(new OrderSyncResponse(orderGuid, true, false, "Synced"));
         }
     }
 

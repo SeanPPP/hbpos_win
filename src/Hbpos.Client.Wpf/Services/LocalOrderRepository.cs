@@ -85,6 +85,34 @@ public sealed class LocalOrderRepository(LocalSqliteStore store) : ILocalOrderRe
             command.Parameters.AddWithValue("$Amount", payment.Amount);
             command.Parameters.AddWithValue("$Reference", (object?)payment.Reference ?? DBNull.Value);
             await command.ExecuteNonQueryAsync(cancellationToken);
+
+            foreach (var cardTransaction in payment.CardTransactions ?? [])
+            {
+                await using var cardCommand = connection.CreateCommand();
+                cardCommand.Transaction = transaction;
+                cardCommand.CommandText = """
+                    INSERT INTO LocalCardTransactions
+                    (Id, PaymentGuid, OrderGuid, Processor, TxnRef, AuthCode, CardType, CardBin, MaskedCardNumber, MerchantId, ResponseCode, ResponseText, Stan, BankDateTime, Amount, ReceiptText)
+                    VALUES ($Id, $PaymentGuid, $OrderGuid, $Processor, $TxnRef, $AuthCode, $CardType, $CardBin, $MaskedCardNumber, $MerchantId, $ResponseCode, $ResponseText, $Stan, $BankDateTime, $Amount, $ReceiptText);
+                    """;
+                cardCommand.Parameters.AddWithValue("$Id", Guid.NewGuid().ToString());
+                cardCommand.Parameters.AddWithValue("$PaymentGuid", payment.PaymentGuid.ToString());
+                cardCommand.Parameters.AddWithValue("$OrderGuid", order.OrderGuid.ToString());
+                cardCommand.Parameters.AddWithValue("$Processor", cardTransaction.Processor);
+                cardCommand.Parameters.AddWithValue("$TxnRef", (object?)cardTransaction.TxnRef ?? DBNull.Value);
+                cardCommand.Parameters.AddWithValue("$AuthCode", (object?)cardTransaction.AuthCode ?? DBNull.Value);
+                cardCommand.Parameters.AddWithValue("$CardType", (object?)cardTransaction.CardType ?? DBNull.Value);
+                cardCommand.Parameters.AddWithValue("$CardBin", (object?)cardTransaction.CardBin ?? DBNull.Value);
+                cardCommand.Parameters.AddWithValue("$MaskedCardNumber", (object?)cardTransaction.MaskedCardNumber ?? DBNull.Value);
+                cardCommand.Parameters.AddWithValue("$MerchantId", (object?)cardTransaction.MerchantId ?? DBNull.Value);
+                cardCommand.Parameters.AddWithValue("$ResponseCode", (object?)cardTransaction.ResponseCode ?? DBNull.Value);
+                cardCommand.Parameters.AddWithValue("$ResponseText", (object?)cardTransaction.ResponseText ?? DBNull.Value);
+                cardCommand.Parameters.AddWithValue("$Stan", (object?)cardTransaction.Stan ?? DBNull.Value);
+                cardCommand.Parameters.AddWithValue("$BankDateTime", cardTransaction.BankDateTime?.ToString("O") ?? (object)DBNull.Value);
+                cardCommand.Parameters.AddWithValue("$Amount", cardTransaction.Amount);
+                cardCommand.Parameters.AddWithValue("$ReceiptText", (object?)cardTransaction.ReceiptText ?? DBNull.Value);
+                await cardCommand.ExecuteNonQueryAsync(cancellationToken);
+            }
         }
 
         await using (var queue = connection.CreateCommand())
@@ -285,18 +313,69 @@ public sealed class LocalOrderRepository(LocalSqliteStore store) : ILocalOrderRe
             """;
         command.Parameters.AddWithValue("$OrderGuid", orderGuid.ToString());
 
-        var payments = new List<LocalPayment>();
+        var paymentRows = new List<(Guid PaymentGuid, PaymentMethodKind Method, decimal Amount, string? Reference)>();
         await using var reader = await command.ExecuteReaderAsync(cancellationToken);
         while (await reader.ReadAsync(cancellationToken))
         {
-            payments.Add(new LocalPayment(
-                ReadGuid(reader, "PaymentGuid"),
+            var paymentGuid = ReadGuid(reader, "PaymentGuid");
+            paymentRows.Add((
+                paymentGuid,
                 (PaymentMethodKind)reader.GetInt32(reader.GetOrdinal("Method")),
                 ReadDecimal(reader, "Amount"),
                 ReadNullableString(reader, "Reference")));
         }
 
+        var payments = new List<LocalPayment>(paymentRows.Count);
+        foreach (var payment in paymentRows)
+        {
+            payments.Add(new LocalPayment(
+                payment.PaymentGuid,
+                payment.Method,
+                payment.Amount,
+                payment.Reference,
+                await ReadCardTransactionsAsync(connection, orderGuid, payment.PaymentGuid, cancellationToken)));
+        }
+
         return payments;
+    }
+
+    private static async Task<IReadOnlyList<CardTransactionDto>> ReadCardTransactionsAsync(
+        SqliteConnection connection,
+        Guid orderGuid,
+        Guid paymentGuid,
+        CancellationToken cancellationToken)
+    {
+        await using var command = connection.CreateCommand();
+        command.CommandText = """
+            SELECT Processor, TxnRef, AuthCode, CardType, CardBin, MaskedCardNumber, MerchantId, ResponseCode, ResponseText, Stan, BankDateTime, Amount, ReceiptText
+            FROM LocalCardTransactions
+            WHERE OrderGuid = $OrderGuid AND PaymentGuid = $PaymentGuid
+            ORDER BY rowid;
+            """;
+        command.Parameters.AddWithValue("$OrderGuid", orderGuid.ToString());
+        command.Parameters.AddWithValue("$PaymentGuid", paymentGuid.ToString());
+
+        var transactions = new List<CardTransactionDto>();
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+        while (await reader.ReadAsync(cancellationToken))
+        {
+            transactions.Add(new CardTransactionDto(
+                ReadString(reader, "Processor"),
+                ReadNullableString(reader, "TxnRef"),
+                ReadNullableString(reader, "AuthCode"),
+                ReadNullableString(reader, "CardType"),
+                ReadNullableInt(reader, "CardBin"),
+                ReadNullableString(reader, "MaskedCardNumber"),
+                ReadNullableString(reader, "MerchantId"),
+                ReadNullableString(reader, "ResponseCode"),
+                ReadNullableString(reader, "ResponseText"),
+                ReadNullableString(reader, "Stan"),
+                ReadNullableDateTimeOffset(reader, "BankDateTime"),
+                ReadDecimal(reader, "Amount"),
+                ReadNullableString(reader, "ReceiptText")));
+        }
+
+        return transactions;
     }
 
     private static Guid ReadGuid(SqliteDataReader reader, string name)
@@ -313,6 +392,12 @@ public sealed class LocalOrderRepository(LocalSqliteStore store) : ILocalOrderRe
     {
         var ordinal = reader.GetOrdinal(name);
         return reader.IsDBNull(ordinal) ? null : reader.GetString(ordinal);
+    }
+
+    private static int? ReadNullableInt(SqliteDataReader reader, string name)
+    {
+        var ordinal = reader.GetOrdinal(name);
+        return reader.IsDBNull(ordinal) ? null : Convert.ToInt32(reader.GetValue(ordinal), CultureInfo.InvariantCulture);
     }
 
     private static decimal ReadDecimal(SqliteDataReader reader, string name)
@@ -332,6 +417,12 @@ public sealed class LocalOrderRepository(LocalSqliteStore store) : ILocalOrderRe
     private static DateTimeOffset ReadDateTimeOffset(SqliteDataReader reader, string name)
     {
         return DateTimeOffset.Parse(ReadString(reader, name));
+    }
+
+    private static DateTimeOffset? ReadNullableDateTimeOffset(SqliteDataReader reader, string name)
+    {
+        var value = ReadNullableString(reader, name);
+        return string.IsNullOrWhiteSpace(value) ? null : DateTimeOffset.Parse(value);
     }
 
     private static string FormatPaymentSummary(string methodList)

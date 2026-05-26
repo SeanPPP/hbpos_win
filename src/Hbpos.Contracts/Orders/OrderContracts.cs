@@ -40,7 +40,23 @@ public sealed record PaymentSyncDto(
     PaymentMethodKind Method,
     decimal Amount,
     string? Reference,
-    string? ReservationToken = null);
+    string? ReservationToken = null,
+    IReadOnlyList<CardTransactionDto>? CardTransactions = null);
+
+public sealed record CardTransactionDto(
+    string Processor,
+    string? TxnRef,
+    string? AuthCode,
+    string? CardType,
+    int? CardBin,
+    string? MaskedCardNumber,
+    string? MerchantId,
+    string? ResponseCode,
+    string? ResponseText,
+    string? Stan,
+    DateTimeOffset? BankDateTime,
+    decimal Amount,
+    string? ReceiptText);
 
 public sealed record OrderSyncResponse(
     Guid OrderGuid,
@@ -100,7 +116,8 @@ public sealed record OrderHistoryPaymentDto(
     Guid PaymentGuid,
     PaymentMethodKind Method,
     decimal Amount,
-    string? Reference);
+    string? Reference,
+    IReadOnlyList<CardTransactionDto>? CardTransactions = null);
 
 public sealed record OrderReturnContextDto(
     OrderHistoryDetailsDto Order,

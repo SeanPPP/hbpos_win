@@ -82,14 +82,16 @@ public sealed class OrderUploadService(
                 payment.Method,
                 payment.Amount,
                 voucherCode,
-                reservationToken);
+                reservationToken,
+                payment.CardTransactions);
         }
 
         return new PaymentSyncDto(
             payment.PaymentGuid,
             payment.Method,
             payment.Amount,
-            payment.Reference);
+            payment.Reference,
+            CardTransactions: payment.CardTransactions);
     }
 
     private static (string VoucherCode, string ReservationToken) ParseVoucherReference(string? reference)

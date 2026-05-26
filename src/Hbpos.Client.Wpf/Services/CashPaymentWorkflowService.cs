@@ -312,7 +312,7 @@ public sealed class CashPaymentWorkflowService(
         }
 
         return PaymentTenderAttemptResult.Success(
-            new PaymentTender(method, authorizedAmount, authorization.Reference),
+            new PaymentTender(method, authorizedAmount, authorization.Reference, CardTransactions: authorization.CardTransactions),
             approvedStatusKey);
     }
 
@@ -367,7 +367,8 @@ public sealed record PaymentAuthorizationResult(
     bool Approved,
     string? Reference = null,
     string? Message = null,
-    decimal? AuthorizedAmount = null);
+    decimal? AuthorizedAmount = null,
+    IReadOnlyList<CardTransactionDto>? CardTransactions = null);
 
 public sealed record PaymentTenderAttemptResult(
     bool Succeeded,

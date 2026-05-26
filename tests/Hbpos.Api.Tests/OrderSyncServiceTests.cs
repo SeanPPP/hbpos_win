@@ -98,6 +98,57 @@ public sealed class OrderSyncServiceTests
         Assert.Contains("itemNo=ITEM-1001", line.Remark);
     }
 
+    [Fact]
+    public void Planner_CreatesBankTransactionForCardPayment()
+    {
+        var paymentGuid = Guid.NewGuid();
+        var orderGuid = Guid.NewGuid();
+        var request = CreateRequest(
+            orderGuid,
+            payments:
+            [
+                new PaymentSyncDto(
+                    paymentGuid,
+                    PaymentMethodKind.Card,
+                    12.34m,
+                    "ANZ:TXN-1",
+                    CardTransactions:
+                    [
+                        new CardTransactionDto(
+                            "ANZ",
+                            "TXN-1",
+                            "123456",
+                            "VISA",
+                            4,
+                            "****1234",
+                            "MID-1",
+                            "00",
+                            "APPROVED",
+                            "42",
+                            DateTimeOffset.Parse("2026-05-26T00:00:00Z"),
+                            12.34m,
+                            "merchant receipt")
+                    ])
+            ]);
+
+        var plan = new OrderSyncPlanner().CreatePlan(request);
+
+        var bankTransaction = Assert.Single(plan.BankTransactions);
+        Assert.Equal(paymentGuid.ToString("D"), bankTransaction.PaymentGuid);
+        Assert.Equal(orderGuid.ToString("D"), bankTransaction.OrderGuid);
+        Assert.Equal("TXN-1", bankTransaction.TxnRef);
+        Assert.Equal("123456", bankTransaction.AuthCode);
+        Assert.Equal("VISA", bankTransaction.CardType);
+        Assert.Equal(4, bankTransaction.CardBIN);
+        Assert.Equal("****1234", bankTransaction.CardNumber);
+        Assert.Equal("MID-1", bankTransaction.Caid);
+        Assert.Equal("00", bankTransaction.ResponseCode);
+        Assert.Equal("APPROVED", bankTransaction.ResponseText);
+        Assert.Equal("42", bankTransaction.Stan);
+        Assert.Equal(12.34m, bankTransaction.Amount);
+        Assert.Equal("merchant receipt", bankTransaction.ReceiptText);
+    }
+
     private static OrderSyncRequest CreateRequest(
         Guid orderGuid,
         string? itemNumber = null,

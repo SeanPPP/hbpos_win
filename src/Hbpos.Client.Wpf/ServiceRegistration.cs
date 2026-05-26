@@ -70,6 +70,12 @@ public static class ServiceRegistration
             client.Timeout = TimeSpan.FromSeconds(10);
         })
         .AddHttpMessageHandler<DeviceAuthorizationMessageHandler>();
+        services.AddHttpClient<ISquareTokenApiClient, SquareTokenApiClient>(client =>
+        {
+            client.BaseAddress = GetApiBaseAddress();
+            client.Timeout = TimeSpan.FromSeconds(5);
+        })
+        .AddHttpMessageHandler<DeviceAuthorizationMessageHandler>();
         services.AddSingleton<IDeviceFingerprintService, DeviceFingerprintService>();
         services.AddSingleton<IUiPriorityCoordinator, UiPriorityCoordinator>();
         services.AddSingleton<ILocalCatalogSyncService, LocalCatalogSyncService>();
@@ -85,8 +91,24 @@ public static class ServiceRegistration
         services.AddSingleton<IReceiptQueryService, ReceiptQueryService>();
         services.AddSingleton<IOrderUploadService, OrderUploadService>();
         services.AddSingleton<IOrderUploadExecutionService, OrderUploadExecutionService>();
-        services.AddSingleton(CardTerminalSettings.FromEnvironment());
-        services.AddSingleton<ICardTerminalClient, ConfiguredCardTerminalClient>();
+        services.AddSingleton<ICardTerminalSettingsStore>(sp => new CardTerminalSettingsStore(
+            sp.GetRequiredService<ILocalAppSettingsRepository>(),
+            sp.GetRequiredService<IDeviceAuthorizationProtector>(),
+            sp.GetRequiredService<ISquareTokenApiClient>()));
+        services.AddSingleton<ICardTerminalSettingsProvider>(sp => sp.GetRequiredService<ICardTerminalSettingsStore>());
+        services.AddSingleton<ISquareTokenResolver>(sp => sp.GetRequiredService<ICardTerminalSettingsStore>());
+        services.AddSingleton<ISquareAccessTokenProvider>(sp => sp.GetRequiredService<ICardTerminalSettingsStore>());
+        services.AddSingleton<ILinklyEftClientFactory, LinklyEftClientFactory>();
+        services.AddSingleton<ILinklyTerminalClient, LinklyTerminalClient>();
+        services.AddHttpClient<ISquareTerminalSetupClient, SquareTerminalSetupClient>(client =>
+        {
+            client.Timeout = TimeSpan.FromSeconds(15);
+        });
+        services.AddSingleton<ICardTerminalSetupService, CardTerminalSetupService>();
+        services.AddHttpClient<ICardTerminalClient, ConfiguredCardTerminalClient>(client =>
+        {
+            client.Timeout = TimeSpan.FromSeconds(120);
+        });
         services.AddSingleton<IVoucherTenderClient>(sp => sp.GetRequiredService<IVoucherApiClient>());
         services.AddSingleton<IDeviceRegistrationWorkflowService, DeviceRegistrationWorkflowService>();
         services.AddSingleton<ISpecialProductsWorkflowService, SpecialProductsWorkflowService>();
@@ -140,7 +162,8 @@ public static class ServiceRegistration
             userFeedbackService: sp.GetRequiredService<IUserFeedbackService>(),
             receiptReturnsWorkflowService: sp.GetRequiredService<IReceiptReturnsWorkflowService>(),
             voucherApiClient: sp.GetRequiredService<IVoucherApiClient>(),
-            cardTerminalClient: sp.GetRequiredService<ICardTerminalClient>()));
+            cardTerminalClient: sp.GetRequiredService<ICardTerminalClient>(),
+            cardTerminalSetupService: sp.GetRequiredService<ICardTerminalSetupService>()));
         services.AddSingleton<MainWindow>();
 
         return services;

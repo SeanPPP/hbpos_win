@@ -158,6 +158,11 @@ public sealed class SqlSugarOrderRepository(HbposSqlSugarContext dbContext) : IO
                 await db.Insertable(plan.Payments.ToList()).ExecuteCommandAsync(cancellationToken);
             }
 
+            if (plan.BankTransactions.Count > 0)
+            {
+                await db.Insertable(plan.BankTransactions.ToList()).ExecuteCommandAsync(cancellationToken);
+            }
+
             await db.Ado.CommitTranAsync();
         }
         catch

@@ -105,7 +105,8 @@ public sealed class RemoteOrderHistoryService(IOrderHistoryApiClient apiClient) 
                 details.Payments.Select(payment => new ReceiptPaymentLine(
                     payment.Method,
                     payment.Amount,
-                    payment.Reference)).ToList());
+                    payment.Reference,
+                    payment.CardTransactions)).ToList());
     }
 
     public Task<OrderReturnContextDto?> GetReturnContextAsync(

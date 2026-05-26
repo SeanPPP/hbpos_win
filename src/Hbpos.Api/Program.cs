@@ -1,5 +1,6 @@
 using Hbpos.Api;
 using Hbpos.Api.Auth;
+using Hbpos.Api.Services;
 using Hbpos.Contracts.Devices;
 using Microsoft.AspNetCore.Authentication;
 
@@ -17,6 +18,12 @@ builder.Services.AddAuthorization();
 builder.Services.AddHbposApiServices();
 
 var app = builder.Build();
+
+using (var scope = app.Services.CreateScope())
+{
+    var squareTokenSchemaInitializer = scope.ServiceProvider.GetRequiredService<ISquareTokenSchemaInitializer>();
+    await squareTokenSchemaInitializer.InitializeAsync();
+}
 
 // Configure the HTTP request pipeline.
 if (app.Environment.IsDevelopment())

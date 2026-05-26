@@ -36,9 +36,18 @@ public sealed record ReceiptPreviewLine(
 public sealed record ReceiptPaymentLine(
     PaymentMethodKind Method,
     decimal Amount,
-    string? Reference)
+    string? Reference,
+    IReadOnlyList<CardTransactionDto>? CardTransactions = null)
 {
     public string? DisplayReference => PaymentReferenceDisplay.Format(Method, Reference);
+
+    public string? CardSummary => CardTransactions is { Count: > 0 }
+        ? PaymentReferenceDisplay.FormatCardSummary(CardTransactions[0])
+        : null;
+
+    public string? ReceiptText => CardTransactions?
+        .Select(transaction => transaction.ReceiptText)
+        .FirstOrDefault(text => !string.IsNullOrWhiteSpace(text));
 
     public string MethodLabel => Method switch
     {
@@ -71,5 +80,19 @@ public static class PaymentReferenceDisplay
         }
 
         return reference;
+    }
+
+    public static string? FormatCardSummary(CardTransactionDto transaction)
+    {
+        var parts = new[]
+        {
+            string.IsNullOrWhiteSpace(transaction.CardType) ? null : transaction.CardType.Trim(),
+            string.IsNullOrWhiteSpace(transaction.MaskedCardNumber) ? null : transaction.MaskedCardNumber.Trim(),
+            string.IsNullOrWhiteSpace(transaction.AuthCode) ? null : $"Auth {transaction.AuthCode.Trim()}",
+            string.IsNullOrWhiteSpace(transaction.ResponseText) ? null : transaction.ResponseText.Trim()
+        }.Where(part => !string.IsNullOrWhiteSpace(part));
+
+        var summary = string.Join(" | ", parts);
+        return string.IsNullOrWhiteSpace(summary) ? null : summary;
     }
 }
