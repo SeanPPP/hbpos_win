@@ -45,6 +45,9 @@ public sealed partial class SettingsViewModel : ObservableObject
     [ObservableProperty]
     private bool _linklyConnectionSucceeded;
 
+    [ObservableProperty]
+    private string _linklyTestStatusMessage = string.Empty;
+
     public SettingsViewModel(
         ICardTerminalSetupService setupService,
         ILocalizationService? localization = null)
@@ -111,6 +114,7 @@ public sealed partial class SettingsViewModel : ObservableObject
             _savedSquareDeviceId = _loadedConfiguration.SquareDeviceId;
             _devicesLoadedForLocationId = null;
             LinklyConnectionSucceeded = false;
+            LinklyTestStatusMessage = string.Empty;
             SquareLocations.Clear();
             SquareDevices.Clear();
             SelectedSquareLocation = null;
@@ -217,9 +221,10 @@ public sealed partial class SettingsViewModel : ObservableObject
                 ParsePort(LinklyPortText),
                 TimeSpan.FromSeconds(ParseTimeoutSeconds(TimeoutSecondsText)));
             LinklyConnectionSucceeded = result.Succeeded;
-            StatusMessage = result.Message ?? (result.Succeeded
+            LinklyTestStatusMessage = result.Message ?? (result.Succeeded
                 ? "Linkly EFT-Client connection succeeded."
                 : "Linkly EFT-Client connection failed.");
+            StatusMessage = LinklyTestStatusMessage;
         });
     }
 
@@ -378,6 +383,7 @@ public sealed partial class SettingsViewModel : ObservableObject
     private void ResetLinklyConnectionTest()
     {
         LinklyConnectionSucceeded = false;
+        LinklyTestStatusMessage = string.Empty;
     }
 
     private static string NormalizeHost(string? host)

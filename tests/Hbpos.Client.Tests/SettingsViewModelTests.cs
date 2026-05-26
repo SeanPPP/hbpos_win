@@ -132,11 +132,28 @@ public sealed class SettingsViewModelTests
         await viewModel.TestLinklyCommand.ExecuteAsync(null);
         await viewModel.SaveLinklyCommand.ExecuteAsync(null);
 
+        Assert.Equal("connected", viewModel.LinklyTestStatusMessage);
         Assert.NotNull(service.SavedConfiguration);
         Assert.Equal(CardProcessorKind.Linkly, service.SavedConfiguration!.Processor);
         Assert.Equal("192.168.1.10", service.SavedConfiguration.LinklyHost);
         Assert.Equal(2011, service.SavedConfiguration.LinklyPort);
         Assert.Equal("ANZ Linkly terminal settings saved.", viewModel.StatusMessage);
+    }
+
+    [Fact]
+    public async Task TestLinklyCommand_shows_failed_result_near_linkly_controls()
+    {
+        var service = new FakeCardTerminalSetupService
+        {
+            LinklyTestResult = new LinklyConnectionTestResult(false, "connection failed")
+        };
+        var viewModel = new SettingsViewModel(service);
+
+        await viewModel.TestLinklyCommand.ExecuteAsync(null);
+
+        Assert.False(viewModel.LinklyConnectionSucceeded);
+        Assert.Equal("connection failed", viewModel.LinklyTestStatusMessage);
+        Assert.Equal("connection failed", viewModel.StatusMessage);
     }
 
     private sealed class FakeCardTerminalSetupService(
