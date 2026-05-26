@@ -2,6 +2,7 @@ using System.Collections.ObjectModel;
 using System.Diagnostics;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
+using Hbpos.Client.Wpf.Converters;
 using Hbpos.Client.Wpf.Localization;
 using Hbpos.Client.Wpf.Models;
 using Hbpos.Client.Wpf.Services;
@@ -16,6 +17,7 @@ public sealed partial class SpecialProductsViewModel : ObservableObject, IScanne
     public string ScannerPageId => PageId;
 
     private const int PageSize = 20;
+    private static readonly TimeSpan ThumbnailEnableDelay = TimeSpan.FromMilliseconds(180);
     private static readonly TimeSpan DownloadProgressAutoHideDelay = TimeSpan.FromSeconds(5);
 
     private readonly ISpecialProductsWorkflowService _workflowService;
@@ -25,7 +27,9 @@ public sealed partial class SpecialProductsViewModel : ObservableObject, IScanne
     private readonly IRawScannerService? _rawScannerService;
     private readonly object _specialItemsGate = new();
     private readonly Func<TimeSpan, CancellationToken, Task> _delayAsync;
+    private readonly Func<IEnumerable<string?>, int, CancellationToken, Task<int>> _thumbnailPreloadAsync;
     private CancellationTokenSource? _downloadProgressHideCts;
+    private CancellationTokenSource? _thumbnailEnableCts;
 
     [ObservableProperty]
     private PosSessionState _session;
@@ -58,6 +62,9 @@ public sealed partial class SpecialProductsViewModel : ObservableObject, IScanne
     private bool _isEditMode;
 
     [ObservableProperty]
+    private bool _areThumbnailsEnabled = true;
+
+    [ObservableProperty]
     private int _currentPage = 1;
 
     [ObservableProperty]
@@ -77,7 +84,8 @@ public sealed partial class SpecialProductsViewModel : ObservableObject, IScanne
         Action<CartLine>? onCartLineAdded = null,
         ISpecialProductsWorkflowService? workflowService = null,
         IRawScannerService? rawScannerService = null,
-        Func<TimeSpan, CancellationToken, Task>? delayAsync = null)
+        Func<TimeSpan, CancellationToken, Task>? delayAsync = null,
+        Func<IEnumerable<string?>, int, CancellationToken, Task<int>>? thumbnailPreloadAsync = null)
     {
         _workflowService = workflowService ?? new SpecialProductsWorkflowService(
             priceIndex,
@@ -90,6 +98,7 @@ public sealed partial class SpecialProductsViewModel : ObservableObject, IScanne
         _onCartLineAdded = onCartLineAdded;
         _rawScannerService = rawScannerService;
         _delayAsync = delayAsync ?? Task.Delay;
+        _thumbnailPreloadAsync = thumbnailPreloadAsync ?? ProductThumbnailImageSourceConverter.PreloadAsync;
 
         BackCommand = new RelayCommand(_onBack);
         SearchCommand = new RelayCommand(SearchCatalog);
@@ -209,6 +218,49 @@ public sealed partial class SpecialProductsViewModel : ObservableObject, IScanne
         return PreloadCoreAsync(cancellationToken);
     }
 
+    public async Task PreloadFirstPageThumbnailsAsync(CancellationToken cancellationToken = default)
+    {
+        var stopwatch = Stopwatch.StartNew();
+        try
+        {
+            await PreloadAsync(cancellationToken);
+
+            IReadOnlyList<string?> firstPageImageSources;
+            int firstPageItemCount;
+            lock (_specialItemsGate)
+            {
+                var firstPageItems = SpecialItems.Take(PageSize).ToArray();
+                firstPageItemCount = firstPageItems.Length;
+                firstPageImageSources = firstPageItems
+                    .Select(item => item.ProductImage)
+                    .Where(sourceText => !string.IsNullOrWhiteSpace(sourceText))
+                    .ToArray();
+            }
+
+            var preloadedCount = firstPageImageSources.Count == 0
+                ? 0
+                : await _thumbnailPreloadAsync(firstPageImageSources, 72, cancellationToken);
+            stopwatch.Stop();
+            Log(
+                "startup thumbnail preload completed " +
+                $"store={Session.StoreCode} " +
+                $"items={firstPageItemCount} " +
+                $"images={firstPageImageSources.Count} " +
+                $"preloaded={preloadedCount} " +
+                $"elapsedMs={stopwatch.ElapsedMilliseconds}");
+        }
+        catch (OperationCanceledException)
+        {
+            stopwatch.Stop();
+            Log($"startup thumbnail preload canceled store={Session.StoreCode} elapsedMs={stopwatch.ElapsedMilliseconds}");
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            Log($"startup thumbnail preload failed store={Session.StoreCode} elapsedMs={stopwatch.ElapsedMilliseconds} error={ex.Message}");
+        }
+    }
+
     public async Task EnsureLoadedAsync(CancellationToken cancellationToken = default)
     {
         var shouldResetBusy = !IsBusy;
@@ -245,6 +297,7 @@ public sealed partial class SpecialProductsViewModel : ObservableObject, IScanne
         IsEditMode = false;
         ClearSearch();
         SelectedSpecialItem = null;
+        DeferThumbnailLoading();
         RefreshPagedSpecialItems(resetToFirstPage: true);
     }
 
@@ -745,6 +798,40 @@ public sealed partial class SpecialProductsViewModel : ObservableObject, IScanne
         }
     }
 
+    private void DeferThumbnailLoading()
+    {
+        _thumbnailEnableCts?.Cancel();
+        _thumbnailEnableCts?.Dispose();
+        var thumbnailEnableCts = new CancellationTokenSource();
+        _thumbnailEnableCts = thumbnailEnableCts;
+        AreThumbnailsEnabled = false;
+        _ = EnableThumbnailsAfterInitialRenderAsync(thumbnailEnableCts);
+    }
+
+    private async Task EnableThumbnailsAfterInitialRenderAsync(CancellationTokenSource thumbnailEnableCts)
+    {
+        try
+        {
+            await _delayAsync(ThumbnailEnableDelay, thumbnailEnableCts.Token);
+            if (!thumbnailEnableCts.IsCancellationRequested &&
+                ReferenceEquals(_thumbnailEnableCts, thumbnailEnableCts))
+            {
+                AreThumbnailsEnabled = true;
+            }
+        }
+        catch (OperationCanceledException)
+        {
+        }
+        finally
+        {
+            if (ReferenceEquals(_thumbnailEnableCts, thumbnailEnableCts))
+            {
+                _thumbnailEnableCts = null;
+                thumbnailEnableCts.Dispose();
+            }
+        }
+    }
+
     private void RaiseLocalizedProperties()
     {
         OnPropertyChanged(nameof(TitleText));
@@ -789,6 +876,9 @@ public sealed partial class SpecialProductsViewModel : ObservableObject, IScanne
     public void Dispose()
     {
         CancelDownloadProgressAutoHide();
+        _thumbnailEnableCts?.Cancel();
+        _thumbnailEnableCts?.Dispose();
+        _thumbnailEnableCts = null;
         _rawScannerService?.Unsubscribe(PageId);
     }
 

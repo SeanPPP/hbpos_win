@@ -64,6 +64,12 @@ public sealed partial class MainViewModel : ObservableObject
     private object? _currentScreen;
 
     [ObservableProperty]
+    private PosTerminalViewModel? _cachedPosTerminalScreen;
+
+    [ObservableProperty]
+    private SpecialProductsViewModel? _cachedSpecialProductsScreen;
+
+    [ObservableProperty]
     private string _selectedCultureName = LocalizationService.DefaultCultureName;
 
     [ObservableProperty]
@@ -302,6 +308,14 @@ public sealed partial class MainViewModel : ObservableObject
 
     public SettingsViewModel? Settings { get; private set; }
 
+    public bool IsPosTerminalScreenActive => ReferenceEquals(CurrentScreen, CachedPosTerminalScreen);
+
+    public bool IsSpecialProductsScreenActive => ReferenceEquals(CurrentScreen, CachedSpecialProductsScreen);
+
+    public bool IsFallbackScreenActive => CurrentScreen is not null &&
+        !IsPosTerminalScreenActive &&
+        !IsSpecialProductsScreenActive;
+
     public ObservableCollection<SyncQueueListItem> SyncCenterOrders { get; } = [];
 
     public IRelayCommand ShowPosCommand { get; }
@@ -415,6 +429,8 @@ public sealed partial class MainViewModel : ObservableObject
         PosTerminal?.Dispose();
         SpecialProducts?.Dispose();
         ReceiptReturns?.Dispose();
+        CachedPosTerminalScreen = null;
+        CachedSpecialProductsScreen = null;
         IReadOnlyList<SellableItemDto> cachedItems = [];
         if (startupOptions.PreviewMode)
         {
@@ -455,6 +471,7 @@ public sealed partial class MainViewModel : ObservableObject
             line => PosTerminal?.RevealCartLine(line),
             _specialProductsWorkflowService,
             _rawScannerService);
+        CachedPosTerminalScreen = PosTerminal;
         ReceiptReturns = new ReceiptReturnsViewModel(
             _receiptReturnsWorkflowService,
             Session,
@@ -480,7 +497,6 @@ public sealed partial class MainViewModel : ObservableObject
         _clockTimer.Start();
         ApplySessionToScreens();
         NavigateFromStartup(startupOptions.InitialScreen);
-        BeginSpecialProductsPreload();
 
     }
 
@@ -499,6 +515,7 @@ public sealed partial class MainViewModel : ObservableObject
     {
         OpenCustomerDisplayWindow(owner);
 
+        BeginSpecialProductsHomePreload();
         await RefreshOnlineStateAsync(CancellationToken.None);
         _connectivityTimer.Start();
         BeginInitialCatalogSync();
@@ -540,7 +557,25 @@ public sealed partial class MainViewModel : ObservableObject
             ReceiptReturns?.ResetToDefault();
         }
 
+        RaiseScreenHostStateChanged();
         _rawScannerService.SetActivePage((value as IScannerInputTarget)?.ScannerPageId);
+    }
+
+    partial void OnCachedPosTerminalScreenChanged(PosTerminalViewModel? value)
+    {
+        RaiseScreenHostStateChanged();
+    }
+
+    partial void OnCachedSpecialProductsScreenChanged(SpecialProductsViewModel? value)
+    {
+        RaiseScreenHostStateChanged();
+    }
+
+    private void RaiseScreenHostStateChanged()
+    {
+        OnPropertyChanged(nameof(IsPosTerminalScreenActive));
+        OnPropertyChanged(nameof(IsSpecialProductsScreenActive));
+        OnPropertyChanged(nameof(IsFallbackScreenActive));
     }
 
     partial void OnCustomerDisplayWindowModeChanged(CustomerDisplayWindowMode value)
@@ -678,28 +713,44 @@ public sealed partial class MainViewModel : ObservableObject
         _ = TryInitialCatalogSyncAsync();
     }
 
-    private void BeginSpecialProductsPreload()
+    private void BeginSpecialProductsHomePreload()
     {
         if (SpecialProducts is null)
         {
             return;
         }
 
-        _ = TryPreloadSpecialProductsAsync();
+        PrepareCachedSpecialProductsScreen();
+        _ = TryPreloadSpecialProductsHomeAsync();
     }
 
-    private async Task TryPreloadSpecialProductsAsync()
+    private void PrepareCachedSpecialProductsScreen()
+    {
+        if (SpecialProducts is null || ReferenceEquals(CachedSpecialProductsScreen, SpecialProducts))
+        {
+            return;
+        }
+
+        var stopwatch = Stopwatch.StartNew();
+        CachedSpecialProductsScreen = SpecialProducts;
+        stopwatch.Stop();
+        ConsoleLog.Write(
+            "SpecialProducts",
+            $"special screen view prepared store={Session.StoreCode} elapsedMs={stopwatch.ElapsedMilliseconds}");
+    }
+
+    private async Task TryPreloadSpecialProductsHomeAsync()
     {
         try
         {
             if (SpecialProducts is not null)
             {
-                await SpecialProducts.PreloadAsync(CancellationToken.None);
+                await SpecialProducts.PreloadFirstPageThumbnailsAsync(CancellationToken.None);
             }
         }
         catch (Exception ex)
         {
-            ConsoleLog.Write("SpecialProducts", $"startup preload failed store={Session.StoreCode} error={ex.Message}");
+            ConsoleLog.Write("SpecialProducts", $"startup home preload failed store={Session.StoreCode} error={ex.Message}");
         }
     }
 
@@ -882,6 +933,8 @@ public sealed partial class MainViewModel : ObservableObject
         ReceiptReturns?.Dispose();
         PosTerminal = null;
         SpecialProducts = null;
+        CachedPosTerminalScreen = null;
+        CachedSpecialProductsScreen = null;
         ReceiptReturns = null;
         CashPayment = null;
         TransactionHistory = null;
@@ -929,6 +982,7 @@ public sealed partial class MainViewModel : ObservableObject
         }
 
         SpecialProducts.Session = Session;
+        PrepareCachedSpecialProductsScreen();
         SpecialProducts.ActivateForEntry();
         CurrentScreen = SpecialProducts;
         _ = EnsureSpecialProductsLoadedAsync(SpecialProducts);

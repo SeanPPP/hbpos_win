@@ -1,5 +1,10 @@
+using System.Collections.Concurrent;
 using System.Windows;
+using System.Globalization;
+using System.Reflection;
+using System.Windows.Media.Imaging;
 using Hbpos.Client.Wpf;
+using Hbpos.Client.Wpf.Converters;
 using Hbpos.Client.Wpf.Localization;
 using Hbpos.Client.Wpf.Models;
 using Hbpos.Client.Wpf.Services;
@@ -9,6 +14,7 @@ using Hbpos.Contracts.Devices;
 
 namespace Hbpos.Client.Tests;
 
+[Collection(ProductThumbnailImageSourceConverterTestCollection.Name)]
 public sealed class MainViewModelScannerTests
 {
     [Fact]
@@ -110,6 +116,11 @@ public sealed class MainViewModelScannerTests
 
         Assert.Equal(1, catalog.LoadSellableItemsCallCount);
         Assert.Same(viewModel.PosTerminal, viewModel.CurrentScreen);
+        Assert.Same(viewModel.PosTerminal, viewModel.CachedPosTerminalScreen);
+        Assert.Null(viewModel.CachedSpecialProductsScreen);
+        Assert.True(viewModel.IsPosTerminalScreenActive);
+        Assert.False(viewModel.IsSpecialProductsScreenActive);
+        Assert.False(viewModel.IsFallbackScreenActive);
         Assert.Equal("SKU-001", Assert.Single(index.FindExactMatches("1042", "9528502522381")).ProductCode);
 
         await viewModel.ContinueStartupAfterShownAsync(startupOptions);
@@ -118,7 +129,7 @@ public sealed class MainViewModelScannerTests
     }
 
     [Fact]
-    public async Task InitializeAsync_StartsSpecialProductsPreloadWithoutBlockingPos()
+    public async Task ContinueStartupAfterShownAsync_StartsSpecialProductsPreloadWithoutBlockingPos()
     {
         var catalog = new FakeCatalogRepository
         {
@@ -149,7 +160,91 @@ public sealed class MainViewModelScannerTests
         await viewModel.InitializeAsync(new AppStartupOptions([], false, null, null));
 
         Assert.Same(viewModel.PosTerminal, viewModel.CurrentScreen);
-        Assert.True(catalog.LoadSpecialProductItemsCallCount > 0);
+        Assert.Equal(0, catalog.LoadSpecialProductItemsCallCount);
+
+        await viewModel.ContinueStartupAfterShownAsync(new AppStartupOptions([], false, null, null));
+        await WaitUntilAsync(() => catalog.LoadSpecialProductItemsCallCount > 0);
+
+        Assert.Same(viewModel.PosTerminal, viewModel.CurrentScreen);
+        Assert.Same(viewModel.SpecialProducts, viewModel.CachedSpecialProductsScreen);
+        Assert.True(viewModel.IsPosTerminalScreenActive);
+        Assert.False(viewModel.IsSpecialProductsScreenActive);
+        Assert.False(viewModel.IsFallbackScreenActive);
+    }
+
+    [Fact]
+    public async Task ContinueStartupAfterShownAsync_warms_special_product_thumbnails_for_first_page_in_background()
+    {
+        ClearImageCacheForTests();
+        var imageBaseUrl = $"https://images.example/{Guid.NewGuid():N}";
+        var catalog = new FakeCatalogRepository
+        {
+            SpecialItems = Enumerable.Range(1, 21)
+                .Select(number => CreateSpecialItem(
+                    "1042",
+                    $"SKU-{number:000}",
+                    $"9528502522{number:000}",
+                    imageBaseUrl))
+                .ToArray()
+        };
+        var expectedFirstPageImages = catalog.SpecialItems
+            .Take(20)
+            .Select(item => item.ProductImage!)
+            .ToArray();
+        var loadedImages = new ConcurrentDictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+        var viewModel = new MainViewModel(
+            new LocalSellableItemIndex(),
+            new PosCartService(),
+            new CashCheckoutService(),
+            new FakeLocalSchemaService(),
+            new FakeSettingsRepository(),
+            catalog,
+            new FakeCatalogSyncService(),
+            new FakeRemoteLookupRefreshService(),
+            new FakeSpecialProductService(),
+            new FakeConnectivityApiClient(),
+            new FakeLocalDeviceRepository { Latest = CreateAllowedDevice("1042") },
+            new FakeDeviceApiClient(),
+            new FakeDeviceFingerprintService(),
+            new DeviceAuthorizationState(),
+            new FakeLocalOrderRepository(),
+            new FakeSyncQueueRepository(),
+            new LocalizationService(),
+            new FakeCustomerDisplayWindowService(),
+            new FakeRawScannerService());
+        var converter = new ProductThumbnailImageSourceConverter();
+        using var remoteImages = ProductThumbnailImageSourceConverter.UseRemoteImageBytesLoaderForTests((uri, _) =>
+        {
+            loadedImages.AddOrUpdate(uri.AbsoluteUri, 1, (_, count) => count + 1);
+            return Task.FromResult(OnePixelPngBytes());
+        });
+
+        var startupOptions = new AppStartupOptions([], false, null, null);
+        await viewModel.InitializeAsync(startupOptions);
+        Assert.Empty(loadedImages);
+
+        await viewModel.ContinueStartupAfterShownAsync(startupOptions);
+        await WaitUntilAsync(() => expectedFirstPageImages.All(ImageCacheContainsForTests));
+
+        Assert.Same(viewModel.PosTerminal, viewModel.CurrentScreen);
+        Assert.Same(viewModel.SpecialProducts, viewModel.CachedSpecialProductsScreen);
+        Assert.True(viewModel.IsPosTerminalScreenActive);
+
+        await viewModel.PosTerminal!.OpenSpecialProductsCommand.ExecuteAsync(null);
+        await viewModel.SpecialProducts!.EnsureLoadedAsync();
+
+        foreach (var item in viewModel.SpecialProducts.PagedSpecialItems)
+        {
+            Assert.IsType<BitmapImage>(
+                converter.Convert(item.ProductImage, typeof(BitmapSource), null, CultureInfo.InvariantCulture));
+        }
+
+        Assert.All(expectedFirstPageImages, image => Assert.Equal(1, loadedImages[image]));
+
+        var pageTwoItem = catalog.SpecialItems.Last();
+        Assert.IsType<BitmapImage>(
+            converter.Convert(pageTwoItem.ProductImage, typeof(BitmapSource), null, CultureInfo.InvariantCulture));
+        Assert.Equal(1, loadedImages[pageTwoItem.ProductImage!]);
     }
 
     [Fact]
@@ -187,6 +282,10 @@ public sealed class MainViewModelScannerTests
         var openTask = viewModel.PosTerminal!.OpenSpecialProductsCommand.ExecuteAsync(null);
 
         Assert.Same(viewModel.SpecialProducts, viewModel.CurrentScreen);
+        Assert.Same(viewModel.SpecialProducts, viewModel.CachedSpecialProductsScreen);
+        Assert.False(viewModel.IsPosTerminalScreenActive);
+        Assert.True(viewModel.IsSpecialProductsScreenActive);
+        Assert.False(viewModel.IsFallbackScreenActive);
         Assert.True(openTask.IsCompleted);
         Assert.Equal(1, catalog.LoadSpecialProductItemsCallCount);
 
@@ -195,6 +294,89 @@ public sealed class MainViewModelScannerTests
 
         Assert.Single(viewModel.SpecialProducts.PagedSpecialItems);
         Assert.Equal(1, catalog.LoadSpecialProductItemsCallCount);
+    }
+
+    [Fact]
+    public async Task OpenSpecialProductsCommand_reuses_prepared_cached_screen_and_activates_special_host()
+    {
+        var catalog = new FakeCatalogRepository
+        {
+            SpecialItems = [CreateItem("1042", "SKU-SP", "9528502522399")]
+        };
+        var viewModel = new MainViewModel(
+            new LocalSellableItemIndex(),
+            new PosCartService(),
+            new CashCheckoutService(),
+            new FakeLocalSchemaService(),
+            new FakeSettingsRepository(),
+            catalog,
+            new FakeCatalogSyncService(),
+            new FakeRemoteLookupRefreshService(),
+            new FakeSpecialProductService(),
+            new FakeConnectivityApiClient(),
+            new FakeLocalDeviceRepository { Latest = CreateAllowedDevice("1042") },
+            new FakeDeviceApiClient(),
+            new FakeDeviceFingerprintService(),
+            new DeviceAuthorizationState(),
+            new FakeLocalOrderRepository(),
+            new FakeSyncQueueRepository(),
+            new LocalizationService(),
+            new FakeCustomerDisplayWindowService(),
+            new FakeRawScannerService());
+        var startupOptions = new AppStartupOptions([], false, null, null);
+
+        await viewModel.InitializeAsync(startupOptions);
+        await viewModel.ContinueStartupAfterShownAsync(startupOptions);
+        await WaitUntilAsync(() => viewModel.CachedSpecialProductsScreen is not null);
+        var cachedSpecialProducts = viewModel.CachedSpecialProductsScreen;
+
+        await viewModel.PosTerminal!.OpenSpecialProductsCommand.ExecuteAsync(null);
+
+        Assert.Same(cachedSpecialProducts, viewModel.CurrentScreen);
+        Assert.Same(cachedSpecialProducts, viewModel.SpecialProducts);
+        Assert.False(viewModel.IsPosTerminalScreenActive);
+        Assert.True(viewModel.IsSpecialProductsScreenActive);
+        Assert.False(viewModel.IsFallbackScreenActive);
+    }
+
+    [Fact]
+    public async Task BackFromSpecialProducts_keeps_special_host_cached_and_returns_to_pos()
+    {
+        var viewModel = new MainViewModel(
+            new LocalSellableItemIndex(),
+            new PosCartService(),
+            new CashCheckoutService(),
+            new FakeLocalSchemaService(),
+            new FakeSettingsRepository(),
+            new FakeCatalogRepository
+            {
+                SpecialItems = [CreateItem("1042", "SKU-SP", "9528502522399")]
+            },
+            new FakeCatalogSyncService(),
+            new FakeRemoteLookupRefreshService(),
+            new FakeSpecialProductService(),
+            new FakeConnectivityApiClient(),
+            new FakeLocalDeviceRepository { Latest = CreateAllowedDevice("1042") },
+            new FakeDeviceApiClient(),
+            new FakeDeviceFingerprintService(),
+            new DeviceAuthorizationState(),
+            new FakeLocalOrderRepository(),
+            new FakeSyncQueueRepository(),
+            new LocalizationService(),
+            new FakeCustomerDisplayWindowService(),
+            new FakeRawScannerService());
+
+        await viewModel.InitializeAsync(new AppStartupOptions([], false, null, null));
+        await viewModel.PosTerminal!.OpenSpecialProductsCommand.ExecuteAsync(null);
+        var cachedSpecialProducts = viewModel.CachedSpecialProductsScreen;
+
+        viewModel.SpecialProducts!.BackCommand.Execute(null);
+
+        Assert.Same(viewModel.PosTerminal, viewModel.CurrentScreen);
+        Assert.Same(cachedSpecialProducts, viewModel.CachedSpecialProductsScreen);
+        Assert.True(viewModel.IsPosTerminalScreenActive);
+        Assert.False(viewModel.IsSpecialProductsScreenActive);
+        Assert.False(viewModel.IsFallbackScreenActive);
     }
 
     [Fact]
@@ -229,6 +411,9 @@ public sealed class MainViewModelScannerTests
         viewModel.PosTerminal.OpenReturnsCommand.Execute(null);
 
         Assert.Same(viewModel.ReceiptReturns, viewModel.CurrentScreen);
+        Assert.False(viewModel.IsPosTerminalScreenActive);
+        Assert.False(viewModel.IsSpecialProductsScreenActive);
+        Assert.True(viewModel.IsFallbackScreenActive);
         Assert.Equal(ReceiptReturnsViewModel.PageId, scanner.ActivePageId);
     }
 
@@ -443,6 +628,9 @@ public sealed class MainViewModelScannerTests
         viewModel.ShowCashPaymentCommand.Execute(null);
 
         Assert.Same(viewModel.CashPayment, viewModel.CurrentScreen);
+        Assert.False(viewModel.IsPosTerminalScreenActive);
+        Assert.False(viewModel.IsSpecialProductsScreenActive);
+        Assert.True(viewModel.IsFallbackScreenActive);
         Assert.Null(scanner.ActivePageId);
 
         await viewModel.ShowPaymentSuccessCommand.ExecuteAsync(null);
@@ -880,6 +1068,19 @@ public sealed class MainViewModelScannerTests
             null);
     }
 
+    private static SellableItemDto CreateSpecialItem(
+        string storeCode,
+        string productCode,
+        string lookupCode,
+        string imageBaseUrl)
+    {
+        return CreateItem(storeCode, productCode, lookupCode) with
+        {
+            ProductImage = $"{imageBaseUrl}/{productCode}.jpg",
+            IsSpecialProduct = true
+        };
+    }
+
     private static MainViewModel CreateAuthorizedMainViewModel(FakeCustomerDisplayWindowService customerDisplayWindow)
     {
         return new MainViewModel(
@@ -902,6 +1103,64 @@ public sealed class MainViewModelScannerTests
             new LocalizationService(),
             customerDisplayWindow,
             new FakeRawScannerService());
+    }
+
+    private static byte[] OnePixelPngBytes()
+    {
+        return Convert.FromBase64String(
+            "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVQIHWP4////fwAJ+wP9KobjigAAAABJRU5ErkJggg==");
+    }
+
+    private static async Task WaitUntilAsync(Func<bool> condition)
+    {
+        var timeoutAt = DateTimeOffset.UtcNow.AddSeconds(3);
+        while (DateTimeOffset.UtcNow < timeoutAt)
+        {
+            if (condition())
+            {
+                return;
+            }
+
+            await Task.Delay(10);
+        }
+
+        Assert.True(condition());
+    }
+
+    private static void ClearImageCacheForTests()
+    {
+        ClearConcurrentDictionaryField("Cache");
+        ClearConcurrentDictionaryField("LoggedDiagnostics");
+    }
+
+    private static int GetImageCacheCountForTests()
+    {
+        var field = typeof(ProductThumbnailImageSourceConverter).GetField("Cache", BindingFlags.Static | BindingFlags.NonPublic);
+        Assert.NotNull(field);
+        var countProperty = field!.FieldType.GetProperty("Count", BindingFlags.Instance | BindingFlags.Public);
+        Assert.NotNull(countProperty);
+        return (int)countProperty!.GetValue(field.GetValue(null))!;
+    }
+
+    private static bool ImageCacheContainsForTests(string sourceText)
+    {
+        var field = typeof(ProductThumbnailImageSourceConverter).GetField("Cache", BindingFlags.Static | BindingFlags.NonPublic);
+        Assert.NotNull(field);
+
+        var cache = field!.GetValue(null);
+        var containsKeyMethod = field.FieldType.GetMethod("ContainsKey", BindingFlags.Instance | BindingFlags.Public);
+        Assert.NotNull(containsKeyMethod);
+        return (bool)containsKeyMethod!.Invoke(cache, [$"72|{sourceText}"])!;
+    }
+
+    private static void ClearConcurrentDictionaryField(string fieldName)
+    {
+        var field = typeof(ProductThumbnailImageSourceConverter).GetField(fieldName, BindingFlags.Static | BindingFlags.NonPublic);
+        Assert.NotNull(field);
+
+        var clearMethod = field!.FieldType.GetMethod("Clear", BindingFlags.Instance | BindingFlags.Public);
+        Assert.NotNull(clearMethod);
+        clearMethod!.Invoke(field.GetValue(null), null);
     }
 
     private sealed class FakeRawScannerService : IRawScannerService

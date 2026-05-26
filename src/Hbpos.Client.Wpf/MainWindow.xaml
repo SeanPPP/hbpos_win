@@ -240,7 +240,34 @@
         </Border>
 
         <Grid Grid.Row="1">
-            <ContentControl Content="{Binding CurrentScreen}" />
+            <ContentControl Content="{Binding CachedPosTerminalScreen}">
+                <ContentControl.Style>
+                    <Style TargetType="{x:Type ContentControl}">
+                        <Setter Property="Visibility" Value="Hidden" />
+                        <Style.Triggers>
+                            <DataTrigger Binding="{Binding IsPosTerminalScreenActive}" Value="True">
+                                <Setter Property="Visibility" Value="Visible" />
+                            </DataTrigger>
+                        </Style.Triggers>
+                    </Style>
+                </ContentControl.Style>
+            </ContentControl>
+
+            <ContentControl Content="{Binding CachedSpecialProductsScreen}">
+                <ContentControl.Style>
+                    <Style TargetType="{x:Type ContentControl}">
+                        <Setter Property="Visibility" Value="Hidden" />
+                        <Style.Triggers>
+                            <DataTrigger Binding="{Binding IsSpecialProductsScreenActive}" Value="True">
+                                <Setter Property="Visibility" Value="Visible" />
+                            </DataTrigger>
+                        </Style.Triggers>
+                    </Style>
+                </ContentControl.Style>
+            </ContentControl>
+
+            <ContentControl Content="{Binding CurrentScreen}"
+                            Visibility="{Binding IsFallbackScreenActive, Converter={StaticResource BoolToVis}}" />
 
             <Border Visibility="{Binding IsSyncCenterExpanded, Converter={StaticResource BoolToVis}}"
                     VerticalAlignment="Bottom"

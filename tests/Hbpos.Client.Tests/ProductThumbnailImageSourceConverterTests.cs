@@ -1,10 +1,13 @@
 using System.Globalization;
+using System.Reflection;
+using System.Windows.Media;
 using System.Windows.Media.Imaging;
 using Hbpos.Client.Wpf.Converters;
 using Hbpos.Client.Wpf.Services;
 
 namespace Hbpos.Client.Tests;
 
+[Collection(ProductThumbnailImageSourceConverterTestCollection.Name)]
 public sealed class ProductThumbnailImageSourceConverterTests
 {
     private const string OnePixelPngBase64 = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVQIHWP4////fwAJ+wP9KobjigAAAABJRU5ErkJggg==";
@@ -186,8 +189,9 @@ public sealed class ProductThumbnailImageSourceConverterTests
     }
 
     [Fact]
-    public void Convert_downloads_http_bitmap_without_caching()
+    public void Convert_downloads_http_bitmap_once_and_caches_result()
     {
+        ClearImageCacheForTests();
         var converter = new ProductThumbnailImageSourceConverter();
         var imageUrl = $"https://cdn.example.test/images/{Guid.NewGuid():N}/product.png";
         var loadCount = 0;
@@ -204,8 +208,38 @@ public sealed class ProductThumbnailImageSourceConverterTests
         var secondImage = Assert.IsType<BitmapImage>(second);
         Assert.True(firstImage.IsFrozen);
         Assert.True(secondImage.IsFrozen);
-        Assert.NotSame(firstImage, secondImage);
-        Assert.Equal(2, loadCount);
+        Assert.Same(firstImage, secondImage);
+        Assert.Equal(1, loadCount);
+    }
+
+    [Fact]
+    public void AsyncIsEnabled_false_defers_source_load_until_reenabled()
+    {
+        var imageBrush = new ImageBrush();
+        var sourceText = $"data:image/png;base64,{OnePixelPngBase64}";
+
+        ProductThumbnailImageSourceConverter.SetAsyncIsEnabled(imageBrush, false);
+        ProductThumbnailImageSourceConverter.SetAsyncSourceText(imageBrush, sourceText);
+
+        Assert.Null(imageBrush.ImageSource);
+
+        ProductThumbnailImageSourceConverter.SetAsyncIsEnabled(imageBrush, true);
+
+        Assert.IsType<BitmapImage>(imageBrush.ImageSource);
+    }
+
+    [Fact]
+    public void AsyncIsEnabled_false_clears_existing_async_source()
+    {
+        var imageBrush = new ImageBrush();
+        var sourceText = $"data:image/png;base64,{OnePixelPngBase64}";
+
+        ProductThumbnailImageSourceConverter.SetAsyncSourceText(imageBrush, sourceText);
+        Assert.IsType<BitmapImage>(imageBrush.ImageSource);
+
+        ProductThumbnailImageSourceConverter.SetAsyncIsEnabled(imageBrush, false);
+
+        Assert.Null(imageBrush.ImageSource);
     }
 
     [Fact]
@@ -318,6 +352,114 @@ public sealed class ProductThumbnailImageSourceConverterTests
         Assert.Null(result);
     }
 
+    [Fact]
+    public async Task PreloadAsync_warms_remote_image_cache_for_subsequent_convert_calls()
+    {
+        ClearImageCacheForTests();
+        var converter = new ProductThumbnailImageSourceConverter();
+        var imageUrl = $"https://cdn.example.test/images/{Guid.NewGuid():N}/product.png";
+        var loadCount = 0;
+        using var remoteImages = ProductThumbnailImageSourceConverter.UseRemoteImageBytesLoaderForTests((_, _) =>
+        {
+            loadCount++;
+            return Task.FromResult(OnePixelPngBytes());
+        });
+
+        await ProductThumbnailImageSourceConverter.PreloadAsync([imageUrl]);
+
+        Assert.Equal(1, loadCount);
+
+        var first = converter.Convert(imageUrl, typeof(BitmapSource), null, CultureInfo.InvariantCulture);
+        var second = converter.Convert(imageUrl, typeof(BitmapSource), null, CultureInfo.InvariantCulture);
+
+        Assert.Same(first, second);
+        Assert.IsType<BitmapImage>(first);
+        Assert.Equal(1, loadCount);
+    }
+
+    [Fact]
+    public async Task PreloadAsync_warms_remote_image_cache_for_async_attached_source()
+    {
+        ClearImageCacheForTests();
+        var imageUrl = $"https://cdn.example.test/images/{Guid.NewGuid():N}/product.png";
+        var loadCount = 0;
+        using var remoteImages = ProductThumbnailImageSourceConverter.UseRemoteImageBytesLoaderForTests((_, _) =>
+        {
+            loadCount++;
+            return Task.FromResult(OnePixelPngBytes());
+        });
+
+        await ProductThumbnailImageSourceConverter.PreloadAsync([imageUrl]);
+        var imageBrush = new ImageBrush();
+        ProductThumbnailImageSourceConverter.SetAsyncSourceText(imageBrush, imageUrl);
+
+        Assert.IsType<BitmapImage>(imageBrush.ImageSource);
+        Assert.Equal(1, loadCount);
+    }
+
+    [Fact]
+    public void AsyncIsEnabled_false_cancels_inflight_remote_load()
+    {
+        ClearImageCacheForTests();
+        var imageBrush = new ImageBrush();
+        var imageUrl = $"https://cdn.example.test/images/{Guid.NewGuid():N}/product.png";
+        using var loadStarted = new ManualResetEventSlim();
+        using var loadCanceled = new ManualResetEventSlim();
+        using var remoteImages = ProductThumbnailImageSourceConverter.UseRemoteImageBytesLoaderForTests((_, cancellationToken) =>
+        {
+            loadStarted.Set();
+            cancellationToken.Register(() => loadCanceled.Set());
+            return Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken)
+                .ContinueWith(
+                    _ => Array.Empty<byte>(),
+                    CancellationToken.None,
+                    TaskContinuationOptions.ExecuteSynchronously,
+                    TaskScheduler.Default);
+        });
+
+        ProductThumbnailImageSourceConverter.SetAsyncSourceText(imageBrush, imageUrl);
+        Assert.True(loadStarted.Wait(TimeSpan.FromSeconds(3)));
+
+        ProductThumbnailImageSourceConverter.SetAsyncIsEnabled(imageBrush, false);
+
+        Assert.True(loadCanceled.Wait(TimeSpan.FromSeconds(3)));
+        Assert.Null(imageBrush.ImageSource);
+    }
+
+    [Fact]
+    public async Task PreloadAsync_skips_already_cached_remote_image()
+    {
+        ClearImageCacheForTests();
+        var imageUrl = $"https://cdn.example.test/images/{Guid.NewGuid():N}/product.png";
+        var loadCount = 0;
+        using var remoteImages = ProductThumbnailImageSourceConverter.UseRemoteImageBytesLoaderForTests((_, _) =>
+        {
+            loadCount++;
+            return Task.FromResult(OnePixelPngBytes());
+        });
+
+        var firstPreloadCount = await ProductThumbnailImageSourceConverter.PreloadAsync([imageUrl]);
+        var secondPreloadCount = await ProductThumbnailImageSourceConverter.PreloadAsync([imageUrl]);
+
+        Assert.Equal(1, firstPreloadCount);
+        Assert.Equal(0, secondPreloadCount);
+        Assert.Equal(1, loadCount);
+    }
+
+    [Fact]
+    public async Task PreloadAsync_ignores_invalid_or_failed_images()
+    {
+        ClearImageCacheForTests();
+        var failedUrl = $"https://cdn.example.test/images/{Guid.NewGuid():N}/missing.png";
+        using var remoteImages = ProductThumbnailImageSourceConverter.UseRemoteImageBytesLoaderForTests((_, _) =>
+            throw new IOException("download failed"));
+
+        var preloadedCount = await ProductThumbnailImageSourceConverter.PreloadAsync(
+            [null, string.Empty, "unsupported://image", failedUrl]);
+
+        Assert.Equal(0, preloadedCount);
+    }
+
     private static string CreateTempImageFile()
     {
         var filePath = Path.Combine(Path.GetTempPath(), $"hbpos-thumbnail-{Guid.NewGuid():N}.png");
@@ -328,6 +470,22 @@ public sealed class ProductThumbnailImageSourceConverterTests
     private static byte[] OnePixelPngBytes()
     {
         return Convert.FromBase64String(OnePixelPngBase64);
+    }
+
+    private static void ClearImageCacheForTests()
+    {
+        ClearConcurrentDictionaryField("Cache");
+        ClearConcurrentDictionaryField("LoggedDiagnostics");
+    }
+
+    private static void ClearConcurrentDictionaryField(string fieldName)
+    {
+        var field = typeof(ProductThumbnailImageSourceConverter).GetField(fieldName, BindingFlags.Static | BindingFlags.NonPublic);
+        Assert.NotNull(field);
+
+        var clearMethod = field!.FieldType.GetMethod("Clear", BindingFlags.Instance | BindingFlags.Public);
+        Assert.NotNull(clearMethod);
+        clearMethod!.Invoke(field.GetValue(null), null);
     }
 
     private static List<string> CaptureProductImageLogs(Action action)

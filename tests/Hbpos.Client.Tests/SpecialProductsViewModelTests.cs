@@ -214,6 +214,85 @@ public sealed class SpecialProductsViewModelTests
     }
 
     [Fact]
+    public async Task PreloadFirstPageThumbnailsAsync_warms_product_thumbnail_cache_for_first_page_only()
+    {
+        var repository = new FakeCatalogRepository { SpecialItems = CreateSpecialItems(21) };
+        IReadOnlyList<string?> preloadedSources = [];
+        var viewModel = CreateViewModel(
+            repository: repository,
+            thumbnailPreloadAsync: (sources, decodePixelWidth, _) =>
+            {
+                Assert.Equal(72, decodePixelWidth);
+                preloadedSources = sources.ToArray();
+                return Task.FromResult(preloadedSources.Count);
+            });
+
+        await viewModel.PreloadFirstPageThumbnailsAsync();
+
+        Assert.Equal(20, preloadedSources.Count);
+        Assert.Equal(repository.SpecialItems.Take(20).Select(item => item.ProductImage), preloadedSources);
+        Assert.Equal(20, viewModel.PagedSpecialItems.Count);
+    }
+
+    [Fact]
+    public async Task PreloadFirstPageThumbnailsAsync_ignores_empty_images_without_failing_data_preload()
+    {
+        var repository = new FakeCatalogRepository
+        {
+            SpecialItems =
+            [
+                CreateItem("SKU-001", "Alpha", "930001", isSpecialProduct: true) with { ProductImage = null },
+                CreateItem("SKU-002", "Beta", "930002", isSpecialProduct: true) with { ProductImage = "   " }
+            ]
+        };
+        var preloadCallCount = 0;
+        var viewModel = CreateViewModel(
+            repository: repository,
+            thumbnailPreloadAsync: (_, _, _) =>
+            {
+                preloadCallCount++;
+                return Task.FromResult(0);
+            });
+
+        await viewModel.PreloadFirstPageThumbnailsAsync();
+
+        Assert.Equal(0, preloadCallCount);
+        Assert.Equal(2, viewModel.SpecialItems.Count);
+    }
+
+    [Fact]
+    public async Task PreloadFirstPageThumbnailsAsync_keeps_loaded_items_when_thumbnail_preload_fails()
+    {
+        var repository = new FakeCatalogRepository { SpecialItems = CreateSpecialItems(1) };
+        var viewModel = CreateViewModel(
+            repository: repository,
+            thumbnailPreloadAsync: (_, _, _) => throw new IOException("thumbnail failed"));
+
+        await viewModel.PreloadFirstPageThumbnailsAsync();
+
+        Assert.Single(viewModel.SpecialItems);
+        Assert.Single(viewModel.PagedSpecialItems);
+    }
+
+    [Fact]
+    public async Task PreloadFirstPageThumbnailsAsync_does_not_throw_when_special_products_are_empty()
+    {
+        var preloadCallCount = 0;
+        var viewModel = CreateViewModel(
+            repository: new FakeCatalogRepository { SpecialItems = [] },
+            thumbnailPreloadAsync: (_, _, _) =>
+            {
+                preloadCallCount++;
+                return Task.FromResult(0);
+            });
+
+        await viewModel.PreloadFirstPageThumbnailsAsync();
+
+        Assert.Equal(0, preloadCallCount);
+        Assert.Empty(viewModel.SpecialItems);
+    }
+
+    [Fact]
     public async Task Offline_edit_commands_are_disabled_and_do_not_call_backend()
     {
         var item = CreateItem("SKU-001", "Alpha", "930001", isSpecialProduct: true);
@@ -380,6 +459,58 @@ public sealed class SpecialProductsViewModelTests
         Assert.False(viewModel.IsEditMode);
         Assert.Equal(2, viewModel.TotalPages);
         Assert.Equal("SKU-001", viewModel.PagedSpecialItems.First().ProductCode);
+    }
+
+    [Fact]
+    public async Task ActivateForEntry_disables_thumbnails_immediately_and_reenables_after_delay()
+    {
+        var thumbnailDelay = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var viewModel = CreateViewModel(
+            repository: new FakeCatalogRepository { SpecialItems = CreateSpecialItems(1) },
+            delayAsync: (_, cancellationToken) => thumbnailDelay.Task.WaitAsync(cancellationToken));
+        await viewModel.LoadAsync();
+
+        Assert.True(viewModel.AreThumbnailsEnabled);
+
+        viewModel.ActivateForEntry();
+
+        Assert.False(viewModel.AreThumbnailsEnabled);
+        thumbnailDelay.SetResult();
+        await WaitUntilAsync(() => viewModel.AreThumbnailsEnabled);
+        Assert.True(viewModel.AreThumbnailsEnabled);
+    }
+
+    [Fact]
+    public async Task ActivateForEntry_latest_delay_controls_when_thumbnails_are_reenabled()
+    {
+        var thumbnailDelays = new List<TaskCompletionSource>();
+        var viewModel = CreateViewModel(
+            repository: new FakeCatalogRepository { SpecialItems = CreateSpecialItems(1) },
+            delayAsync: (_, cancellationToken) =>
+            {
+                var delay = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+                thumbnailDelays.Add(delay);
+                return delay.Task.WaitAsync(cancellationToken);
+            });
+        await viewModel.LoadAsync();
+
+        viewModel.ActivateForEntry();
+        var firstDelay = Assert.Single(thumbnailDelays);
+        Assert.False(viewModel.AreThumbnailsEnabled);
+
+        viewModel.ActivateForEntry();
+
+        Assert.Equal(2, thumbnailDelays.Count);
+        var secondDelay = thumbnailDelays[1];
+        Assert.False(viewModel.AreThumbnailsEnabled);
+
+        firstDelay.SetResult();
+        await Task.Delay(50);
+        Assert.False(viewModel.AreThumbnailsEnabled);
+
+        secondDelay.SetResult();
+        await WaitUntilAsync(() => viewModel.AreThumbnailsEnabled);
+        Assert.True(viewModel.AreThumbnailsEnabled);
     }
 
     [Fact]
@@ -644,7 +775,8 @@ public sealed class SpecialProductsViewModelTests
         PosSessionState? session = null,
         Action? onBack = null,
         Action<CartLine>? onCartLineAdded = null,
-        Func<TimeSpan, CancellationToken, Task>? delayAsync = null)
+        Func<TimeSpan, CancellationToken, Task>? delayAsync = null,
+        Func<IEnumerable<string?>, int, CancellationToken, Task<int>>? thumbnailPreloadAsync = null)
     {
         return new SpecialProductsViewModel(
             index ?? new LocalSellableItemIndex(),
@@ -656,7 +788,8 @@ public sealed class SpecialProductsViewModelTests
             onBack ?? (() => { }),
             onCartLineAdded,
             workflow,
-            delayAsync: delayAsync);
+            delayAsync: delayAsync,
+            thumbnailPreloadAsync: thumbnailPreloadAsync);
     }
 
     private static PosSessionState Session => new("HB POS", "S001", "Main Store", "POS-01", "C001", "Alice", true, 0);
