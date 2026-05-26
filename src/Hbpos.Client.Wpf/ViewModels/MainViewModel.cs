@@ -53,8 +53,10 @@ public sealed partial class MainViewModel : ObservableObject
     private bool _schemaReady;
     private LocalOrder? _lastCompletedOrder;
     private LocalDeviceCache? _pendingDeviceRegistrationCache;
+    private CancellationTokenSource? _startupCatalogIndexLoadCts;
     private Task? _deviceRegistrationStoreLoadTask;
     private Task? _posPostShowStartupTask;
+    private Task? _startupCatalogIndexLoadTask;
     private AppStartupOptions? _startupOptions;
 
     [ObservableProperty]
@@ -65,6 +67,9 @@ public sealed partial class MainViewModel : ObservableObject
 
     [ObservableProperty]
     private PosTerminalViewModel? _cachedPosTerminalScreen;
+
+    [ObservableProperty]
+    private PaymentViewModel? _cachedCashPaymentScreen;
 
     [ObservableProperty]
     private SpecialProductsViewModel? _cachedSpecialProductsScreen;
@@ -310,10 +315,13 @@ public sealed partial class MainViewModel : ObservableObject
 
     public bool IsPosTerminalScreenActive => ReferenceEquals(CurrentScreen, CachedPosTerminalScreen);
 
+    public bool IsCashPaymentScreenActive => ReferenceEquals(CurrentScreen, CachedCashPaymentScreen);
+
     public bool IsSpecialProductsScreenActive => ReferenceEquals(CurrentScreen, CachedSpecialProductsScreen);
 
     public bool IsFallbackScreenActive => CurrentScreen is not null &&
         !IsPosTerminalScreenActive &&
+        !IsCashPaymentScreenActive &&
         !IsSpecialProductsScreenActive;
 
     public ObservableCollection<SyncQueueListItem> SyncCenterOrders { get; } = [];
@@ -430,16 +438,14 @@ public sealed partial class MainViewModel : ObservableObject
         SpecialProducts?.Dispose();
         ReceiptReturns?.Dispose();
         CachedPosTerminalScreen = null;
+        ClearCashPaymentCache();
         CachedSpecialProductsScreen = null;
+        CancelStartupCatalogIndexLoad();
         IReadOnlyList<SellableItemDto> cachedItems = [];
         if (startupOptions.PreviewMode)
         {
             cachedItems = CreateStarterItems();
             await _shellCatalogService.ReplacePreviewCatalogAsync(cachedItems);
-        }
-        else
-        {
-            cachedItems = await LoadStartupCatalogIndexAsync();
         }
 
         var posWorkflowService = _posTerminalWorkflowFactory(RefreshRemoteLookupAsync, ReloadCatalogIndexAsync);
@@ -496,7 +502,9 @@ public sealed partial class MainViewModel : ObservableObject
         RefreshClock();
         _clockTimer.Start();
         ApplySessionToScreens();
+        PrepareCachedCashPaymentScreen();
         NavigateFromStartup(startupOptions.InitialScreen);
+        BeginStartupCatalogIndexLoad(startupOptions);
 
     }
 
@@ -521,19 +529,26 @@ public sealed partial class MainViewModel : ObservableObject
         BeginInitialCatalogSync();
     }
 
-    private async Task<IReadOnlyList<SellableItemDto>> LoadStartupCatalogIndexAsync()
+    private async Task<IReadOnlyList<SellableItemDto>> LoadStartupCatalogIndexAsync(CancellationToken cancellationToken)
     {
         var stopwatch = Stopwatch.StartNew();
         ConsoleLog.Write("CatalogStartup", $"local catalog load start store={Session.StoreCode}");
         try
         {
-            var cachedItems = await _shellCatalogService.LoadLocalCatalogAsync(Session.StoreCode, CancellationToken.None);
+            var cachedItems = await _shellCatalogService.LoadLocalCatalogAsync(Session.StoreCode, cancellationToken);
+            cancellationToken.ThrowIfCancellationRequested();
             PosTerminal?.LoadMatches(cachedItems);
             PosTerminal?.RefreshCart();
             CashPayment?.RefreshCart();
             stopwatch.Stop();
             ConsoleLog.Write("CatalogStartup", $"local catalog load completed store={Session.StoreCode} items={cachedItems.Count} elapsedMs={stopwatch.ElapsedMilliseconds}");
             return cachedItems;
+        }
+        catch (OperationCanceledException)
+        {
+            stopwatch.Stop();
+            ConsoleLog.Write("CatalogStartup", $"local catalog load canceled store={Session.StoreCode} elapsedMs={stopwatch.ElapsedMilliseconds}");
+            return [];
         }
         catch (Exception ex)
         {
@@ -542,6 +557,24 @@ public sealed partial class MainViewModel : ObservableObject
             StatusMessage = ex.Message;
             return [];
         }
+    }
+
+    private void BeginStartupCatalogIndexLoad(AppStartupOptions startupOptions)
+    {
+        if (startupOptions.PreviewMode)
+        {
+            return;
+        }
+
+        _startupCatalogIndexLoadCts ??= new CancellationTokenSource();
+        _startupCatalogIndexLoadTask ??= LoadStartupCatalogIndexAsync(_startupCatalogIndexLoadCts.Token);
+    }
+
+    private void CancelStartupCatalogIndexLoad()
+    {
+        _startupCatalogIndexLoadCts?.Cancel();
+        _startupCatalogIndexLoadCts = null;
+        _startupCatalogIndexLoadTask = null;
     }
 
     partial void OnSessionChanged(PosSessionState value)
@@ -566,6 +599,11 @@ public sealed partial class MainViewModel : ObservableObject
         RaiseScreenHostStateChanged();
     }
 
+    partial void OnCachedCashPaymentScreenChanged(PaymentViewModel? value)
+    {
+        RaiseScreenHostStateChanged();
+    }
+
     partial void OnCachedSpecialProductsScreenChanged(SpecialProductsViewModel? value)
     {
         RaiseScreenHostStateChanged();
@@ -574,6 +612,7 @@ public sealed partial class MainViewModel : ObservableObject
     private void RaiseScreenHostStateChanged()
     {
         OnPropertyChanged(nameof(IsPosTerminalScreenActive));
+        OnPropertyChanged(nameof(IsCashPaymentScreenActive));
         OnPropertyChanged(nameof(IsSpecialProductsScreenActive));
         OnPropertyChanged(nameof(IsFallbackScreenActive));
     }
@@ -722,6 +761,27 @@ public sealed partial class MainViewModel : ObservableObject
 
         PrepareCachedSpecialProductsScreen();
         _ = TryPreloadSpecialProductsHomeAsync();
+    }
+
+    private void PrepareCachedCashPaymentScreen()
+    {
+        if (CashPayment is null)
+        {
+            CashPayment = new PaymentViewModel(
+                _cart,
+                _cashPaymentWorkflowService,
+                Session,
+                _localization);
+            CashPayment.PaymentCancelled += (_, _) => ShowPos();
+            CashPayment.PaymentCompleted += OnPaymentCompleted;
+        }
+
+        if (ReferenceEquals(CachedCashPaymentScreen, CashPayment))
+        {
+            return;
+        }
+
+        CachedCashPaymentScreen = CashPayment;
     }
 
     private void PrepareCachedSpecialProductsScreen()
@@ -918,6 +978,7 @@ public sealed partial class MainViewModel : ObservableObject
         DeviceRegistration = CreateDeviceRegistrationViewModel(startupOptions);
         _pendingDeviceRegistrationCache = null;
         _deviceRegistrationStoreLoadTask = null;
+        ClearCashPaymentCache();
         DeviceRegistration.PrepareReregister(Session.StoreCode);
         CurrentScreen = DeviceRegistration;
         _deviceRegistrationStoreLoadTask = DeviceRegistration.LoadStoresAsync(null);
@@ -928,15 +989,16 @@ public sealed partial class MainViewModel : ObservableObject
     {
         _mainShellStartupService.ClearAuthorization();
         _posPostShowStartupTask = null;
+        CancelStartupCatalogIndexLoad();
         PosTerminal?.Dispose();
         SpecialProducts?.Dispose();
         ReceiptReturns?.Dispose();
         PosTerminal = null;
         SpecialProducts = null;
         CachedPosTerminalScreen = null;
+        ClearCashPaymentCache();
         CachedSpecialProductsScreen = null;
         ReceiptReturns = null;
-        CashPayment = null;
         TransactionHistory = null;
         _lastCompletedOrder = null;
         _cart.Clear();
@@ -1020,14 +1082,21 @@ public sealed partial class MainViewModel : ObservableObject
             return;
         }
 
-        CashPayment = new PaymentViewModel(
-            _cart,
-            _cashPaymentWorkflowService,
-            Session,
-            _localization);
-        CashPayment.PaymentCancelled += (_, _) => ShowPos();
-        CashPayment.PaymentCompleted += OnPaymentCompleted;
+        PrepareCachedCashPaymentScreen();
+        if (CashPayment is null)
+        {
+            ShowPos();
+            return;
+        }
+
+        CashPayment.PrepareForEntry(Session);
         CurrentScreen = CashPayment;
+    }
+
+    private void ClearCashPaymentCache()
+    {
+        CachedCashPaymentScreen = null;
+        CashPayment = null;
     }
 
     private async void OnPaymentCompleted(object? sender, PaymentCompletedEventArgs e)
@@ -1071,7 +1140,16 @@ public sealed partial class MainViewModel : ObservableObject
 
         Settings ??= new SettingsViewModel(
             _cardTerminalSetupService,
-            _localization);
+            _localization,
+            async cancellationToken =>
+            {
+                await SyncCatalogAndReloadAsync(cancellationToken);
+            },
+            async cancellationToken =>
+            {
+                await ResetCatalogAndReloadAsync(cancellationToken);
+            },
+            BeginDeviceReregistrationAsync);
         await Settings.LoadAsync();
         CurrentScreen = Settings;
     }

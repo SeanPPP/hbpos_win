@@ -266,6 +266,19 @@
                 </ContentControl.Style>
             </ContentControl>
 
+            <ContentControl Content="{Binding CachedCashPaymentScreen}">
+                <ContentControl.Style>
+                    <Style TargetType="{x:Type ContentControl}">
+                        <Setter Property="Visibility" Value="Hidden" />
+                        <Style.Triggers>
+                            <DataTrigger Binding="{Binding IsCashPaymentScreenActive}" Value="True">
+                                <Setter Property="Visibility" Value="Visible" />
+                            </DataTrigger>
+                        </Style.Triggers>
+                    </Style>
+                </ContentControl.Style>
+            </ContentControl>
+
             <ContentControl Content="{Binding CurrentScreen}"
                             Visibility="{Binding IsFallbackScreenActive, Converter={StaticResource BoolToVis}}" />
 

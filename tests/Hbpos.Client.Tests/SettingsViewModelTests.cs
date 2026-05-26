@@ -16,6 +16,104 @@ public sealed class SettingsViewModelTests
     }
 
     [Fact]
+    public void Settings_defaults_to_data_maintenance_category()
+    {
+        var viewModel = new SettingsViewModel(new FakeCardTerminalSetupService());
+
+        Assert.Equal(SettingsCategory.DataMaintenance, viewModel.SelectedCategory);
+        Assert.True(viewModel.IsDataMaintenanceSelected);
+        Assert.False(viewModel.IsPaymentTerminalSelected);
+        Assert.False(viewModel.IsDeviceRegistrationSelected);
+    }
+
+    [Fact]
+    public void Category_commands_switch_selected_category()
+    {
+        var viewModel = new SettingsViewModel(new FakeCardTerminalSetupService());
+
+        viewModel.SelectPaymentTerminalCommand.Execute(null);
+
+        Assert.Equal(SettingsCategory.PaymentTerminal, viewModel.SelectedCategory);
+        Assert.False(viewModel.IsDataMaintenanceSelected);
+        Assert.True(viewModel.IsPaymentTerminalSelected);
+
+        viewModel.SelectDeviceRegistrationCommand.Execute(null);
+
+        Assert.Equal(SettingsCategory.DeviceRegistration, viewModel.SelectedCategory);
+        Assert.True(viewModel.IsDeviceRegistrationSelected);
+
+        viewModel.SelectDataMaintenanceCommand.Execute(null);
+
+        Assert.Equal(SettingsCategory.DataMaintenance, viewModel.SelectedCategory);
+        Assert.True(viewModel.IsDataMaintenanceSelected);
+    }
+
+    [Fact]
+    public void Maintenance_commands_are_disabled_when_services_are_not_configured()
+    {
+        var viewModel = new SettingsViewModel(new FakeCardTerminalSetupService());
+
+        Assert.False(viewModel.DownloadCatalogCommand.CanExecute(null));
+        Assert.False(viewModel.ResetCatalogCommand.CanExecute(null));
+        Assert.False(viewModel.ReregisterDeviceCommand.CanExecute(null));
+    }
+
+    [Fact]
+    public async Task DownloadCatalogCommand_calls_injected_download_delegate()
+    {
+        var downloadCallCount = 0;
+        var viewModel = new SettingsViewModel(
+            new FakeCardTerminalSetupService(),
+            downloadCatalogAsync: cancellationToken =>
+            {
+                Assert.False(cancellationToken.IsCancellationRequested);
+                downloadCallCount++;
+                return Task.CompletedTask;
+            });
+
+        await viewModel.DownloadCatalogCommand.ExecuteAsync(null);
+
+        Assert.Equal(1, downloadCallCount);
+        Assert.Equal("Catalog data download completed.", viewModel.StatusMessage);
+    }
+
+    [Fact]
+    public async Task ResetCatalogCommand_calls_injected_reset_delegate()
+    {
+        var resetCallCount = 0;
+        var viewModel = new SettingsViewModel(
+            new FakeCardTerminalSetupService(),
+            resetCatalogAsync: cancellationToken =>
+            {
+                Assert.False(cancellationToken.IsCancellationRequested);
+                resetCallCount++;
+                return Task.CompletedTask;
+            });
+
+        await viewModel.ResetCatalogCommand.ExecuteAsync(null);
+
+        Assert.Equal(1, resetCallCount);
+        Assert.Equal("Catalog data reset completed.", viewModel.StatusMessage);
+    }
+
+    [Fact]
+    public async Task ReregisterDeviceCommand_calls_injected_reregister_delegate()
+    {
+        var reregisterCallCount = 0;
+        var viewModel = new SettingsViewModel(
+            new FakeCardTerminalSetupService(),
+            reregisterDeviceAsync: () =>
+            {
+                reregisterCallCount++;
+                return Task.CompletedTask;
+            });
+
+        await viewModel.ReregisterDeviceCommand.ExecuteAsync(null);
+
+        Assert.Equal(1, reregisterCallCount);
+    }
+
+    [Fact]
     public async Task LoadDevicesCommand_requires_selected_location()
     {
         var viewModel = new SettingsViewModel(new FakeCardTerminalSetupService(squareAccessToken: CachedToken));

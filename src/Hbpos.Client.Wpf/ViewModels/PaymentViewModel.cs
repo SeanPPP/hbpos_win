@@ -187,6 +187,22 @@ public partial class PaymentViewModel : ObservableObject
         PendingSyncCount = value.PendingSyncCount;
     }
 
+    public void PrepareForEntry(PosSessionState session)
+    {
+        Session = session;
+        _pendingVoucherUploadOrderGuid = null;
+        _pendingVoucherTenderedAmount = 0m;
+        _pendingVoucherChangeAmount = 0m;
+        PaymentTenders.Clear();
+        VoucherCodeText = string.Empty;
+        TenderAmountText = string.Empty;
+        _statusKey = "payment.status.ready";
+        _statusTextOverride = null;
+        SelectedPaymentMethod = PaymentMethodKind.Cash;
+        RefreshCart();
+        OnPropertyChanged(nameof(StatusMessage));
+    }
+
     public void RefreshCart()
     {
         CartLines.ReplaceWith(_cart.Lines);

@@ -6,14 +6,27 @@ using Hbpos.Client.Wpf.Services;
 
 namespace Hbpos.Client.Wpf.ViewModels;
 
+public enum SettingsCategory
+{
+    DataMaintenance,
+    PaymentTerminal,
+    DeviceRegistration
+}
+
 public sealed partial class SettingsViewModel : ObservableObject
 {
     private readonly ICardTerminalSetupService _setupService;
     private readonly ILocalizationService? _localization;
+    private readonly Func<CancellationToken, Task>? _downloadCatalogAsync;
+    private readonly Func<CancellationToken, Task>? _resetCatalogAsync;
+    private readonly Func<Task>? _reregisterDeviceAsync;
     private CardTerminalConfiguration _loadedConfiguration = CardTerminalConfiguration.Default;
     private string? _savedSquareLocationId;
     private string? _savedSquareDeviceId;
     private string? _devicesLoadedForLocationId;
+
+    [ObservableProperty]
+    private SettingsCategory _selectedCategory = SettingsCategory.DataMaintenance;
 
     [ObservableProperty]
     private bool _isSandbox;
@@ -50,21 +63,33 @@ public sealed partial class SettingsViewModel : ObservableObject
 
     public SettingsViewModel(
         ICardTerminalSetupService setupService,
-        ILocalizationService? localization = null)
+        ILocalizationService? localization = null,
+        Func<CancellationToken, Task>? downloadCatalogAsync = null,
+        Func<CancellationToken, Task>? resetCatalogAsync = null,
+        Func<Task>? reregisterDeviceAsync = null)
     {
         _setupService = setupService;
         _localization = localization;
+        _downloadCatalogAsync = downloadCatalogAsync;
+        _resetCatalogAsync = resetCatalogAsync;
+        _reregisterDeviceAsync = reregisterDeviceAsync;
         if (_localization is not null)
         {
             _localization.CultureChanged += (_, _) => RaiseLocalizedProperties();
         }
 
+        SelectDataMaintenanceCommand = new RelayCommand(() => SelectedCategory = SettingsCategory.DataMaintenance);
+        SelectPaymentTerminalCommand = new RelayCommand(() => SelectedCategory = SettingsCategory.PaymentTerminal);
+        SelectDeviceRegistrationCommand = new RelayCommand(() => SelectedCategory = SettingsCategory.DeviceRegistration);
         LoadCommand = new AsyncRelayCommand(LoadAsync);
         LoadLocationsCommand = new AsyncRelayCommand(LoadLocationsAsync, CanLoadLocations);
         LoadDevicesCommand = new AsyncRelayCommand(LoadDevicesAsync, CanLoadDevices);
         SaveSquareCommand = new AsyncRelayCommand(SaveSquareAsync, CanSaveSquare);
         TestLinklyCommand = new AsyncRelayCommand(TestLinklyAsync, CanTestLinkly);
         SaveLinklyCommand = new AsyncRelayCommand(SaveLinklyAsync, CanSaveLinkly);
+        DownloadCatalogCommand = new AsyncRelayCommand(DownloadCatalogAsync, CanDownloadCatalog);
+        ResetCatalogCommand = new AsyncRelayCommand(ResetCatalogAsync, CanResetCatalog);
+        ReregisterDeviceCommand = new AsyncRelayCommand(ReregisterDeviceAsync, CanReregisterDevice);
         StatusMessage = "Ready.";
     }
 
@@ -84,13 +109,43 @@ public sealed partial class SettingsViewModel : ObservableObject
 
     public IAsyncRelayCommand SaveLinklyCommand { get; }
 
+    public IRelayCommand SelectDataMaintenanceCommand { get; }
+
+    public IRelayCommand SelectPaymentTerminalCommand { get; }
+
+    public IRelayCommand SelectDeviceRegistrationCommand { get; }
+
+    public IAsyncRelayCommand DownloadCatalogCommand { get; }
+
+    public IAsyncRelayCommand ResetCatalogCommand { get; }
+
+    public IAsyncRelayCommand ReregisterDeviceCommand { get; }
+
     public string ScreenTitleText => "Settings";
 
+    public string SettingsSubtitleText => SelectedCategory switch
+    {
+        SettingsCategory.DataMaintenance => "Data maintenance",
+        SettingsCategory.PaymentTerminal => "Card terminal settings",
+        SettingsCategory.DeviceRegistration => "Device registration",
+        _ => "Settings"
+    };
+
     public string CardTerminalTitleText => "Card Terminal Settings";
+
+    public string DataMaintenanceTitleText => "数据维护";
+
+    public string DeviceRegistrationTitleText => "设备注册";
 
     public string SquareTitleText => "Square";
 
     public string LinklyTitleText => "ANZ Linkly";
+
+    public bool IsDataMaintenanceSelected => SelectedCategory == SettingsCategory.DataMaintenance;
+
+    public bool IsPaymentTerminalSelected => SelectedCategory == SettingsCategory.PaymentTerminal;
+
+    public bool IsDeviceRegistrationSelected => SelectedCategory == SettingsCategory.DeviceRegistration;
 
     public string SquareTokenStatusText => HasSavedSquareToken
         ? "Local encrypted token cached. HBPOS refreshes it when Square rejects it."
@@ -252,6 +307,53 @@ public sealed partial class SettingsViewModel : ObservableObject
         });
     }
 
+    private async Task DownloadCatalogAsync(CancellationToken cancellationToken)
+    {
+        if (_downloadCatalogAsync is null)
+        {
+            StatusMessage = "Catalog download service is not configured.";
+            return;
+        }
+
+        await RunBusyAsync(async () =>
+        {
+            StatusMessage = "Downloading catalog data...";
+            await _downloadCatalogAsync(cancellationToken);
+            StatusMessage = "Catalog data download completed.";
+        });
+    }
+
+    private async Task ResetCatalogAsync(CancellationToken cancellationToken)
+    {
+        if (_resetCatalogAsync is null)
+        {
+            StatusMessage = "Catalog reset service is not configured.";
+            return;
+        }
+
+        await RunBusyAsync(async () =>
+        {
+            StatusMessage = "Resetting catalog data...";
+            await _resetCatalogAsync(cancellationToken);
+            StatusMessage = "Catalog data reset completed.";
+        });
+    }
+
+    private async Task ReregisterDeviceAsync()
+    {
+        if (_reregisterDeviceAsync is null)
+        {
+            StatusMessage = "Device reregistration service is not configured.";
+            return;
+        }
+
+        await RunBusyAsync(async () =>
+        {
+            StatusMessage = "Starting device reregistration...";
+            await _reregisterDeviceAsync();
+        });
+    }
+
     private bool CanLoadLocations()
     {
         return !IsBusy;
@@ -282,6 +384,21 @@ public sealed partial class SettingsViewModel : ObservableObject
         return !IsBusy && LinklyConnectionSucceeded;
     }
 
+    private bool CanDownloadCatalog()
+    {
+        return !IsBusy && _downloadCatalogAsync is not null;
+    }
+
+    private bool CanResetCatalog()
+    {
+        return !IsBusy && _resetCatalogAsync is not null;
+    }
+
+    private bool CanReregisterDevice()
+    {
+        return !IsBusy && _reregisterDeviceAsync is not null;
+    }
+
     private async Task RunBusyAsync(Func<Task> action)
     {
         IsBusy = true;
@@ -307,9 +424,20 @@ public sealed partial class SettingsViewModel : ObservableObject
     {
         OnPropertyChanged(nameof(ScreenTitleText));
         OnPropertyChanged(nameof(CardTerminalTitleText));
+        OnPropertyChanged(nameof(SettingsSubtitleText));
+        OnPropertyChanged(nameof(DataMaintenanceTitleText));
+        OnPropertyChanged(nameof(DeviceRegistrationTitleText));
         OnPropertyChanged(nameof(SquareTitleText));
         OnPropertyChanged(nameof(LinklyTitleText));
         OnPropertyChanged(nameof(SquareTokenStatusText));
+    }
+
+    partial void OnSelectedCategoryChanged(SettingsCategory value)
+    {
+        OnPropertyChanged(nameof(SettingsSubtitleText));
+        OnPropertyChanged(nameof(IsDataMaintenanceSelected));
+        OnPropertyChanged(nameof(IsPaymentTerminalSelected));
+        OnPropertyChanged(nameof(IsDeviceRegistrationSelected));
     }
 
     partial void OnIsSandboxChanged(bool value)
@@ -378,6 +506,9 @@ public sealed partial class SettingsViewModel : ObservableObject
         SaveSquareCommand.NotifyCanExecuteChanged();
         TestLinklyCommand.NotifyCanExecuteChanged();
         SaveLinklyCommand.NotifyCanExecuteChanged();
+        DownloadCatalogCommand.NotifyCanExecuteChanged();
+        ResetCatalogCommand.NotifyCanExecuteChanged();
+        ReregisterDeviceCommand.NotifyCanExecuteChanged();
     }
 
     private void ResetLinklyConnectionTest()

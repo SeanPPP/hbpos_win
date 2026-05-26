@@ -4,6 +4,7 @@ using Hbpos.Client.Wpf.Models;
 using Hbpos.Client.Wpf.Services;
 using Hbpos.Client.Wpf.ViewModels;
 using Hbpos.Contracts.Catalog;
+using Hbpos.Contracts.Orders;
 
 namespace Hbpos.Client.Tests;
 
@@ -1643,6 +1644,37 @@ public sealed class PosTerminalCashPaymentViewModelTests
         Assert.True(viewModel.AddTenderCommand.CanExecute(null));
     }
 
+    [Fact]
+    public async Task Payment_page_prepare_for_entry_resets_tenders_and_pending_voucher_retry_state()
+    {
+        var cart = new PosCartService();
+        cart.AddItem(CreateItem("SKU-145", "Retry Voucher Tea", "930145", PriceSourceKind.StoreRetailPrice, 5m));
+        var workflow = new FakeCashPaymentWorkflowService();
+        var viewModel = new PaymentViewModel(cart, workflow, Session);
+
+        viewModel.SelectVoucherCommand.Execute(null);
+        viewModel.TenderAmountText = "5";
+        viewModel.VoucherCodeText = "ABC123";
+        await viewModel.AddTenderCommand.ExecuteAsync(null);
+        workflow.ThrowOnComplete = new PaymentUploadFailedException(Guid.NewGuid(), 5m, 0m, "upload failed");
+        await viewModel.ConfirmPaymentCommand.ExecuteAsync(null);
+
+        Assert.Equal("upload failed", viewModel.StatusMessage);
+        Assert.True(viewModel.ConfirmPaymentCommand.CanExecute(null));
+
+        var updatedSession = Session with { PendingSyncCount = 3 };
+        viewModel.PrepareForEntry(updatedSession);
+
+        Assert.Empty(viewModel.PaymentTenders);
+        Assert.Equal(string.Empty, viewModel.VoucherCodeText);
+        Assert.Equal(PaymentMethodKind.Cash, viewModel.SelectedPaymentMethod);
+        Assert.Equal(updatedSession.PendingSyncCount, viewModel.PendingSyncCount);
+        Assert.Equal("5.00", viewModel.TenderAmountText);
+        Assert.Equal("payment.status.ready", viewModel.StatusMessage);
+        Assert.True(viewModel.AddTenderCommand.CanExecute(null));
+        Assert.True(viewModel.ConfirmPaymentCommand.CanExecute(null));
+    }
+
     private static PosSessionState Session => new("HB POS", "S001", "Main Store", "POS-01", "C001", "Alice", true, 0);
 
     private static SellableItemDto CreateItem(
@@ -1870,6 +1902,87 @@ public sealed class PosTerminalCashPaymentViewModelTests
         public void RaiseCatalogReloaded(IReadOnlyList<SellableItemDto> catalogItems)
         {
             CatalogReloaded?.Invoke(this, new PosTerminalCatalogReloadedEventArgs(catalogItems));
+        }
+    }
+
+    private sealed class FakeCashPaymentWorkflowService : ICashPaymentWorkflowService
+    {
+        public PaymentTender TenderToAdd { get; set; } = new(PaymentMethodKind.Voucher, 5m, "ABC123");
+
+        public PaymentUploadFailedException? ThrowOnComplete { get; set; }
+
+        public bool TryParseTenderedAmount(string? amountTenderedText, out decimal tenderedAmount)
+        {
+            return decimal.TryParse(amountTenderedText, out tenderedAmount);
+        }
+
+        public decimal CalculateChange(string? amountTenderedText, decimal actualAmount)
+        {
+            return TryParseTenderedAmount(amountTenderedText, out var tenderedAmount)
+                ? decimal.Round(tenderedAmount - actualAmount, 2, MidpointRounding.AwayFromZero)
+                : 0m;
+        }
+
+        public decimal CalculateTenderedAmount(IReadOnlyList<PaymentTender> tenders)
+        {
+            return tenders.Sum(tender => tender.Amount);
+        }
+
+        public decimal CalculateRemainingAmount(decimal actualAmount, IReadOnlyList<PaymentTender> tenders)
+        {
+            return Math.Max(0m, actualAmount - CalculateTenderedAmount(tenders));
+        }
+
+        public decimal CalculateChange(IReadOnlyList<PaymentTender> tenders, decimal actualAmount)
+        {
+            return Math.Max(0m, CalculateTenderedAmount(tenders) - actualAmount);
+        }
+
+        public Task<PaymentTenderAttemptResult> AddTenderAsync(
+            PaymentMethodKind method,
+            PosSessionState session,
+            decimal actualAmount,
+            IReadOnlyList<PaymentTender> currentTenders,
+            string? amountText,
+            string? referenceText = null,
+            CancellationToken cancellationToken = default)
+        {
+            return Task.FromResult(PaymentTenderAttemptResult.Success(TenderToAdd, "payment.status.tenderAdded"));
+        }
+
+        public Task<CashPaymentWorkflowResult> CompleteAsync(
+            PosCartService cart,
+            PosSessionState session,
+            string? amountTenderedText,
+            CancellationToken cancellationToken = default)
+        {
+            throw new NotSupportedException();
+        }
+
+        public Task<CashPaymentWorkflowResult> CompletePaymentAsync(
+            PosCartService cart,
+            PosSessionState session,
+            IReadOnlyList<PaymentTender> tenders,
+            decimal cashTenderedAmount,
+            CancellationToken cancellationToken = default)
+        {
+            if (ThrowOnComplete is not null)
+            {
+                throw ThrowOnComplete;
+            }
+
+            throw new NotSupportedException();
+        }
+
+        public Task<CashPaymentWorkflowResult> RetryVoucherUploadAsync(
+            Guid orderGuid,
+            PosCartService cart,
+            PosSessionState session,
+            decimal tenderedAmount,
+            decimal changeAmount,
+            CancellationToken cancellationToken = default)
+        {
+            throw new NotSupportedException();
         }
     }
 

@@ -30,6 +30,21 @@
             <Setter Property="BorderBrush" Value="{StaticResource PosBorderBrush}" />
             <Setter Property="BorderThickness" Value="1" />
         </Style>
+
+        <Style x:Key="SettingsCategoryButtonStyle" TargetType="Button" BasedOn="{StaticResource PosSecondaryButtonStyle}">
+            <Setter Property="Height" Value="54" />
+            <Setter Property="Margin" Value="0,0,0,10" />
+            <Setter Property="HorizontalContentAlignment" Value="Stretch" />
+            <Setter Property="Padding" Value="12,0" />
+        </Style>
+
+        <Style x:Key="SettingsActionCardStyle" TargetType="Border">
+            <Setter Property="Background" Value="{StaticResource PosSurfaceBrush}" />
+            <Setter Property="BorderBrush" Value="#FFE0E4EC" />
+            <Setter Property="BorderThickness" Value="1" />
+            <Setter Property="CornerRadius" Value="8" />
+            <Setter Property="Padding" Value="20" />
+        </Style>
     </UserControl.Resources>
 
     <Grid>
@@ -49,270 +64,435 @@
                            FontSize="24"
                            FontWeight="Black"
                            Foreground="{StaticResource PosTextBrush}" />
-                <TextBlock Text="{Binding CardTerminalTitleText}"
+                <TextBlock Text="{Binding SettingsSubtitleText}"
                            FontSize="12"
                            Foreground="{StaticResource PosMutedForegroundBrush}"
                            Margin="0,4,0,0" />
             </StackPanel>
         </Border>
 
-        <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto">
-            <Grid Margin="24">
-                <Grid.ColumnDefinitions>
-                    <ColumnDefinition Width="2*" />
-                    <ColumnDefinition Width="16" />
-                    <ColumnDefinition Width="*" />
-                </Grid.ColumnDefinitions>
+        <Grid Grid.Row="1" Margin="24">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="*" />
+                <ColumnDefinition Width="18" />
+                <ColumnDefinition Width="240" />
+            </Grid.ColumnDefinitions>
 
-                <Border Grid.Column="0"
-                        Background="{StaticResource PosSurfaceBrush}"
-                        BorderBrush="#FFE0E4EC"
-                        BorderThickness="1"
-                        CornerRadius="8"
-                        Padding="20">
-                    <Grid>
-                        <Grid.RowDefinitions>
-                            <RowDefinition Height="Auto" />
-                            <RowDefinition Height="Auto" />
-                            <RowDefinition Height="Auto" />
-                            <RowDefinition Height="Auto" />
-                            <RowDefinition Height="Auto" />
-                            <RowDefinition Height="Auto" />
-                        </Grid.RowDefinitions>
+            <ScrollViewer Grid.Column="0" VerticalScrollBarVisibility="Auto">
+                <Grid>
+                    <StackPanel Visibility="{Binding IsDataMaintenanceSelected, Converter={StaticResource BoolToVis}}">
+                        <Border Style="{StaticResource SettingsActionCardStyle}" Margin="0,0,0,16">
+                            <DockPanel>
+                                <Border DockPanel.Dock="Left"
+                                        Width="42"
+                                        Height="42"
+                                        Background="#FFE8F0FE"
+                                        CornerRadius="8"
+                                        Margin="0,0,14,0">
+                                    <materialDesign:PackIcon Kind="CloudDownloadOutline"
+                                                             Width="24"
+                                                             Height="24"
+                                                             Foreground="{StaticResource PosPrimaryBrush}"
+                                                             HorizontalAlignment="Center"
+                                                             VerticalAlignment="Center" />
+                                </Border>
+                                <Button DockPanel.Dock="Right"
+                                        Command="{Binding DownloadCatalogCommand}"
+                                        Style="{StaticResource PosPrimaryButtonStyle}"
+                                        Height="42"
+                                        MinWidth="138"
+                                        Margin="18,0,0,0">
+                                    <StackPanel Orientation="Horizontal">
+                                        <materialDesign:PackIcon Kind="CloudDownloadOutline" Width="18" Height="18" Margin="0,0,8,0" Foreground="White" />
+                                        <TextBlock Text="数据下载" Foreground="White" />
+                                    </StackPanel>
+                                </Button>
+                                <StackPanel>
+                                    <TextBlock Text="数据下载"
+                                               FontSize="18"
+                                               FontWeight="Black"
+                                               Foreground="{StaticResource PosTextBrush}" />
+                                    <TextBlock Text="从服务器同步当前门店的商品目录，并刷新本机收银商品索引。"
+                                               FontSize="12"
+                                               Foreground="{StaticResource PosMutedForegroundBrush}"
+                                               TextWrapping="Wrap"
+                                               Margin="0,5,0,0" />
+                                </StackPanel>
+                            </DockPanel>
+                        </Border>
 
-                        <DockPanel Grid.Row="0" Margin="0,0,0,18">
-                            <Border DockPanel.Dock="Left"
-                                    Width="38"
-                                    Height="38"
-                                    Background="#FFE8F0FE"
-                                    CornerRadius="8"
-                                    Margin="0,0,12,0">
-                                <materialDesign:PackIcon Kind="ContactlessPayment"
-                                                         Width="22"
-                                                         Height="22"
-                                                         Foreground="{StaticResource PosPrimaryBrush}"
-                                                         HorizontalAlignment="Center"
-                                                         VerticalAlignment="Center" />
-                            </Border>
+                        <Border Style="{StaticResource SettingsActionCardStyle}">
+                            <DockPanel>
+                                <Border DockPanel.Dock="Left"
+                                        Width="42"
+                                        Height="42"
+                                        Background="#FFFFF4DE"
+                                        CornerRadius="8"
+                                        Margin="0,0,14,0">
+                                    <materialDesign:PackIcon Kind="DatabaseRefreshOutline"
+                                                             Width="24"
+                                                             Height="24"
+                                                             Foreground="#FF8F4E00"
+                                                             HorizontalAlignment="Center"
+                                                             VerticalAlignment="Center" />
+                                </Border>
+                                <Button DockPanel.Dock="Right"
+                                        Command="{Binding ResetCatalogCommand}"
+                                        Style="{StaticResource PosSecondaryButtonStyle}"
+                                        Height="42"
+                                        MinWidth="138"
+                                        Margin="18,0,0,0">
+                                    <StackPanel Orientation="Horizontal">
+                                        <materialDesign:PackIcon Kind="DatabaseRefreshOutline" Width="18" Height="18" Margin="0,0,8,0" />
+                                        <TextBlock Text="数据重置" />
+                                    </StackPanel>
+                                </Button>
+                                <StackPanel>
+                                    <TextBlock Text="数据重置"
+                                               FontSize="18"
+                                               FontWeight="Black"
+                                               Foreground="{StaticResource PosTextBrush}" />
+                                    <TextBlock Text="强制重新拉取本地商品数据，适用于目录异常、价格未刷新或需要完整重建商品索引时。"
+                                               FontSize="12"
+                                               Foreground="{StaticResource PosMutedForegroundBrush}"
+                                               TextWrapping="Wrap"
+                                               Margin="0,5,0,0" />
+                                </StackPanel>
+                            </DockPanel>
+                        </Border>
+                    </StackPanel>
+
+                    <Grid Visibility="{Binding IsPaymentTerminalSelected, Converter={StaticResource BoolToVis}}">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="2*" />
+                            <ColumnDefinition Width="16" />
+                            <ColumnDefinition Width="*" />
+                        </Grid.ColumnDefinitions>
+
+                        <Border Grid.Column="0"
+                                Style="{StaticResource SettingsActionCardStyle}">
+                            <Grid>
+                                <Grid.RowDefinitions>
+                                    <RowDefinition Height="Auto" />
+                                    <RowDefinition Height="Auto" />
+                                    <RowDefinition Height="Auto" />
+                                    <RowDefinition Height="Auto" />
+                                    <RowDefinition Height="Auto" />
+                                    <RowDefinition Height="Auto" />
+                                </Grid.RowDefinitions>
+
+                                <DockPanel Grid.Row="0" Margin="0,0,0,18">
+                                    <Border DockPanel.Dock="Left"
+                                            Width="38"
+                                            Height="38"
+                                            Background="#FFE8F0FE"
+                                            CornerRadius="8"
+                                            Margin="0,0,12,0">
+                                        <materialDesign:PackIcon Kind="ContactlessPayment"
+                                                                 Width="22"
+                                                                 Height="22"
+                                                                 Foreground="{StaticResource PosPrimaryBrush}"
+                                                                 HorizontalAlignment="Center"
+                                                                 VerticalAlignment="Center" />
+                                    </Border>
+                                    <StackPanel>
+                                        <TextBlock Text="{Binding SquareTitleText}"
+                                                   FontSize="18"
+                                                   FontWeight="Black" />
+                                        <TextBlock Text="Use a Square Access Token to load locations and terminal devices."
+                                                   FontSize="11"
+                                                   Foreground="{StaticResource PosMutedForegroundBrush}"
+                                                   Margin="0,4,0,0" />
+                                    </StackPanel>
+                                </DockPanel>
+
+                                <Grid Grid.Row="1" Margin="0,0,0,14">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="180" />
+                                    </Grid.ColumnDefinitions>
+                                    <StackPanel Grid.Column="0">
+                                        <TextBlock Text="Token Source" Style="{StaticResource SettingsLabelStyle}" />
+                                        <Border MinHeight="42"
+                                                Background="#FFF6F8FB"
+                                                BorderBrush="{StaticResource PosBorderBrush}"
+                                                BorderThickness="1"
+                                                CornerRadius="6"
+                                                Padding="12,8">
+                                            <TextBlock Text="{Binding SquareTokenStatusText}"
+                                                       FontSize="12"
+                                                       Foreground="{StaticResource PosMutedForegroundBrush}"
+                                                       TextWrapping="Wrap" />
+                                        </Border>
+                                        <TextBlock Text="Square token is stored encrypted on this device and fetched from HBPOS when missing or rejected."
+                                                   FontSize="11"
+                                                   Foreground="{StaticResource PosMutedForegroundBrush}"
+                                                   Margin="0,6,0,0" />
+                                    </StackPanel>
+                                    <StackPanel Grid.Column="1" Margin="14,0,0,0">
+                                        <TextBlock Text="Sandbox" Style="{StaticResource SettingsLabelStyle}" />
+                                        <CheckBox IsChecked="{Binding IsSandbox, Mode=TwoWay}"
+                                                  VerticalAlignment="Center"
+                                                  Margin="0,10,0,0">
+                                            <TextBlock Text="Test mode only" FontWeight="Bold" />
+                                        </CheckBox>
+                                    </StackPanel>
+                                </Grid>
+
+                                <Grid Grid.Row="2" Margin="0,0,0,14">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="Auto" />
+                                    </Grid.ColumnDefinitions>
+                                    <StackPanel Grid.Column="0">
+                                        <TextBlock Text="Location" Style="{StaticResource SettingsLabelStyle}" />
+                                        <ComboBox ItemsSource="{Binding SquareLocations}"
+                                                  SelectedItem="{Binding SelectedSquareLocation, Mode=TwoWay}"
+                                                  Style="{StaticResource SettingsComboBoxStyle}">
+                                            <ComboBox.ItemTemplate>
+                                                <DataTemplate>
+                                                    <StackPanel>
+                                                        <TextBlock Text="{Binding Name}" FontWeight="Bold" />
+                                                        <TextBlock Text="{Binding Id}" FontSize="10" Foreground="{StaticResource PosMutedForegroundBrush}" />
+                                                    </StackPanel>
+                                                </DataTemplate>
+                                            </ComboBox.ItemTemplate>
+                                        </ComboBox>
+                                    </StackPanel>
+                                    <Button Grid.Column="1"
+                                            Command="{Binding LoadLocationsCommand}"
+                                            Style="{StaticResource PosSecondaryButtonStyle}"
+                                            MinWidth="156"
+                                            Height="42"
+                                            Margin="14,22,0,0"
+                                            ToolTip="Load Square locations">
+                                        <StackPanel Orientation="Horizontal">
+                                            <materialDesign:PackIcon Kind="CloudDownloadOutline" Width="18" Height="18" Margin="0,0,8,0" />
+                                            <TextBlock Text="Load Locations" />
+                                        </StackPanel>
+                                    </Button>
+                                </Grid>
+
+                                <Grid Grid.Row="3" Margin="0,0,0,14">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="Auto" />
+                                    </Grid.ColumnDefinitions>
+                                    <StackPanel Grid.Column="0">
+                                        <TextBlock Text="Device" Style="{StaticResource SettingsLabelStyle}" />
+                                        <ComboBox ItemsSource="{Binding SquareDevices}"
+                                                  SelectedItem="{Binding SelectedSquareDevice, Mode=TwoWay}"
+                                                  Style="{StaticResource SettingsComboBoxStyle}">
+                                            <ComboBox.ItemTemplate>
+                                                <DataTemplate>
+                                                    <StackPanel>
+                                                        <TextBlock Text="{Binding Name}" FontWeight="Bold" />
+                                                        <TextBlock FontSize="10" Foreground="{StaticResource PosMutedForegroundBrush}">
+                                                            <Run Text="{Binding Id}" />
+                                                            <Run Text="  " />
+                                                            <Run Text="{Binding Status}" />
+                                                        </TextBlock>
+                                                    </StackPanel>
+                                                </DataTemplate>
+                                            </ComboBox.ItemTemplate>
+                                        </ComboBox>
+                                    </StackPanel>
+                                    <Button Grid.Column="1"
+                                            Command="{Binding LoadDevicesCommand}"
+                                            Style="{StaticResource PosSecondaryButtonStyle}"
+                                            MinWidth="156"
+                                            Height="42"
+                                            Margin="14,22,0,0"
+                                            ToolTip="Load Square devices">
+                                        <StackPanel Orientation="Horizontal">
+                                            <materialDesign:PackIcon Kind="TabletCellphone" Width="18" Height="18" Margin="0,0,8,0" />
+                                            <TextBlock Text="Load Devices" />
+                                        </StackPanel>
+                                    </Button>
+                                </Grid>
+
+                                <StackPanel Grid.Row="4" Margin="0,0,0,16">
+                                    <TextBlock Text="Terminal Timeout Seconds" Style="{StaticResource SettingsLabelStyle}" />
+                                    <TextBox Text="{Binding TimeoutSecondsText, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                             Style="{StaticResource SettingsFieldTextBoxStyle}"
+                                             Width="180"
+                                             HorizontalAlignment="Left" />
+                                </StackPanel>
+
+                                <Button Grid.Row="5"
+                                        Command="{Binding SaveSquareCommand}"
+                                        Style="{StaticResource PosPrimaryButtonStyle}"
+                                        Height="46"
+                                        HorizontalAlignment="Left"
+                                        MinWidth="170">
+                                    <StackPanel Orientation="Horizontal">
+                                        <materialDesign:PackIcon Kind="ContentSave" Width="18" Height="18" Margin="0,0,8,0" Foreground="White" />
+                                        <TextBlock Text="Save Square" Foreground="White" />
+                                    </StackPanel>
+                                </Button>
+                            </Grid>
+                        </Border>
+
+                        <Border Grid.Column="2"
+                                Style="{StaticResource SettingsActionCardStyle}">
                             <StackPanel>
-                                <TextBlock Text="{Binding SquareTitleText}"
-                                           FontSize="18"
-                                           FontWeight="Black" />
-                                <TextBlock Text="Use a Square Access Token to load locations and terminal devices."
-                                           FontSize="11"
-                                           Foreground="{StaticResource PosMutedForegroundBrush}"
-                                           Margin="0,4,0,0" />
-                            </StackPanel>
-                        </DockPanel>
+                                <DockPanel Margin="0,0,0,18">
+                                    <Border DockPanel.Dock="Left"
+                                            Width="38"
+                                            Height="38"
+                                            Background="#FFFFF4DE"
+                                            CornerRadius="8"
+                                            Margin="0,0,12,0">
+                                        <materialDesign:PackIcon Kind="LanConnect"
+                                                                 Width="22"
+                                                                 Height="22"
+                                                                 Foreground="#FF8F4E00"
+                                                                 HorizontalAlignment="Center"
+                                                                 VerticalAlignment="Center" />
+                                    </Border>
+                                    <StackPanel>
+                                        <TextBlock Text="{Binding LinklyTitleText}"
+                                                   FontSize="18"
+                                                   FontWeight="Black" />
+                                        <TextBlock Text="Connect to the local Linkly EFT-Client, then enable ANZ Linkly for card payments."
+                                                   FontSize="11"
+                                                   Foreground="#FF8F4E00"
+                                                   TextWrapping="Wrap"
+                                                   Margin="0,4,0,0" />
+                                    </StackPanel>
+                                </DockPanel>
 
-                        <Grid Grid.Row="1" Margin="0,0,0,14">
-                            <Grid.ColumnDefinitions>
-                                <ColumnDefinition Width="*" />
-                                <ColumnDefinition Width="180" />
-                            </Grid.ColumnDefinitions>
-                            <StackPanel Grid.Column="0">
-                                <TextBlock Text="Token Source" Style="{StaticResource SettingsLabelStyle}" />
-                                <Border MinHeight="42"
-                                        Background="#FFF6F8FB"
-                                        BorderBrush="{StaticResource PosBorderBrush}"
+                                <TextBlock Text="Host" Style="{StaticResource SettingsLabelStyle}" />
+                                <TextBox Text="{Binding LinklyHostText, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                         Style="{StaticResource SettingsFieldTextBoxStyle}"
+                                         Margin="0,0,0,14" />
+
+                                <TextBlock Text="Port" Style="{StaticResource SettingsLabelStyle}" />
+                                <TextBox Text="{Binding LinklyPortText, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                         Style="{StaticResource SettingsFieldTextBoxStyle}"
+                                         Margin="0,0,0,18" />
+
+                                <StackPanel Orientation="Horizontal">
+                                    <Button Command="{Binding TestLinklyCommand}"
+                                            Style="{StaticResource PosSecondaryButtonStyle}"
+                                            Height="42"
+                                            MinWidth="138"
+                                            Margin="0,0,10,0">
+                                        <StackPanel Orientation="Horizontal">
+                                            <materialDesign:PackIcon Kind="LanConnect" Width="18" Height="18" Margin="0,0,8,0" />
+                                            <TextBlock Text="Test Linkly" />
+                                        </StackPanel>
+                                    </Button>
+                                    <Button Command="{Binding SaveLinklyCommand}"
+                                            Style="{StaticResource PosPrimaryButtonStyle}"
+                                            Height="42"
+                                            MinWidth="138">
+                                        <StackPanel Orientation="Horizontal">
+                                            <materialDesign:PackIcon Kind="ContentSave" Width="18" Height="18" Margin="0,0,8,0" Foreground="White" />
+                                            <TextBlock Text="Enable Linkly" Foreground="White" />
+                                        </StackPanel>
+                                    </Button>
+                                </StackPanel>
+
+                                <Border Background="#FFF6F8FB"
+                                        BorderBrush="#FFE0E4EC"
                                         BorderThickness="1"
                                         CornerRadius="6"
-                                        Padding="12,8">
-                                    <TextBlock Text="{Binding SquareTokenStatusText}"
+                                        Padding="10,8"
+                                        Margin="0,12,0,0">
+                                    <TextBlock Text="{Binding LinklyTestStatusMessage}"
                                                FontSize="12"
+                                               FontWeight="SemiBold"
                                                Foreground="{StaticResource PosMutedForegroundBrush}"
                                                TextWrapping="Wrap" />
                                 </Border>
-                                <TextBlock Text="Square token is stored encrypted on this device and fetched from HBPOS when missing or rejected."
-                                           FontSize="11"
-                                           Foreground="{StaticResource PosMutedForegroundBrush}"
-                                           Margin="0,6,0,0" />
                             </StackPanel>
-                            <StackPanel Grid.Column="1" Margin="14,0,0,0">
-                                <TextBlock Text="Sandbox" Style="{StaticResource SettingsLabelStyle}" />
-                                <CheckBox IsChecked="{Binding IsSandbox, Mode=TwoWay}"
-                                          VerticalAlignment="Center"
-                                          Margin="0,10,0,0">
-                                    <TextBlock Text="Test mode only" FontWeight="Bold" />
-                                </CheckBox>
-                            </StackPanel>
-                        </Grid>
-
-                        <Grid Grid.Row="2" Margin="0,0,0,14">
-                            <Grid.ColumnDefinitions>
-                                <ColumnDefinition Width="*" />
-                                <ColumnDefinition Width="Auto" />
-                            </Grid.ColumnDefinitions>
-                            <StackPanel Grid.Column="0">
-                                <TextBlock Text="Location" Style="{StaticResource SettingsLabelStyle}" />
-                                <ComboBox ItemsSource="{Binding SquareLocations}"
-                                          SelectedItem="{Binding SelectedSquareLocation, Mode=TwoWay}"
-                                          Style="{StaticResource SettingsComboBoxStyle}">
-                                    <ComboBox.ItemTemplate>
-                                        <DataTemplate>
-                                            <StackPanel>
-                                                <TextBlock Text="{Binding Name}" FontWeight="Bold" />
-                                                <TextBlock Text="{Binding Id}" FontSize="10" Foreground="{StaticResource PosMutedForegroundBrush}" />
-                                            </StackPanel>
-                                        </DataTemplate>
-                                    </ComboBox.ItemTemplate>
-                                </ComboBox>
-                            </StackPanel>
-                            <Button Grid.Column="1"
-                                    Command="{Binding LoadLocationsCommand}"
-                                    Style="{StaticResource PosSecondaryButtonStyle}"
-                                    MinWidth="156"
-                                    Height="42"
-                                    Margin="14,22,0,0"
-                                    ToolTip="Load Square locations">
-                                <StackPanel Orientation="Horizontal">
-                                    <materialDesign:PackIcon Kind="CloudDownloadOutline" Width="18" Height="18" Margin="0,0,8,0" />
-                                    <TextBlock Text="Load Locations" />
-                                </StackPanel>
-                            </Button>
-                        </Grid>
-
-                        <Grid Grid.Row="3" Margin="0,0,0,14">
-                            <Grid.ColumnDefinitions>
-                                <ColumnDefinition Width="*" />
-                                <ColumnDefinition Width="Auto" />
-                            </Grid.ColumnDefinitions>
-                            <StackPanel Grid.Column="0">
-                                <TextBlock Text="Device" Style="{StaticResource SettingsLabelStyle}" />
-                                <ComboBox ItemsSource="{Binding SquareDevices}"
-                                          SelectedItem="{Binding SelectedSquareDevice, Mode=TwoWay}"
-                                          Style="{StaticResource SettingsComboBoxStyle}">
-                                    <ComboBox.ItemTemplate>
-                                        <DataTemplate>
-                                            <StackPanel>
-                                                <TextBlock Text="{Binding Name}" FontWeight="Bold" />
-                                                <TextBlock FontSize="10" Foreground="{StaticResource PosMutedForegroundBrush}">
-                                                    <Run Text="{Binding Id}" />
-                                                    <Run Text="  " />
-                                                    <Run Text="{Binding Status}" />
-                                                </TextBlock>
-                                            </StackPanel>
-                                        </DataTemplate>
-                                    </ComboBox.ItemTemplate>
-                                </ComboBox>
-                            </StackPanel>
-                            <Button Grid.Column="1"
-                                    Command="{Binding LoadDevicesCommand}"
-                                    Style="{StaticResource PosSecondaryButtonStyle}"
-                                    MinWidth="156"
-                                    Height="42"
-                                    Margin="14,22,0,0"
-                                    ToolTip="Load Square devices">
-                                <StackPanel Orientation="Horizontal">
-                                    <materialDesign:PackIcon Kind="TabletCellphone" Width="18" Height="18" Margin="0,0,8,0" />
-                                    <TextBlock Text="Load Devices" />
-                                </StackPanel>
-                            </Button>
-                        </Grid>
-
-                        <StackPanel Grid.Row="4" Margin="0,0,0,16">
-                            <TextBlock Text="Terminal Timeout Seconds" Style="{StaticResource SettingsLabelStyle}" />
-                            <TextBox Text="{Binding TimeoutSecondsText, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
-                                     Style="{StaticResource SettingsFieldTextBoxStyle}"
-                                     Width="180"
-                                     HorizontalAlignment="Left" />
-                        </StackPanel>
-
-                        <Button Grid.Row="5"
-                                Command="{Binding SaveSquareCommand}"
-                                Style="{StaticResource PosPrimaryButtonStyle}"
-                                Height="46"
-                                HorizontalAlignment="Left"
-                                MinWidth="170">
-                            <StackPanel Orientation="Horizontal">
-                                <materialDesign:PackIcon Kind="ContentSave" Width="18" Height="18" Margin="0,0,8,0" Foreground="White" />
-                                <TextBlock Text="Save Square" Foreground="White" />
-                            </StackPanel>
-                        </Button>
+                        </Border>
                     </Grid>
-                </Border>
 
-                <Border Grid.Column="2"
-                        Background="{StaticResource PosSurfaceBrush}"
-                        BorderBrush="#FFE0E4EC"
-                        BorderThickness="1"
-                        CornerRadius="8"
-                        Padding="20">
-                    <StackPanel>
-                        <DockPanel Margin="0,0,0,18">
-                            <Border DockPanel.Dock="Left"
-                                    Width="38"
-                                    Height="38"
-                                    Background="#FFFFF4DE"
-                                    CornerRadius="8"
-                                    Margin="0,0,12,0">
-                                <materialDesign:PackIcon Kind="LanConnect"
-                                                         Width="22"
-                                                         Height="22"
-                                                         Foreground="#FF8F4E00"
-                                                         HorizontalAlignment="Center"
-                                                         VerticalAlignment="Center" />
-                            </Border>
-                            <StackPanel>
-                                <TextBlock Text="{Binding LinklyTitleText}"
-                                           FontSize="18"
-                                           FontWeight="Black" />
-                                <TextBlock Text="Connect to the local Linkly EFT-Client, then enable ANZ Linkly for card payments."
-                                           FontSize="11"
-                                           Foreground="#FF8F4E00"
-                                           TextWrapping="Wrap"
-                                           Margin="0,4,0,0" />
-                            </StackPanel>
-                        </DockPanel>
-
-                        <TextBlock Text="Host" Style="{StaticResource SettingsLabelStyle}" />
-                        <TextBox Text="{Binding LinklyHostText, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
-                                 Style="{StaticResource SettingsFieldTextBoxStyle}"
-                                 Margin="0,0,0,14" />
-
-                        <TextBlock Text="Port" Style="{StaticResource SettingsLabelStyle}" />
-                        <TextBox Text="{Binding LinklyPortText, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
-                                 Style="{StaticResource SettingsFieldTextBoxStyle}"
-                                 Margin="0,0,0,18" />
-
-                        <StackPanel Orientation="Horizontal">
-                            <Button Command="{Binding TestLinklyCommand}"
-                                    Style="{StaticResource PosSecondaryButtonStyle}"
-                                    Height="42"
-                                    MinWidth="150"
-                                    Margin="0,0,10,0">
-                                <StackPanel Orientation="Horizontal">
-                                    <materialDesign:PackIcon Kind="LanConnect" Width="18" Height="18" Margin="0,0,8,0" />
-                                    <TextBlock Text="Test Linkly" />
+                    <StackPanel Visibility="{Binding IsDeviceRegistrationSelected, Converter={StaticResource BoolToVis}}">
+                        <Border Style="{StaticResource SettingsActionCardStyle}">
+                            <DockPanel>
+                                <Border DockPanel.Dock="Left"
+                                        Width="42"
+                                        Height="42"
+                                        Background="#FFE8F0FE"
+                                        CornerRadius="8"
+                                        Margin="0,0,14,0">
+                                    <materialDesign:PackIcon Kind="CashRegister"
+                                                             Width="24"
+                                                             Height="24"
+                                                             Foreground="{StaticResource PosPrimaryBrush}"
+                                                             HorizontalAlignment="Center"
+                                                             VerticalAlignment="Center" />
+                                </Border>
+                                <Button DockPanel.Dock="Right"
+                                        Command="{Binding ReregisterDeviceCommand}"
+                                        Style="{StaticResource PosPrimaryButtonStyle}"
+                                        Height="42"
+                                        MinWidth="154"
+                                        Margin="18,0,0,0">
+                                    <StackPanel Orientation="Horizontal">
+                                        <materialDesign:PackIcon Kind="AccountSwitch" Width="18" Height="18" Margin="0,0,8,0" Foreground="White" />
+                                        <TextBlock Text="重新注册设备" Foreground="White" />
+                                    </StackPanel>
+                                </Button>
+                                <StackPanel>
+                                    <TextBlock Text="{Binding DeviceRegistrationTitleText}"
+                                               FontSize="18"
+                                               FontWeight="Black"
+                                               Foreground="{StaticResource PosTextBrush}" />
+                                    <TextBlock Text="提交当前收银设备的重新注册申请，沿用现有购物车和订单同步安全校验。"
+                                               FontSize="12"
+                                               Foreground="{StaticResource PosMutedForegroundBrush}"
+                                               TextWrapping="Wrap"
+                                               Margin="0,5,0,0" />
                                 </StackPanel>
-                            </Button>
-                            <Button Command="{Binding SaveLinklyCommand}"
-                                    Style="{StaticResource PosPrimaryButtonStyle}"
-                                    Height="42"
-                                    MinWidth="150">
-                                <StackPanel Orientation="Horizontal">
-                                    <materialDesign:PackIcon Kind="ContentSave" Width="18" Height="18" Margin="0,0,8,0" Foreground="White" />
-                                    <TextBlock Text="Enable Linkly" Foreground="White" />
-                                </StackPanel>
-                            </Button>
-                        </StackPanel>
-
-                        <Border Background="#FFF6F8FB"
-                                BorderBrush="#FFE0E4EC"
-                                BorderThickness="1"
-                                CornerRadius="6"
-                                Padding="10,8"
-                                Margin="0,12,0,0">
-                            <TextBlock Text="{Binding LinklyTestStatusMessage}"
-                                       FontSize="12"
-                                       FontWeight="SemiBold"
-                                       Foreground="{StaticResource PosMutedForegroundBrush}"
-                                       TextWrapping="Wrap" />
+                            </DockPanel>
                         </Border>
                     </StackPanel>
-                </Border>
-            </Grid>
-        </ScrollViewer>
+                </Grid>
+            </ScrollViewer>
+
+            <Border Grid.Column="2"
+                    Background="{StaticResource PosSurfaceBrush}"
+                    BorderBrush="#FFE0E4EC"
+                    BorderThickness="1"
+                    CornerRadius="8"
+                    Padding="14">
+                <StackPanel>
+                    <TextBlock Text="分类"
+                               FontSize="13"
+                               FontWeight="Black"
+                               Foreground="{StaticResource PosTextBrush}"
+                               Margin="2,0,0,12" />
+
+                    <Button Command="{Binding SelectDataMaintenanceCommand}"
+                            Style="{StaticResource SettingsCategoryButtonStyle}">
+                        <StackPanel Orientation="Horizontal">
+                            <materialDesign:PackIcon Kind="DatabaseSyncOutline" Width="20" Height="20" Margin="0,0,10,0" />
+                            <TextBlock Text="数据维护" FontWeight="Bold" VerticalAlignment="Center" />
+                        </StackPanel>
+                    </Button>
+
+                    <Button Command="{Binding SelectPaymentTerminalCommand}"
+                            Style="{StaticResource SettingsCategoryButtonStyle}">
+                        <StackPanel Orientation="Horizontal">
+                            <materialDesign:PackIcon Kind="ContactlessPayment" Width="20" Height="20" Margin="0,0,10,0" />
+                            <TextBlock Text="支付终端" FontWeight="Bold" VerticalAlignment="Center" />
+                        </StackPanel>
+                    </Button>
+
+                    <Button Command="{Binding SelectDeviceRegistrationCommand}"
+                            Style="{StaticResource SettingsCategoryButtonStyle}">
+                        <StackPanel Orientation="Horizontal">
+                            <materialDesign:PackIcon Kind="CashRegister" Width="20" Height="20" Margin="0,0,10,0" />
+                            <TextBlock Text="设备注册" FontWeight="Bold" VerticalAlignment="Center" />
+                        </StackPanel>
+                    </Button>
+                </StackPanel>
+            </Border>
+        </Grid>
 
         <Border Grid.Row="2"
                 Background="#FFFAFAFA"

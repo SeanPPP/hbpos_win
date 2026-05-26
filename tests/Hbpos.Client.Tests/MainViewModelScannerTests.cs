@@ -82,12 +82,14 @@ public sealed class MainViewModelScannerTests
     }
 
     [Fact]
-    public async Task InitializeAsync_LoadsLocalCatalogBeforeShowingPos()
+    public async Task InitializeAsync_ShowsPosBeforeStartupCatalogLoadCompletes()
     {
         var index = new LocalSellableItemIndex();
+        var allowCatalogLoad = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var catalog = new FakeCatalogRepository
         {
-            Items = [CreateItem("1042", "SKU-001", "9528502522381")]
+            Items = [CreateItem("1042", "SKU-001", "9528502522381")],
+            BeforeLoadSellableItemsAsync = () => allowCatalogLoad.Task
         };
         var viewModel = new MainViewModel(
             index,
@@ -114,13 +116,21 @@ public sealed class MainViewModelScannerTests
 
         await viewModel.InitializeAsync(startupOptions);
 
+        await WaitUntilAsync(() => catalog.LoadSellableItemsCallCount > 0);
         Assert.Equal(1, catalog.LoadSellableItemsCallCount);
         Assert.Same(viewModel.PosTerminal, viewModel.CurrentScreen);
         Assert.Same(viewModel.PosTerminal, viewModel.CachedPosTerminalScreen);
+        Assert.Same(viewModel.CashPayment, viewModel.CachedCashPaymentScreen);
         Assert.Null(viewModel.CachedSpecialProductsScreen);
         Assert.True(viewModel.IsPosTerminalScreenActive);
+        Assert.False(viewModel.IsCashPaymentScreenActive);
         Assert.False(viewModel.IsSpecialProductsScreenActive);
         Assert.False(viewModel.IsFallbackScreenActive);
+        Assert.Empty(index.FindExactMatches("1042", "9528502522381"));
+
+        allowCatalogLoad.SetResult();
+        await WaitUntilAsync(() => index.FindExactMatches("1042", "9528502522381").Count == 1);
+
         Assert.Equal("SKU-001", Assert.Single(index.FindExactMatches("1042", "9528502522381")).ProductCode);
 
         await viewModel.ContinueStartupAfterShownAsync(startupOptions);
@@ -422,13 +432,17 @@ public sealed class MainViewModelScannerTests
     {
         var scanner = new FakeRawScannerService();
         var index = new LocalSellableItemIndex();
+        var catalog = new FakeCatalogRepository
+        {
+            Items = [CreateItem("S001", "SKU-RETURN", "690RET")]
+        };
         var viewModel = new MainViewModel(
             index,
             new PosCartService(),
             new CashCheckoutService(),
             new FakeLocalSchemaService(),
             new FakeSettingsRepository(),
-            new FakeCatalogRepository(),
+            catalog,
             new FakeCatalogSyncService(),
             new FakeRemoteLookupRefreshService(),
             new FakeSpecialProductService(),
@@ -444,7 +458,7 @@ public sealed class MainViewModelScannerTests
             scanner);
 
         await viewModel.InitializeAsync(new AppStartupOptions([], false, null, null));
-        index.ReplaceAll([CreateItem("S001", "SKU-RETURN", "690RET")]);
+        await WaitUntilAsync(() => index.FindExactMatches("S001", "690RET").Count == 1);
         viewModel.PosTerminal!.OpenReturnsCommand.Execute(null);
         var returns = viewModel.ReceiptReturns!;
         returns.IsNoReceiptMode = true;
@@ -595,12 +609,13 @@ public sealed class MainViewModelScannerTests
     public async Task ScannerActivePage_IsClearedForScreensWithoutScannerInputTarget()
     {
         var scanner = new FakeRawScannerService();
+        var index = new LocalSellableItemIndex();
         var catalog = new FakeCatalogRepository
         {
             Items = [CreateItem("1042", "SKU-001", "930110")]
         };
         var viewModel = new MainViewModel(
-            new LocalSellableItemIndex(),
+            index,
             new PosCartService(),
             new CashCheckoutService(),
             new FakeLocalSchemaService(),
@@ -624,13 +639,15 @@ public sealed class MainViewModelScannerTests
 
         Assert.Equal(PosTerminalViewModel.PageId, scanner.ActivePageId);
 
+        await WaitUntilAsync(() => index.FindExactMatches("1042", "930110").Count == 1);
         scanner.Emit("930110");
         viewModel.ShowCashPaymentCommand.Execute(null);
 
         Assert.Same(viewModel.CashPayment, viewModel.CurrentScreen);
         Assert.False(viewModel.IsPosTerminalScreenActive);
+        Assert.True(viewModel.IsCashPaymentScreenActive);
         Assert.False(viewModel.IsSpecialProductsScreenActive);
-        Assert.True(viewModel.IsFallbackScreenActive);
+        Assert.False(viewModel.IsFallbackScreenActive);
         Assert.Null(scanner.ActivePageId);
 
         await viewModel.ShowPaymentSuccessCommand.ExecuteAsync(null);
@@ -679,6 +696,7 @@ public sealed class MainViewModelScannerTests
     public async Task RawScannerInput_OnNonScannerScreenIsIgnoredWithoutChangingCartOrScreen()
     {
         var scanner = new FakeRawScannerService();
+        var index = new LocalSellableItemIndex();
         var catalog = new FakeCatalogRepository
         {
             Items =
@@ -688,7 +706,7 @@ public sealed class MainViewModelScannerTests
             ]
         };
         var viewModel = new MainViewModel(
-            new LocalSellableItemIndex(),
+            index,
             new PosCartService(),
             new CashCheckoutService(),
             new FakeLocalSchemaService(),
@@ -709,6 +727,7 @@ public sealed class MainViewModelScannerTests
             scanner);
 
         await viewModel.InitializeAsync(new AppStartupOptions([], false, null, null));
+        await WaitUntilAsync(() => index.FindExactMatches("1042", "930110").Count == 1);
         scanner.Emit("930110");
         viewModel.ShowCashPaymentCommand.Execute(null);
         var screen = viewModel.CurrentScreen;
@@ -725,19 +744,16 @@ public sealed class MainViewModelScannerTests
     }
 
     [Fact]
-    public async Task KeyboardScannerInput_OnNonScannerScreenIsConsumedWithoutChangingCartOrScreen()
+    public async Task CashPaymentScreen_IsCachedAndResetEachTimeItIsOpened()
     {
         var scanner = new FakeRawScannerService();
+        var index = new LocalSellableItemIndex();
         var catalog = new FakeCatalogRepository
         {
-            Items =
-            [
-                CreateItem("1042", "SKU-001", "930110"),
-                CreateItem("1042", "SKU-002", "930111")
-            ]
+            Items = [CreateItem("1042", "SKU-001", "930110")]
         };
         var viewModel = new MainViewModel(
-            new LocalSellableItemIndex(),
+            index,
             new PosCartService(),
             new CashCheckoutService(),
             new FakeLocalSchemaService(),
@@ -758,6 +774,107 @@ public sealed class MainViewModelScannerTests
             scanner);
 
         await viewModel.InitializeAsync(new AppStartupOptions([], false, null, null));
+        await WaitUntilAsync(() => index.FindExactMatches("1042", "930110").Count == 1);
+        scanner.Emit("930110");
+
+        viewModel.ShowCashPaymentCommand.Execute(null);
+        var firstPaymentScreen = viewModel.CashPayment!;
+        firstPaymentScreen.TenderAmountText = "5";
+        await firstPaymentScreen.AddTenderCommand.ExecuteAsync(null);
+
+        Assert.Same(firstPaymentScreen, viewModel.CurrentScreen);
+        Assert.Same(firstPaymentScreen, viewModel.CachedCashPaymentScreen);
+        Assert.Single(firstPaymentScreen.PaymentTenders);
+
+        viewModel.ShowPosCommand.Execute(null);
+
+        Assert.Same(firstPaymentScreen, viewModel.CachedCashPaymentScreen);
+        Assert.Same(viewModel.PosTerminal, viewModel.CurrentScreen);
+
+        viewModel.ShowCashPaymentCommand.Execute(null);
+
+        Assert.Same(firstPaymentScreen, viewModel.CashPayment);
+        Assert.Same(firstPaymentScreen, viewModel.CurrentScreen);
+        Assert.True(viewModel.IsCashPaymentScreenActive);
+        Assert.False(viewModel.IsFallbackScreenActive);
+        Assert.Empty(firstPaymentScreen.PaymentTenders);
+        Assert.True(firstPaymentScreen.IsCashSelected);
+        Assert.Equal("9.90", firstPaymentScreen.TenderAmountText);
+        Assert.Null(scanner.ActivePageId);
+    }
+
+    [Fact]
+    public async Task BeginDeviceReregistration_ClearsCachedCashPaymentScreen()
+    {
+        var viewModel = new MainViewModel(
+            new LocalSellableItemIndex(),
+            new PosCartService(),
+            new CashCheckoutService(),
+            new FakeLocalSchemaService(),
+            new FakeSettingsRepository(),
+            new FakeCatalogRepository(),
+            new FakeCatalogSyncService(),
+            new FakeRemoteLookupRefreshService(),
+            new FakeSpecialProductService(),
+            new FakeConnectivityApiClient(),
+            new FakeLocalDeviceRepository { Latest = CreateAllowedDevice("1042") },
+            new FakeDeviceApiClient(),
+            new FakeDeviceFingerprintService(),
+            new DeviceAuthorizationState(),
+            new FakeLocalOrderRepository(),
+            new FakeSyncQueueRepository(),
+            new LocalizationService(),
+            new FakeCustomerDisplayWindowService(),
+            new FakeRawScannerService());
+
+        await viewModel.InitializeAsync(new AppStartupOptions([], false, null, null));
+
+        Assert.NotNull(viewModel.CachedCashPaymentScreen);
+
+        await InvokePrivateTaskAsync(viewModel, "BeginDeviceReregistrationAsync");
+
+        Assert.Null(viewModel.CachedCashPaymentScreen);
+        Assert.Null(viewModel.CashPayment);
+        Assert.Same(viewModel.DeviceRegistration, viewModel.CurrentScreen);
+        Assert.False(viewModel.IsCashPaymentScreenActive);
+    }
+
+    [Fact]
+    public async Task KeyboardScannerInput_OnNonScannerScreenIsConsumedWithoutChangingCartOrScreen()
+    {
+        var scanner = new FakeRawScannerService();
+        var catalog = new FakeCatalogRepository
+        {
+            Items =
+            [
+                CreateItem("1042", "SKU-001", "930110"),
+                CreateItem("1042", "SKU-002", "930111")
+            ]
+        };
+        var index = new LocalSellableItemIndex();
+        var viewModel = new MainViewModel(
+            index,
+            new PosCartService(),
+            new CashCheckoutService(),
+            new FakeLocalSchemaService(),
+            new FakeSettingsRepository(),
+            catalog,
+            new FakeCatalogSyncService(),
+            new FakeRemoteLookupRefreshService(),
+            new FakeSpecialProductService(),
+            new FakeConnectivityApiClient(),
+            new FakeLocalDeviceRepository { Latest = CreateAllowedDevice("1042") },
+            new FakeDeviceApiClient(),
+            new FakeDeviceFingerprintService(),
+            new DeviceAuthorizationState(),
+            new FakeLocalOrderRepository(),
+            new FakeSyncQueueRepository(),
+            new LocalizationService(),
+            new FakeCustomerDisplayWindowService(),
+            scanner);
+
+        await viewModel.InitializeAsync(new AppStartupOptions([], false, null, null));
+        await WaitUntilAsync(() => index.FindExactMatches("1042", "930110").Count == 1);
         scanner.Emit("930110");
         viewModel.ShowCashPaymentCommand.Execute(null);
         var screen = viewModel.CurrentScreen;
@@ -844,6 +961,7 @@ public sealed class MainViewModelScannerTests
             new FakeRawScannerService());
 
         await viewModel.InitializeAsync(new AppStartupOptions([], false, null, null));
+        await WaitUntilAsync(() => viewModel.StatusMessage.Contains("catalog load failed", StringComparison.Ordinal));
 
         Assert.Equal(1, catalog.LoadSellableItemsCallCount);
         Assert.Same(viewModel.PosTerminal, viewModel.CurrentScreen);
@@ -1127,6 +1245,15 @@ public sealed class MainViewModelScannerTests
         Assert.True(condition());
     }
 
+    private static async Task InvokePrivateTaskAsync(object target, string methodName)
+    {
+        var method = target.GetType().GetMethod(methodName, BindingFlags.Instance | BindingFlags.NonPublic);
+        Assert.NotNull(method);
+        var task = method!.Invoke(target, null) as Task;
+        Assert.NotNull(task);
+        await task!;
+    }
+
     private static void ClearImageCacheForTests()
     {
         ClearConcurrentDictionaryField("Cache");
@@ -1266,6 +1393,8 @@ public sealed class MainViewModelScannerTests
 
         public int LoadSpecialProductItemsCallCount { get; private set; }
 
+        public Func<Task>? BeforeLoadSellableItemsAsync { get; init; }
+
         public Func<Task>? BeforeLoadSpecialProductItemsAsync { get; init; }
 
         public Task ReplaceSellableItemsAsync(IEnumerable<SellableItemDto> items, CancellationToken cancellationToken = default)
@@ -1344,6 +1473,11 @@ public sealed class MainViewModelScannerTests
         public Task<IReadOnlyList<SellableItemDto>> LoadSellableItemsAsync(CancellationToken cancellationToken = default)
         {
             LoadSellableItemsCallCount++;
+            if (BeforeLoadSellableItemsAsync is not null)
+            {
+                return LoadSellableItemsCoreAsync(Items);
+            }
+
             return LoadSellableItemsException is null
                 ? Task.FromResult(Items)
                 : Task.FromException<IReadOnlyList<SellableItemDto>>(LoadSellableItemsException);
@@ -1352,9 +1486,28 @@ public sealed class MainViewModelScannerTests
         public Task<IReadOnlyList<SellableItemDto>> LoadSellableItemsAsync(string storeCode, CancellationToken cancellationToken = default)
         {
             LoadSellableItemsCallCount++;
+            var storeItems = Items
+                .Where(item => string.Equals(item.StoreCode, storeCode, StringComparison.OrdinalIgnoreCase))
+                .ToArray();
+            if (BeforeLoadSellableItemsAsync is not null)
+            {
+                return LoadSellableItemsCoreAsync(storeItems);
+            }
+
             return LoadSellableItemsException is null
-                ? Task.FromResult<IReadOnlyList<SellableItemDto>>(Items.Where(item => string.Equals(item.StoreCode, storeCode, StringComparison.OrdinalIgnoreCase)).ToArray())
+                ? Task.FromResult<IReadOnlyList<SellableItemDto>>(storeItems)
                 : Task.FromException<IReadOnlyList<SellableItemDto>>(LoadSellableItemsException);
+        }
+
+        private async Task<IReadOnlyList<SellableItemDto>> LoadSellableItemsCoreAsync(IReadOnlyList<SellableItemDto> items)
+        {
+            await BeforeLoadSellableItemsAsync!();
+            if (LoadSellableItemsException is not null)
+            {
+                throw LoadSellableItemsException;
+            }
+
+            return items;
         }
     }
 

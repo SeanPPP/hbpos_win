@@ -970,36 +970,12 @@
                         <TextBlock Text="{loc:Loc pos.terminal.actions.specialItems}" Style="{StaticResource PosStitchTileLabelStyle}" />
                     </StackPanel>
                 </Button>
-                <Button Command="{Binding SyncCommand}" Style="{StaticResource PosStitchActionButtonStyle}">
-                    <StackPanel>
-                        <Border Style="{StaticResource PosStitchActionIconCircleStyle}">
-                            <materialDesign:PackIcon Kind="Download" Width="18" Height="18" Foreground="{StaticResource PosPrimaryBrush}" HorizontalAlignment="Center" VerticalAlignment="Center" />
-                        </Border>
-                        <TextBlock Text="{loc:Loc pos.terminal.actions.dataDownload}" Style="{StaticResource PosStitchTileLabelStyle}" />
-                    </StackPanel>
-                </Button>
-                <Button Command="{Binding ResetCatalogCommand}" Style="{StaticResource PosStitchActionButtonStyle}">
-                    <StackPanel>
-                        <Border Style="{StaticResource PosStitchActionIconCircleStyle}">
-                            <materialDesign:PackIcon Kind="Refresh" Width="18" Height="18" Foreground="{StaticResource PosPrimaryBrush}" HorizontalAlignment="Center" VerticalAlignment="Center" />
-                        </Border>
-                        <TextBlock Text="{Binding CatalogResetText}" Style="{StaticResource PosStitchTileLabelStyle}" />
-                    </StackPanel>
-                </Button>
                 <Button Command="{Binding OpenReturnsCommand}" Style="{StaticResource PosStitchActionButtonStyle}">
                     <StackPanel>
                         <Border Style="{StaticResource PosStitchDangerIconCircleStyle}">
                             <materialDesign:PackIcon Kind="Undo" Width="18" Height="18" Foreground="{StaticResource PosDangerBrush}" HorizontalAlignment="Center" VerticalAlignment="Center" />
                         </Border>
                         <TextBlock Text="{loc:Loc Refund}" Style="{StaticResource PosStitchTileLabelStyle}" />
-                    </StackPanel>
-                </Button>
-                <Button Command="{Binding ReregisterDeviceCommand}" Style="{StaticResource PosStitchActionButtonStyle}">
-                    <StackPanel>
-                        <Border Style="{StaticResource PosStitchActionIconCircleStyle}">
-                            <materialDesign:PackIcon Kind="CashRegister" Width="18" Height="18" Foreground="{StaticResource PosPrimaryBrush}" HorizontalAlignment="Center" VerticalAlignment="Center" />
-                        </Border>
-                        <TextBlock Text="{Binding ReregisterDeviceText}" Style="{StaticResource PosStitchTileLabelStyle}" />
                     </StackPanel>
                 </Button>
                 <Button Command="{Binding HoldOrderCommand}" Style="{StaticResource PosStitchActionButtonStyle}">
