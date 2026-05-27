@@ -325,6 +325,11 @@
   <data name="payment.status.noTendersAdded" xml:space="preserve"><value>完成支付前请至少添加一笔支付。</value></data>
   <data name="payment.status.remainingBalance" xml:space="preserve"><value>订单付清后才能完成支付。</value></data>
   <data name="payment.status.duplicateVoucher" xml:space="preserve"><value>该代金券已经添加。</value></data>
+  <data name="payment.status.voucherCodeRequired" xml:space="preserve"><value>请先输入代金券编码再添加代金券支付。</value></data>
+  <data name="payment.status.duplicatePaymentMethod" xml:space="preserve"><value>该支付方式已经添加。</value></data>
+  <data name="payment.status.cardProcessing" xml:space="preserve"><value>等待刷卡终端返回结果...</value></data>
+  <data name="payment.status.cardCancelled" xml:space="preserve"><value>刷卡支付已取消。</value></data>
+  <data name="payment.status.cardTimedOut" xml:space="preserve"><value>刷卡支付已超时。</value></data>
   <data name="payment.status.retryVoucherUpload" xml:space="preserve"><value>请先重试代金券订单上传，再修改支付明细。</value></data>
   <data name="payment.status.uploadFailed" xml:space="preserve"><value>代金券订单上传失败。请再次点击完成支付重试。</value></data>
   <data name="payment.status.completed" xml:space="preserve"><value>支付已完成。</value></data>

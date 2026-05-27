@@ -16,7 +16,7 @@ public sealed class SquareTerminalSetupClientTests
         var handler = new StubHttpMessageHandler((request, _) =>
         {
             capturedRequest = request;
-            return new HttpResponseMessage(HttpStatusCode.OK)
+            return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
             {
                 Content = new StringContent(
                     """
@@ -29,7 +29,7 @@ public sealed class SquareTerminalSetupClientTests
                     """,
                     Encoding.UTF8,
                     "application/json")
-            };
+            });
         });
 
         var client = new SquareTerminalSetupClient(new HttpClient(handler));
@@ -62,7 +62,7 @@ public sealed class SquareTerminalSetupClientTests
         var handler = new StubHttpMessageHandler((request, _) =>
         {
             capturedRequest = request;
-            return new HttpResponseMessage(HttpStatusCode.OK)
+            return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
             {
                 Content = new StringContent(
                     """
@@ -97,7 +97,7 @@ public sealed class SquareTerminalSetupClientTests
                     """,
                     Encoding.UTF8,
                     "application/json")
-            };
+            });
         });
 
         var client = new SquareTerminalSetupClient(new HttpClient(handler));
@@ -129,11 +129,12 @@ public sealed class SquareTerminalSetupClientTests
     public async Task ListLocationsAsync_SanitizesErrorMessages()
     {
         const string accessToken = TestAccessToken;
-        var handler = new StubHttpMessageHandler((_, _) => new HttpResponseMessage(HttpStatusCode.Unauthorized)
-        {
-            ReasonPhrase = "Unauthorized",
-            Content = new StringContent("{ \"errors\": [{ \"detail\": \"bad token " + accessToken + "\" }] }", Encoding.UTF8, "application/json")
-        });
+        var handler = new StubHttpMessageHandler((_, _) => Task.FromResult(
+            new HttpResponseMessage(HttpStatusCode.Unauthorized)
+            {
+                ReasonPhrase = "Unauthorized",
+                Content = new StringContent("{ \"errors\": [{ \"detail\": \"bad token " + accessToken + "\" }] }", Encoding.UTF8, "application/json")
+            }));
 
         var client = new SquareTerminalSetupClient(new HttpClient(handler));
         var exception = await Assert.ThrowsAsync<SquareApiException>(() =>
@@ -145,14 +146,144 @@ public sealed class SquareTerminalSetupClientTests
             "Square error messages should not include access tokens");
     }
 
-    private sealed class StubHttpMessageHandler(
-        Func<HttpRequestMessage, CancellationToken, HttpResponseMessage> handler) : HttpMessageHandler
+    [Fact]
+    public async Task ListDeviceCodesAsync_UsesProductionEndpointAndParsesDeviceCodes()
     {
-        protected override Task<HttpResponseMessage> SendAsync(
+        HttpRequestMessage? capturedRequest = null;
+        var handler = new StubHttpMessageHandler((request, _) =>
+        {
+            capturedRequest = request;
+            return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent(
+                    """
+                    {
+                      "device_codes": [
+                        {
+                          "id": "DC-1",
+                          "name": "Counter 2",
+                          "code": "ABC123",
+                          "status": "UNPAIRED",
+                          "location_id": "LOC-1",
+                          "pair_by": "2026-05-27T10:05:00Z",
+                          "created_at": "2026-05-27T10:00:00Z"
+                        }
+                      ]
+                    }
+                    """,
+                    Encoding.UTF8,
+                    "application/json")
+            });
+        });
+
+        var client = new SquareTerminalSetupClient(new HttpClient(handler));
+
+        var result = await client.ListDeviceCodesAsync(TestAccessToken, CardTerminalEnvironment.Production, "LOC-1");
+
+        Assert.NotNull(capturedRequest);
+        Assert.Equal(HttpMethod.Get, capturedRequest!.Method);
+        Assert.Equal("https://connect.squareup.com/v2/devices/codes?location_id=LOC-1&product_type=TERMINAL_API", capturedRequest.RequestUri!.AbsoluteUri);
+        Assert.True(HasBearerToken(capturedRequest, TestAccessToken));
+        var deviceCode = Assert.Single(result);
+        Assert.Equal("DC-1", deviceCode.Id);
+        Assert.Equal("Counter 2", deviceCode.Name);
+        Assert.Equal("ABC123", deviceCode.Code);
+        Assert.Equal("UNPAIRED", deviceCode.Status);
+        Assert.Equal("LOC-1", deviceCode.LocationId);
+    }
+
+    [Fact]
+    public async Task CreateDeviceCodeAsync_PostsExpectedRequestBody()
+    {
+        HttpRequestMessage? capturedRequest = null;
+        string? requestBody = null;
+        var handler = new StubHttpMessageHandler((request, _) =>
+        {
+            capturedRequest = request;
+            return CreateResponseAsync();
+
+            async Task<HttpResponseMessage> CreateResponseAsync()
+            {
+                requestBody = request.Content is null ? null : await request.Content.ReadAsStringAsync();
+                return new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new StringContent(
+                        """
+                        {
+                          "device_code": {
+                            "id": "DC-1",
+                            "name": "Counter 2",
+                            "code": "ABC123",
+                            "status": "UNPAIRED",
+                            "location_id": "LOC-1",
+                            "pair_by": "2026-05-27T10:05:00Z",
+                            "created_at": "2026-05-27T10:00:00Z"
+                          }
+                        }
+                        """,
+                        Encoding.UTF8,
+                        "application/json")
+                };
+            }
+        });
+
+        var client = new SquareTerminalSetupClient(new HttpClient(handler));
+
+        var result = await client.CreateDeviceCodeAsync(TestAccessToken, CardTerminalEnvironment.Production, "LOC-1", "Counter 2");
+
+        Assert.NotNull(capturedRequest);
+        Assert.Equal(HttpMethod.Post, capturedRequest!.Method);
+        Assert.Equal("https://connect.squareup.com/v2/devices/codes", capturedRequest.RequestUri!.AbsoluteUri);
+        Assert.True(HasBearerToken(capturedRequest, TestAccessToken));
+        Assert.NotNull(requestBody);
+        Assert.Contains("\"location_id\":\"LOC-1\"", requestBody, StringComparison.Ordinal);
+        Assert.Contains("\"name\":\"Counter 2\"", requestBody, StringComparison.Ordinal);
+        Assert.Contains("\"product_type\":\"TERMINAL_API\"", requestBody, StringComparison.Ordinal);
+        Assert.Contains("\"idempotency_key\":", requestBody, StringComparison.Ordinal);
+        Assert.Equal("ABC123", result.Code);
+    }
+
+    [Fact]
+    public async Task GetDeviceCodeAsync_ParsesPairedDeviceId()
+    {
+        var handler = new StubHttpMessageHandler((_, _) => Task.FromResult(
+            new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent(
+                    """
+                    {
+                      "device_code": {
+                        "id": "DC-1",
+                        "name": "Counter 2",
+                        "code": "ABC123",
+                        "status": "PAIRED",
+                        "location_id": "LOC-1",
+                        "device_id": "DEV-2",
+                        "pair_by": "2026-05-27T10:05:00Z",
+                        "created_at": "2026-05-27T10:00:00Z"
+                      }
+                    }
+                    """,
+                    Encoding.UTF8,
+                    "application/json")
+            }));
+
+        var client = new SquareTerminalSetupClient(new HttpClient(handler));
+
+        var result = await client.GetDeviceCodeAsync(TestAccessToken, CardTerminalEnvironment.Production, "DC-1");
+
+        Assert.Equal("PAIRED", result.Status);
+        Assert.Equal("DEV-2", result.DeviceId);
+    }
+
+    private sealed class StubHttpMessageHandler(
+        Func<HttpRequestMessage, CancellationToken, Task<HttpResponseMessage>> handler) : HttpMessageHandler
+    {
+        protected override async Task<HttpResponseMessage> SendAsync(
             HttpRequestMessage request,
             CancellationToken cancellationToken)
         {
-            return Task.FromResult(handler(request, cancellationToken));
+            return await handler(request, cancellationToken);
         }
     }
 

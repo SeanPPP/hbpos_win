@@ -10,6 +10,10 @@ public interface ICustomerDisplayOrchestrator
 
     void LoadFromCart(CustomerDisplayViewModel customerDisplay, PosSessionState session, PosCartService cart);
 
+    void Prewarm(CustomerDisplayViewModel customerDisplay, PosSessionState session, PosCartService cart)
+    {
+    }
+
     CustomerDisplayWindowMode GetNextMode(CustomerDisplayWindowMode currentMode);
 
     CustomerDisplayWindowResult SetMode(
@@ -39,6 +43,12 @@ public sealed class CustomerDisplayOrchestrator(
             line.ActualAmount));
         customerDisplay.TerminalName = session.DeviceCode;
         customerDisplay.LoadLines(lines, cart.TotalAmount, 0m, cart.DiscountAmount);
+    }
+
+    public void Prewarm(CustomerDisplayViewModel customerDisplay, PosSessionState session, PosCartService cart)
+    {
+        LoadFromCart(customerDisplay, session, cart);
+        customerDisplayWindowService.Prewarm(customerDisplay);
     }
 
     public CustomerDisplayWindowMode GetNextMode(CustomerDisplayWindowMode currentMode)

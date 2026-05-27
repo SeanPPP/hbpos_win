@@ -8,10 +8,17 @@ public sealed partial class StartupProgressState : ObservableObject
     [NotifyPropertyChangedFor(nameof(ProgressText))]
     private int stagePercent;
 
+    [ObservableProperty]
+    private string statusText = string.Empty;
+
     public string ProgressText => $"{StagePercent}%";
 
-    public void SetStage(int percent)
+    public void SetStage(int percent, string? status = null)
     {
         StagePercent = Math.Clamp(percent, 0, 100);
+        if (status is not null)
+        {
+            StatusText = status;
+        }
     }
 }

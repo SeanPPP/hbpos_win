@@ -1,5 +1,6 @@
 using System.Net.Http;
 using System.Net.Http.Headers;
+using System.Net.Http.Json;
 using System.Text.Json;
 
 namespace Hbpos.Client.Wpf.Services;
@@ -7,6 +8,16 @@ namespace Hbpos.Client.Wpf.Services;
 public sealed record SquareLocationOption(string Id, string Name);
 
 public sealed record SquareDeviceOption(string Id, string Name, string? Status);
+
+public sealed record SquareDeviceCodeOption(
+    string Id,
+    string Name,
+    string Code,
+    string Status,
+    string? LocationId,
+    string? DeviceId,
+    DateTimeOffset? PairBy,
+    DateTimeOffset? CreatedAt);
 
 public interface ISquareTerminalSetupClient
 {
@@ -20,11 +31,31 @@ public interface ISquareTerminalSetupClient
         CardTerminalEnvironment environment,
         string locationId,
         CancellationToken cancellationToken = default);
+
+    Task<IReadOnlyList<SquareDeviceCodeOption>> ListDeviceCodesAsync(
+        string accessToken,
+        CardTerminalEnvironment environment,
+        string locationId,
+        CancellationToken cancellationToken = default);
+
+    Task<SquareDeviceCodeOption> CreateDeviceCodeAsync(
+        string accessToken,
+        CardTerminalEnvironment environment,
+        string locationId,
+        string name,
+        CancellationToken cancellationToken = default);
+
+    Task<SquareDeviceCodeOption> GetDeviceCodeAsync(
+        string accessToken,
+        CardTerminalEnvironment environment,
+        string deviceCodeId,
+        CancellationToken cancellationToken = default);
 }
 
 public sealed class SquareTerminalSetupClient(HttpClient httpClient) : ISquareTerminalSetupClient
 {
     private readonly HttpClient _httpClient = httpClient ?? throw new ArgumentNullException(nameof(httpClient));
+    private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
 
     public async Task<IReadOnlyList<SquareLocationOption>> ListLocationsAsync(
         string accessToken,
@@ -36,7 +67,9 @@ public sealed class SquareTerminalSetupClient(HttpClient httpClient) : ISquareTe
         using var response = await SendAsync(
             accessToken,
             environment,
+            HttpMethod.Get,
             "locations",
+            body: null,
             cancellationToken);
 
         using var document = await ReadSuccessDocumentAsync(response, "locations", cancellationToken);
@@ -59,23 +92,119 @@ public sealed class SquareTerminalSetupClient(HttpClient httpClient) : ISquareTe
         using var response = await SendAsync(
             accessToken,
             environment,
+            HttpMethod.Get,
             relativeUrl,
+            body: null,
             cancellationToken);
 
         using var document = await ReadSuccessDocumentAsync(response, "devices", cancellationToken);
         return ReadDevices(document.RootElement);
     }
 
+    public async Task<IReadOnlyList<SquareDeviceCodeOption>> ListDeviceCodesAsync(
+        string accessToken,
+        CardTerminalEnvironment environment,
+        string locationId,
+        CancellationToken cancellationToken = default)
+    {
+        ValidateAccessToken(accessToken);
+        if (string.IsNullOrWhiteSpace(locationId))
+        {
+            throw new ArgumentException("Location id is required.", nameof(locationId));
+        }
+
+        var relativeUrl = $"devices/codes?location_id={Uri.EscapeDataString(locationId.Trim())}&product_type=TERMINAL_API";
+        using var response = await SendAsync(
+            accessToken,
+            environment,
+            HttpMethod.Get,
+            relativeUrl,
+            body: null,
+            cancellationToken);
+
+        using var document = await ReadSuccessDocumentAsync(response, "device codes", cancellationToken);
+        return ReadDeviceCodes(document.RootElement);
+    }
+
+    public async Task<SquareDeviceCodeOption> CreateDeviceCodeAsync(
+        string accessToken,
+        CardTerminalEnvironment environment,
+        string locationId,
+        string name,
+        CancellationToken cancellationToken = default)
+    {
+        ValidateAccessToken(accessToken);
+        if (string.IsNullOrWhiteSpace(locationId))
+        {
+            throw new ArgumentException("Location id is required.", nameof(locationId));
+        }
+
+        if (string.IsNullOrWhiteSpace(name))
+        {
+            throw new ArgumentException("Device code name is required.", nameof(name));
+        }
+
+        using var response = await SendAsync(
+            accessToken,
+            environment,
+            HttpMethod.Post,
+            "devices/codes",
+            new
+            {
+                idempotency_key = Guid.NewGuid().ToString("N"),
+                device_code = new
+                {
+                    name = name.Trim(),
+                    location_id = locationId.Trim(),
+                    product_type = "TERMINAL_API"
+                }
+            },
+            cancellationToken);
+
+        using var document = await ReadSuccessDocumentAsync(response, "create device code", cancellationToken);
+        return ReadSingleDeviceCode(document.RootElement);
+    }
+
+    public async Task<SquareDeviceCodeOption> GetDeviceCodeAsync(
+        string accessToken,
+        CardTerminalEnvironment environment,
+        string deviceCodeId,
+        CancellationToken cancellationToken = default)
+    {
+        ValidateAccessToken(accessToken);
+        if (string.IsNullOrWhiteSpace(deviceCodeId))
+        {
+            throw new ArgumentException("Device code id is required.", nameof(deviceCodeId));
+        }
+
+        using var response = await SendAsync(
+            accessToken,
+            environment,
+            HttpMethod.Get,
+            $"devices/codes/{Uri.EscapeDataString(deviceCodeId.Trim())}",
+            body: null,
+            cancellationToken);
+
+        using var document = await ReadSuccessDocumentAsync(response, "device code", cancellationToken);
+        return ReadSingleDeviceCode(document.RootElement);
+    }
+
     private async Task<HttpResponseMessage> SendAsync(
         string accessToken,
         CardTerminalEnvironment environment,
+        HttpMethod method,
         string relativeUrl,
+        object? body,
         CancellationToken cancellationToken)
     {
         var baseUri = new Uri(CardTerminalSettings.GetSquareApiBaseUrl(environment), UriKind.Absolute);
-        using var request = new HttpRequestMessage(HttpMethod.Get, new Uri(baseUri, relativeUrl));
+        using var request = new HttpRequestMessage(method, new Uri(baseUri, relativeUrl));
         request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", accessToken.Trim());
         request.Headers.Add("Square-Version", CardTerminalSettings.SquareVersion);
+        if (body is not null)
+        {
+            request.Content = JsonContent.Create(body, options: JsonOptions);
+        }
 
         return await _httpClient.SendAsync(request, cancellationToken);
     }
@@ -140,6 +269,48 @@ public sealed class SquareTerminalSetupClient(HttpClient httpClient) : ISquareTe
         return devices;
     }
 
+    private static IReadOnlyList<SquareDeviceCodeOption> ReadDeviceCodes(JsonElement root)
+    {
+        if (!root.TryGetProperty("device_codes", out var deviceCodesElement) ||
+            deviceCodesElement.ValueKind != JsonValueKind.Array)
+        {
+            return [];
+        }
+
+        var deviceCodes = new List<SquareDeviceCodeOption>(deviceCodesElement.GetArrayLength());
+        foreach (var deviceCodeElement in deviceCodesElement.EnumerateArray())
+        {
+            deviceCodes.Add(ReadDeviceCode(deviceCodeElement));
+        }
+
+        return deviceCodes;
+    }
+
+    private static SquareDeviceCodeOption ReadSingleDeviceCode(JsonElement root)
+    {
+        if (!root.TryGetProperty("device_code", out var deviceCodeElement) ||
+            deviceCodeElement.ValueKind != JsonValueKind.Object)
+        {
+            throw new InvalidOperationException("Square response is missing required property 'device_code'.");
+        }
+
+        return ReadDeviceCode(deviceCodeElement);
+    }
+
+    private static SquareDeviceCodeOption ReadDeviceCode(JsonElement element)
+    {
+        var id = ReadRequiredString(element, "id");
+        var name = ReadRequiredString(element, "name");
+        var code = ReadRequiredString(element, "code");
+        var status = ReadRequiredString(element, "status");
+        var locationId = ReadOptionalString(element, "location_id");
+        var deviceId = ReadOptionalString(element, "device_id");
+        var pairBy = ReadOptionalDateTimeOffset(element, "pair_by");
+        var createdAt = ReadOptionalDateTimeOffset(element, "created_at");
+
+        return new SquareDeviceCodeOption(id, name, code, status, locationId, deviceId, pairBy, createdAt);
+    }
+
     private static string ReadRequiredString(JsonElement element, string propertyName)
     {
         var value = ReadOptionalString(element, propertyName);
@@ -157,6 +328,12 @@ public sealed class SquareTerminalSetupClient(HttpClient httpClient) : ISquareTe
             propertyElement.ValueKind == JsonValueKind.String
                 ? propertyElement.GetString()
                 : null;
+    }
+
+    private static DateTimeOffset? ReadOptionalDateTimeOffset(JsonElement element, string propertyName)
+    {
+        var text = ReadOptionalString(element, propertyName);
+        return DateTimeOffset.TryParse(text, out var value) ? value : null;
     }
 
     private static void ValidateAccessToken(string accessToken)

@@ -79,6 +79,44 @@ public sealed class SuspendedOrderServiceTests
     }
 
     [Fact]
+    public async Task GetPendingOrdersAsync_filters_by_device_when_terminal_is_selected()
+    {
+        var databasePath = CreateTempDatabasePath();
+
+        try
+        {
+            var store = new LocalSqliteStore(databasePath);
+            var schema = new LocalSchemaService(store);
+            var cart = new PosCartService();
+            var repository = new SuspendedOrderRepository(store);
+            var service = new SuspendedOrderService(repository, cart);
+            var session = CreateSession();
+
+            await schema.InitializeAsync();
+
+            cart.AddItem(CreateItem(productCode: "SKU-POS-01", lookupCode: "pos-01", price: 6m));
+            var pos01Order = await service.SuspendCurrentOrderAsync(session);
+
+            cart.AddItem(CreateItem(productCode: "SKU-POS-02", lookupCode: "pos-02", price: 9m));
+            var pos02Order = await service.SuspendCurrentOrderAsync(session with { DeviceCode = "POS-02" });
+
+            var allTerminals = await service.GetPendingOrdersAsync(session.StoreCode, deviceCode: null);
+            var pos01Only = await service.GetPendingOrdersAsync(session.StoreCode, deviceCode: "POS-01");
+            var pos02Only = await service.GetPendingOrdersAsync(session.StoreCode, deviceCode: "POS-02");
+
+            Assert.Equal(2, allTerminals.Count);
+            Assert.Contains(allTerminals, order => order.SuspendedOrderGuid == pos01Order.SuspendedOrderGuid);
+            Assert.Contains(allTerminals, order => order.SuspendedOrderGuid == pos02Order.SuspendedOrderGuid);
+            Assert.Equal(pos01Order.SuspendedOrderGuid, Assert.Single(pos01Only).SuspendedOrderGuid);
+            Assert.Equal(pos02Order.SuspendedOrderGuid, Assert.Single(pos02Only).SuspendedOrderGuid);
+        }
+        finally
+        {
+            DeleteTempDatabase(databasePath);
+        }
+    }
+
+    [Fact]
     public async Task RecallOrderAsync_restores_snapshot_marks_recalled_and_hides_order_from_pending_list()
     {
         var databasePath = CreateTempDatabasePath();

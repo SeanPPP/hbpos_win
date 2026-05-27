@@ -49,16 +49,21 @@ public sealed class MainViewModelScannerTests
     }
 
     [Fact]
-    public async Task InitializeAsync_ShowsDeviceRegistrationWithoutWaitingForStores()
+    public async Task InitializeAsync_ShowsDeviceRegistrationWithoutWaitingForStoresOrCatalogLoad()
     {
+        var allowCatalogLoad = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var deviceApi = new FakeDeviceApiClient();
+        var catalog = new FakeCatalogRepository
+        {
+            BeforeLoadSellableItemsAsync = () => allowCatalogLoad.Task
+        };
         var viewModel = new MainViewModel(
             new LocalSellableItemIndex(),
             new PosCartService(),
             new CashCheckoutService(),
             new FakeLocalSchemaService(),
             new FakeSettingsRepository(),
-            new FakeCatalogRepository(),
+            catalog,
             new FakeCatalogSyncService(),
             new FakeRemoteLookupRefreshService(),
             new FakeSpecialProductService(),
@@ -79,10 +84,11 @@ public sealed class MainViewModelScannerTests
         Assert.Same(viewModel.DeviceRegistration, viewModel.CurrentScreen);
         Assert.Equal("Loading stores...", viewModel.DeviceRegistration.StatusMessage);
         Assert.Equal(0, deviceApi.GetStoresCallCount);
+        Assert.Equal(0, catalog.LoadSellableItemsCallCount);
     }
 
     [Fact]
-    public async Task InitializeAsync_ShowsPosBeforeStartupCatalogLoadCompletes()
+    public async Task InitializeAsync_StartsStartupCatalogLoadWithoutBlockingPos()
     {
         var index = new LocalSellableItemIndex();
         var allowCatalogLoad = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -114,10 +120,18 @@ public sealed class MainViewModelScannerTests
 
         var startupOptions = new AppStartupOptions([], false, null, null);
 
-        await viewModel.InitializeAsync(startupOptions);
-
+        var initializeTask = viewModel.InitializeAsync(startupOptions);
         await WaitUntilAsync(() => catalog.LoadSellableItemsCallCount > 0);
+
         Assert.Equal(1, catalog.LoadSellableItemsCallCount);
+        await initializeTask;
+        Assert.Same(viewModel.PosTerminal, viewModel.CurrentScreen);
+        Assert.True(viewModel.IsPosTerminalScreenActive);
+        Assert.Empty(index.FindExactMatches("1042", "9528502522381"));
+
+        allowCatalogLoad.SetResult();
+        await WaitUntilAsync(() => index.FindExactMatches("1042", "9528502522381").Count == 1);
+
         Assert.Same(viewModel.PosTerminal, viewModel.CurrentScreen);
         Assert.Same(viewModel.PosTerminal, viewModel.CachedPosTerminalScreen);
         Assert.Same(viewModel.CashPayment, viewModel.CachedCashPaymentScreen);
@@ -126,11 +140,6 @@ public sealed class MainViewModelScannerTests
         Assert.False(viewModel.IsCashPaymentScreenActive);
         Assert.False(viewModel.IsSpecialProductsScreenActive);
         Assert.False(viewModel.IsFallbackScreenActive);
-        Assert.Empty(index.FindExactMatches("1042", "9528502522381"));
-
-        allowCatalogLoad.SetResult();
-        await WaitUntilAsync(() => index.FindExactMatches("1042", "9528502522381").Count == 1);
-
         Assert.Equal("SKU-001", Assert.Single(index.FindExactMatches("1042", "9528502522381")).ProductCode);
 
         await viewModel.ContinueStartupAfterShownAsync(startupOptions);
@@ -978,11 +987,32 @@ public sealed class MainViewModelScannerTests
         await viewModel.InitializeAsync(startupOptions);
         await viewModel.ContinueStartupAfterShownAsync(startupOptions);
 
+        Assert.Equal(1, customerDisplayWindow.PrewarmCallCount);
+        Assert.Equal(1, customerDisplayWindow.WindowCreationCount);
         Assert.Equal(1, customerDisplayWindow.SetModeCallCount);
         Assert.Equal(CustomerDisplayWindowMode.Fullscreen, customerDisplayWindow.LastSetMode);
         Assert.Equal(CustomerDisplayWindowMode.Fullscreen, viewModel.CustomerDisplayWindowMode);
         Assert.True(viewModel.IsCustomerDisplayOpen);
         Assert.Equal("Customer display opened full screen on the second display.", viewModel.StatusMessage);
+    }
+
+    [Fact]
+    public async Task ContinueStartupAfterShownAsync_AfterPrewarm_ReusesCustomerDisplayWindow_AndOnlyActivatesOnce()
+    {
+        var customerDisplayWindow = new FakeCustomerDisplayWindowService();
+        var viewModel = CreateAuthorizedMainViewModel(customerDisplayWindow);
+        var startupOptions = new AppStartupOptions([], false, null, null);
+
+        await viewModel.InitializeAsync(startupOptions);
+        await viewModel.ContinueStartupAfterShownAsync(startupOptions);
+        await viewModel.ContinueStartupAfterShownAsync(startupOptions);
+
+        Assert.Equal(1, customerDisplayWindow.PrewarmCallCount);
+        Assert.Equal(1, customerDisplayWindow.WindowCreationCount);
+        Assert.Equal(1, customerDisplayWindow.SetModeCallCount);
+        Assert.Equal(CustomerDisplayWindowMode.Fullscreen, customerDisplayWindow.LastSetMode);
+        Assert.Equal(CustomerDisplayWindowMode.Fullscreen, viewModel.CustomerDisplayWindowMode);
+        Assert.True(viewModel.IsCustomerDisplayOpen);
     }
 
     [Fact]
@@ -1000,6 +1030,8 @@ public sealed class MainViewModelScannerTests
         await viewModel.InitializeAsync(startupOptions);
         await viewModel.ContinueStartupAfterShownAsync(startupOptions);
 
+        Assert.Equal(1, customerDisplayWindow.PrewarmCallCount);
+        Assert.Equal(1, customerDisplayWindow.WindowCreationCount);
         Assert.Equal(1, customerDisplayWindow.SetModeCallCount);
         Assert.Equal(CustomerDisplayWindowMode.Fullscreen, customerDisplayWindow.LastSetMode);
         Assert.Equal(CustomerDisplayWindowMode.Closed, viewModel.CustomerDisplayWindowMode);
@@ -1052,6 +1084,37 @@ public sealed class MainViewModelScannerTests
 
         viewModel.ToggleCustomerDisplayWindow(null);
 
+        Assert.Equal(CustomerDisplayWindowMode.Closed, customerDisplayWindow.LastSetMode);
+        Assert.Equal(CustomerDisplayWindowMode.Closed, viewModel.CustomerDisplayWindowMode);
+        Assert.False(viewModel.IsCustomerDisplayOpen);
+        Assert.Equal("Customer display closed.", viewModel.StatusMessage);
+    }
+
+    [Fact]
+    public async Task SetCustomerDisplayWindowMode_PreservesManualNormalFullscreenAndCloseSemantics()
+    {
+        var customerDisplayWindow = new FakeCustomerDisplayWindowService();
+        var viewModel = CreateAuthorizedMainViewModel(customerDisplayWindow);
+
+        await viewModel.InitializeAsync(new AppStartupOptions([], false, null, null));
+
+        viewModel.SetCustomerDisplayWindowMode(CustomerDisplayWindowMode.Normal, owner: null);
+
+        Assert.Equal(CustomerDisplayWindowMode.Normal, customerDisplayWindow.LastSetMode);
+        Assert.Equal(CustomerDisplayWindowMode.Normal, viewModel.CustomerDisplayWindowMode);
+        Assert.True(viewModel.IsCustomerDisplayOpen);
+        Assert.Equal("Customer display opened in a normal window on the second display.", viewModel.StatusMessage);
+
+        viewModel.SetCustomerDisplayWindowMode(CustomerDisplayWindowMode.Fullscreen, owner: null);
+
+        Assert.Equal(CustomerDisplayWindowMode.Fullscreen, customerDisplayWindow.LastSetMode);
+        Assert.Equal(CustomerDisplayWindowMode.Fullscreen, viewModel.CustomerDisplayWindowMode);
+        Assert.True(viewModel.IsCustomerDisplayOpen);
+        Assert.Equal("Customer display opened full screen on the second display.", viewModel.StatusMessage);
+
+        viewModel.SetCustomerDisplayWindowMode(CustomerDisplayWindowMode.Closed, owner: null);
+
+        Assert.Equal(3, customerDisplayWindow.SetModeCallCount);
         Assert.Equal(CustomerDisplayWindowMode.Closed, customerDisplayWindow.LastSetMode);
         Assert.Equal(CustomerDisplayWindowMode.Closed, viewModel.CustomerDisplayWindowMode);
         Assert.False(viewModel.IsCustomerDisplayOpen);
@@ -1686,13 +1749,23 @@ public sealed class MainViewModelScannerTests
 
         public int OpenCallCount { get; private set; }
 
+        public int PrewarmCallCount { get; private set; }
+
         public int ToggleCallCount { get; private set; }
 
         public int SetModeCallCount { get; private set; }
 
+        public int WindowCreationCount { get; private set; }
+
         public CustomerDisplayWindowMode LastSetMode { get; private set; } = CustomerDisplayWindowMode.Closed;
 
         public event EventHandler? Closed;
+
+        public void Prewarm(CustomerDisplayViewModel viewModel)
+        {
+            PrewarmCallCount++;
+            EnsureWindowCreated();
+        }
 
         public CustomerDisplayWindowResult Open(CustomerDisplayViewModel viewModel, Window? owner)
         {
@@ -1717,14 +1790,37 @@ public sealed class MainViewModelScannerTests
             var result = SetModeResult.StatusMessageKey == CustomerDisplayWindowService.NoSecondDisplayStatusKey
                 ? SetModeResult
                 : CreateSuccessfulResult(mode);
+            if (result.Mode == CustomerDisplayWindowMode.Closed)
+            {
+                _hasWindow = false;
+            }
+            else
+            {
+                EnsureWindowCreated();
+            }
+
             Mode = result.Mode;
             return result;
         }
 
         public void RaiseClosed()
         {
+            _hasWindow = false;
             Mode = CustomerDisplayWindowMode.Closed;
             Closed?.Invoke(this, EventArgs.Empty);
+        }
+
+        private bool _hasWindow;
+
+        private void EnsureWindowCreated()
+        {
+            if (_hasWindow)
+            {
+                return;
+            }
+
+            _hasWindow = true;
+            WindowCreationCount++;
         }
 
         private static CustomerDisplayWindowResult CreateSuccessfulResult(CustomerDisplayWindowMode mode)

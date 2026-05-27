@@ -66,6 +66,8 @@ public sealed partial class DeviceRegistrationViewModel : ObservableObject
 
     public event EventHandler<DeviceActivatedEventArgs>? DeviceActivated;
 
+    public event Func<object?, DeviceActivatedEventArgs, Task>? DeviceActivatedAsync;
+
     public event EventHandler<DeviceReregisteredEventArgs>? DeviceReregistered;
 
     public event EventHandler? CancelRequested;
@@ -180,7 +182,7 @@ public sealed partial class DeviceRegistrationViewModel : ObservableObject
         {
             StatusMessage = "Submitting device registration...";
             var result = await _workflowService.RegisterAsync(SelectedStore, HardwareId);
-            ApplyActionResult(result);
+            await ApplyActionResultAsync(result);
         }
         catch (Exception ex)
         {
@@ -204,7 +206,7 @@ public sealed partial class DeviceRegistrationViewModel : ObservableObject
         {
             StatusMessage = "Submitting device reregistration...";
             var result = await _workflowService.ReregisterAsync(SelectedStore, HardwareId);
-            ApplyActionResult(result);
+            await ApplyActionResultAsync(result);
         }
         catch (Exception ex)
         {
@@ -228,7 +230,7 @@ public sealed partial class DeviceRegistrationViewModel : ObservableObject
         {
             StatusMessage = "Checking device approval...";
             var result = await _workflowService.VerifyAsync(SelectedStore, DeviceCode, HardwareId);
-            ApplyActionResult(result);
+            await ApplyActionResultAsync(result);
         }
         catch (Exception ex)
         {
@@ -255,7 +257,7 @@ public sealed partial class DeviceRegistrationViewModel : ObservableObject
         NotifyCommandState();
     }
 
-    private void ApplyActionResult(DeviceRegistrationActionResult result)
+    private async Task ApplyActionResultAsync(DeviceRegistrationActionResult result)
     {
         DeviceCode = result.DeviceCode;
         HasPendingRegistration = result.HasPendingRegistration;
@@ -272,9 +274,15 @@ public sealed partial class DeviceRegistrationViewModel : ObservableObject
 
         if (result.ShouldRaiseActivated)
         {
-            DeviceActivated?.Invoke(
-                this,
-                new DeviceActivatedEventArgs(result.DeviceCode, result.StoreCode, result.StoreName, result.HardwareId, result.AuthorizationCode ?? string.Empty));
+            var args = new DeviceActivatedEventArgs(result.DeviceCode, result.StoreCode, result.StoreName, result.HardwareId, result.AuthorizationCode ?? string.Empty);
+            DeviceActivated?.Invoke(this, args);
+            if (DeviceActivatedAsync is not null)
+            {
+                foreach (Func<object?, DeviceActivatedEventArgs, Task> handler in DeviceActivatedAsync.GetInvocationList())
+                {
+                    await handler(this, args);
+                }
+            }
         }
 
         NotifyCommandState();

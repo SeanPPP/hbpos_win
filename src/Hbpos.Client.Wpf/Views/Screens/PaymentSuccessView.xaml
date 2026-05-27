@@ -149,7 +149,7 @@
                                         <StackPanel>
                                             <TextBlock VerticalAlignment="Center" FontSize="11" Foreground="{StaticResource PosMutedForegroundBrush}">
                                                 <Run Text="{Binding MethodLabel, Mode=OneWay}" />
-                                                <Run Text="{Binding DisplayReference, StringFormat={}  {0}}" />
+                                                <Run Text="{Binding DisplayReference, Mode=OneWay, StringFormat={}  {0}}" />
                                             </TextBlock>
                                             <TextBlock Text="{Binding CardSummary}" FontSize="9" Foreground="{StaticResource PosMutedForegroundBrush}" TextWrapping="Wrap" />
                                             <TextBlock Text="{Binding ReceiptText}" FontSize="8" Foreground="{StaticResource PosMutedForegroundBrush}" TextWrapping="Wrap" FontFamily="Consolas" />
@@ -180,7 +180,7 @@
                                     <DockPanel Margin="0,0,0,4">
                                         <StackPanel>
                                             <TextBlock Text="{Binding MethodLabel}" FontSize="11" FontWeight="Bold" />
-                                            <TextBlock Text="{Binding DisplayReference}" FontSize="9" Foreground="{StaticResource PosMutedForegroundBrush}" TextTrimming="CharacterEllipsis" />
+                                            <TextBlock Text="{Binding DisplayReference, Mode=OneWay}" FontSize="9" Foreground="{StaticResource PosMutedForegroundBrush}" TextTrimming="CharacterEllipsis" />
                                             <TextBlock Text="{Binding CardSummary}" FontSize="9" Foreground="{StaticResource PosMutedForegroundBrush}" TextWrapping="Wrap" />
                                         </StackPanel>
                                         <TextBlock Text="{Binding Amount, StringFormat={}{0:C2}}" DockPanel.Dock="Right" FontSize="11" FontWeight="Bold" />

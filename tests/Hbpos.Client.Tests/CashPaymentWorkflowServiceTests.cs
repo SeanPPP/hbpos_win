@@ -8,16 +8,30 @@ namespace Hbpos.Client.Tests;
 public sealed class CashPaymentWorkflowServiceTests
 {
     [Fact]
-    public void Cash_payment_workflow_parses_tendered_amount_and_calculates_change()
+    public void Cash_payment_workflow_rounds_cash_due_and_change_for_7_82()
     {
         var workflow = CreateWorkflow();
 
-        var parsed = workflow.TryParseTenderedAmount("10.5", out var tenderedAmount);
-        var change = workflow.CalculateChange("10.5", 7.81m);
+        var parsed = workflow.TryParseTenderedAmount("10", out var tenderedAmount);
+        var remaining = CashRoundingPolicy.GetCashPayableAmount(7.82m, []);
+        var change = workflow.CalculateChange("10", 7.82m);
 
         Assert.True(parsed);
-        Assert.Equal(10.5m, tenderedAmount);
-        Assert.Equal(2.69m, change);
+        Assert.Equal(10m, tenderedAmount);
+        Assert.Equal(7.80m, remaining);
+        Assert.Equal(2.20m, change);
+    }
+
+    [Fact]
+    public void Cash_payment_workflow_rounds_cash_due_and_change_for_7_83()
+    {
+        var workflow = CreateWorkflow();
+
+        var remaining = CashRoundingPolicy.GetCashPayableAmount(7.83m, []);
+        var change = workflow.CalculateChange("10", 7.83m);
+
+        Assert.Equal(7.85m, remaining);
+        Assert.Equal(2.15m, change);
     }
 
     [Fact]
@@ -57,10 +71,57 @@ public sealed class CashPaymentWorkflowServiceTests
     }
 
     [Fact]
+    public async Task Cash_payment_workflow_persists_rounded_cash_order_without_overstating_local_payment()
+    {
+        var cart = new PosCartService();
+        cart.AddItem(CreateItem("SKU-302", "Workflow Soda", "930302", 7.82m));
+        var orders = new RecordingOrderRepository();
+        var workflow = new CashPaymentWorkflowService(
+            new CashCheckoutService(),
+            orders,
+            new StubSyncQueueRepository(pendingCount: 2));
+        var session = new PosSessionState("HB POS", "S001", "Main Store", "POS-01", "C001", "Alice", true, 0);
+
+        var result = await workflow.CompleteAsync(cart, session, "10");
+
+        var savedOrder = Assert.Single(orders.SavedOrders);
+        var payment = Assert.Single(savedOrder.Payments);
+        Assert.Equal(10m, result.TenderedAmount);
+        Assert.Equal(2.20m, result.ChangeAmount);
+        Assert.Equal(PaymentMethodKind.Cash, payment.Method);
+        Assert.Equal(7.82m, payment.Amount);
+    }
+
+    [Fact]
+    public async Task Cash_payment_workflow_keeps_local_payment_total_aligned_when_cash_rounds_down()
+    {
+        var cart = new PosCartService();
+        cart.AddItem(CreateItem("SKU-304", "Rounded Down Soda", "930304", 7.82m));
+        var orders = new RecordingOrderRepository();
+        var workflow = new CashPaymentWorkflowService(
+            new CashCheckoutService(),
+            orders,
+            new StubSyncQueueRepository(pendingCount: 2));
+        var session = new PosSessionState("HB POS", "S001", "Main Store", "POS-01", "C001", "Alice", true, 0);
+
+        var result = await workflow.CompletePaymentAsync(
+            cart,
+            session,
+            [new PaymentTender(PaymentMethodKind.Cash, 7.80m)],
+            cashTenderedAmount: 7.80m);
+
+        var savedOrder = Assert.Single(orders.SavedOrders);
+        var payment = Assert.Single(savedOrder.Payments);
+        Assert.Equal(7.80m, result.TenderedAmount);
+        Assert.Equal(0m, result.ChangeAmount);
+        Assert.Equal(7.82m, payment.Amount);
+    }
+
+    [Fact]
     public async Task Payment_workflow_allocates_cash_change_without_overstating_local_payments()
     {
         var cart = new PosCartService();
-        cart.AddItem(CreateItem("SKU-302", "Workflow Soda", "930302", 10m));
+        cart.AddItem(CreateItem("SKU-303", "Workflow Soda", "930303", 7.83m));
         var orders = new RecordingOrderRepository();
         var workflow = new CashPaymentWorkflowService(
             new CashCheckoutService(),
@@ -74,13 +135,13 @@ public sealed class CashPaymentWorkflowServiceTests
             session,
             [
                 new PaymentTender(PaymentMethodKind.Card, 5m, "CARD-001"),
-                new PaymentTender(PaymentMethodKind.Cash, 6m)
+                new PaymentTender(PaymentMethodKind.Cash, 2.85m)
             ],
-            cashTenderedAmount: 6m);
+            cashTenderedAmount: 2.85m);
 
         var savedOrder = Assert.Single(orders.SavedOrders);
-        Assert.Equal(11m, result.TenderedAmount);
-        Assert.Equal(1m, result.ChangeAmount);
+        Assert.Equal(7.85m, result.TenderedAmount);
+        Assert.Equal(0m, result.ChangeAmount);
         Assert.Collection(
             savedOrder.Payments,
             payment =>
@@ -91,7 +152,7 @@ public sealed class CashPaymentWorkflowServiceTests
             payment =>
             {
                 Assert.Equal(PaymentMethodKind.Cash, payment.Method);
-                Assert.Equal(5m, payment.Amount);
+                Assert.Equal(2.83m, payment.Amount);
             });
     }
 
@@ -126,6 +187,68 @@ public sealed class CashPaymentWorkflowServiceTests
         Assert.Equal(PaymentMethodKind.Voucher, voucher.Tender.Method);
         Assert.Equal(4m, voucher.Tender.Amount);
         Assert.Equal("VOUCHER-ABC", voucher.Tender.Reference);
+    }
+
+    [Fact]
+    public async Task Payment_workflow_add_tender_normalizes_cash_input()
+    {
+        var workflow = CreateWorkflow();
+        var session = new PosSessionState("HB POS", "S001", "Main Store", "POS-01", "C001", "Alice", true, 0);
+
+        var roundedDown = await workflow.AddTenderAsync(
+            PaymentMethodKind.Cash,
+            session,
+            actualAmount: 20m,
+            currentTenders: [],
+            amountText: "10.02");
+        var roundedUp = await workflow.AddTenderAsync(
+            PaymentMethodKind.Cash,
+            session,
+            actualAmount: 20m,
+            currentTenders: [],
+            amountText: "10.03");
+
+        Assert.True(roundedDown.Succeeded);
+        Assert.NotNull(roundedDown.Tender);
+        Assert.Equal(10.00m, roundedDown.Tender.Amount);
+        Assert.True(roundedUp.Succeeded);
+        Assert.NotNull(roundedUp.Tender);
+        Assert.Equal(10.05m, roundedUp.Tender.Amount);
+    }
+
+    [Fact]
+    public void Payment_workflow_uses_cash_rounding_after_non_cash_tender()
+    {
+        var workflow = CreateWorkflow();
+        var remaining = CashRoundingPolicy.GetCashPayableAmount(
+            7.83m,
+            [new PaymentTender(PaymentMethodKind.Card, 5m, "CARD-001")]);
+
+        Assert.Equal(2.85m, remaining);
+    }
+
+    [Fact]
+    public async Task Payment_workflow_does_not_round_down_pure_non_cash_underpayment()
+    {
+        var cart = new PosCartService();
+        cart.AddItem(CreateItem("SKU-305", "Card Boundary Tea", "930305", 7.82m));
+        var workflow = new CashPaymentWorkflowService(
+            new CashCheckoutService(),
+            new RecordingOrderRepository(),
+            new StubSyncQueueRepository(pendingCount: 1),
+            cardTerminalClient: new ApprovedCardTerminalClient("CARD-305"));
+        var session = new PosSessionState("HB POS", "S001", "Main Store", "POS-01", "C001", "Alice", true, 0);
+
+        var remaining = workflow.CalculateRemainingAmount(
+            7.82m,
+            [new PaymentTender(PaymentMethodKind.Card, 7.80m, "CARD-305")]);
+
+        Assert.Equal(0.02m, remaining);
+        await Assert.ThrowsAsync<InvalidOperationException>(() => workflow.CompletePaymentAsync(
+            cart,
+            session,
+            [new PaymentTender(PaymentMethodKind.Card, 7.80m, "CARD-305")],
+            cashTenderedAmount: 0m));
     }
 
     [Fact]

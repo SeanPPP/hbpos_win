@@ -1483,6 +1483,24 @@ public sealed class PosTerminalCashPaymentViewModelTests
     }
 
     [Fact]
+    public void Payment_page_does_not_show_confirm_payment_from_keyboard_input_only()
+    {
+        var cart = new PosCartService();
+        cart.AddItem(CreateItem("SKU-109", "Keyboard Cash Tea", "930109", PriceSourceKind.ProductBase, 7.8m));
+        var viewModel = new PaymentViewModel(
+            cart,
+            new CashCheckoutService(),
+            new InMemoryOrderRepository(),
+            new InMemorySyncQueueRepository(),
+            Session);
+
+        viewModel.TenderAmountText = "10";
+
+        Assert.False(viewModel.ConfirmPaymentCommand.CanExecute(null));
+        Assert.False(viewModel.IsConfirmPaymentVisible);
+    }
+
+    [Fact]
     public async Task Payment_page_refresh_cart_recalculates_change_after_cart_update()
     {
         var cart = new PosCartService();
@@ -1607,23 +1625,480 @@ public sealed class PosTerminalCashPaymentViewModelTests
             cardTerminalClient: new ApprovedCardTerminalClient("CARD-143"));
         var viewModel = new PaymentViewModel(cart, workflow, Session);
 
-        viewModel.SelectCardCommand.Execute(null);
         viewModel.TenderAmountText = "10";
+        viewModel.SelectedPaymentMethod = PaymentMethodKind.Card;
 
         Assert.False(viewModel.AddTenderCommand.CanExecute(null));
 
         viewModel.TenderAmountText = "5";
-        await viewModel.AddTenderCommand.ExecuteAsync(null);
-        viewModel.SelectCashCommand.Execute(null);
+        await viewModel.SelectCardCommand.ExecuteAsync(null);
         viewModel.TenderAmountText = "5";
-        await viewModel.AddTenderCommand.ExecuteAsync(null);
+        await viewModel.SelectCashCommand.ExecuteAsync(null);
 
         Assert.Equal(2.2m, viewModel.ChangeDue);
         Assert.True(viewModel.ConfirmPaymentCommand.CanExecute(null));
     }
 
     [Fact]
-    public void Payment_page_requires_voucher_code_before_adding_voucher()
+    public async Task Payment_page_method_buttons_add_tenders_with_default_amounts()
+    {
+        var cart = new PosCartService();
+        cart.AddItem(CreateItem("SKU-146", "Default Card Tea", "930146", PriceSourceKind.StoreRetailPrice, 7.83m));
+        var workflow = new CashPaymentWorkflowService(
+            new CashCheckoutService(),
+            new InMemoryOrderRepository(),
+            new InMemorySyncQueueRepository(),
+            cardTerminalClient: new ApprovedCardTerminalClient("CARD-146"));
+        var viewModel = new PaymentViewModel(cart, workflow, Session);
+
+        Assert.Equal(string.Empty, viewModel.TenderAmountText);
+
+        await viewModel.SelectCardCommand.ExecuteAsync(null);
+
+        var tender = Assert.Single(viewModel.PaymentTenders);
+        Assert.Equal(PaymentMethodKind.Card, tender.Method);
+        Assert.Equal(7.83m, tender.Amount);
+        Assert.Equal(0m, viewModel.RemainingAmount);
+        Assert.Equal(string.Empty, viewModel.TenderAmountText);
+    }
+
+    [Fact]
+    public async Task Payment_page_cash_button_uses_australian_cash_rounding_when_amount_is_empty()
+    {
+        var cart = new PosCartService();
+        cart.AddItem(CreateItem("SKU-147", "Rounded Cash Tea", "930147", PriceSourceKind.StoreRetailPrice, 7.83m));
+        var viewModel = new PaymentViewModel(
+            cart,
+            new CashCheckoutService(),
+            new InMemoryOrderRepository(),
+            new InMemorySyncQueueRepository(),
+            Session);
+
+        await viewModel.SelectCashCommand.ExecuteAsync(null);
+
+        var tender = Assert.Single(viewModel.PaymentTenders);
+        Assert.Equal(PaymentMethodKind.Cash, tender.Method);
+        Assert.Equal(7.85m, tender.Amount);
+        Assert.Equal(0m, viewModel.RemainingAmount);
+        Assert.Equal(0m, viewModel.ChangeDue);
+    }
+
+    [Fact]
+    public async Task Payment_page_cash_button_adds_typed_amount_and_clears_input()
+    {
+        var cart = new PosCartService();
+        cart.AddItem(CreateItem("SKU-148", "Typed Cash Tea", "930148", PriceSourceKind.StoreRetailPrice, 7.8m));
+        var viewModel = new PaymentViewModel(
+            cart,
+            new CashCheckoutService(),
+            new InMemoryOrderRepository(),
+            new InMemorySyncQueueRepository(),
+            Session)
+        {
+            TenderAmountText = "10"
+        };
+
+        await viewModel.SelectCashCommand.ExecuteAsync(null);
+
+        Assert.Equal(10m, Assert.Single(viewModel.PaymentTenders).Amount);
+        Assert.Equal(2.2m, viewModel.ChangeDue);
+        Assert.Equal(string.Empty, viewModel.TenderAmountText);
+        Assert.True(viewModel.ConfirmPaymentCommand.CanExecute(null));
+    }
+
+    [Fact]
+    public async Task Payment_page_card_button_rejects_typed_overpay()
+    {
+        var cart = new PosCartService();
+        cart.AddItem(CreateItem("SKU-149", "Card Overpay Tea", "930149", PriceSourceKind.StoreRetailPrice, 7.8m));
+        var workflow = new CashPaymentWorkflowService(
+            new CashCheckoutService(),
+            new InMemoryOrderRepository(),
+            new InMemorySyncQueueRepository(),
+            cardTerminalClient: new ApprovedCardTerminalClient("CARD-149"));
+        var viewModel = new PaymentViewModel(cart, workflow, Session)
+        {
+            TenderAmountText = "10"
+        };
+
+        await viewModel.SelectCardCommand.ExecuteAsync(null);
+
+        Assert.Empty(viewModel.PaymentTenders);
+        Assert.Equal("payment.status.cardExceedsRemaining", viewModel.StatusMessage);
+    }
+
+    [Fact]
+    public async Task Payment_page_card_button_does_not_treat_cash_rounding_shortfall_as_paid()
+    {
+        var cart = new PosCartService();
+        cart.AddItem(CreateItem("SKU-151", "Card Boundary Tea", "930151", PriceSourceKind.StoreRetailPrice, 7.82m));
+        var workflow = new CashPaymentWorkflowService(
+            new CashCheckoutService(),
+            new InMemoryOrderRepository(),
+            new InMemorySyncQueueRepository(),
+            cardTerminalClient: new ApprovedCardTerminalClient("CARD-151"));
+        var viewModel = new PaymentViewModel(cart, workflow, Session)
+        {
+            TenderAmountText = "7.80"
+        };
+
+        await viewModel.SelectCardCommand.ExecuteAsync(null);
+
+        Assert.Single(viewModel.PaymentTenders);
+        Assert.Equal(0.02m, viewModel.RemainingAmount);
+        Assert.False(viewModel.ConfirmPaymentCommand.CanExecute(null));
+    }
+
+    [Fact]
+    public async Task Payment_page_quick_cash_options_add_cash_tender()
+    {
+        var cart = new PosCartService();
+        cart.AddItem(CreateItem("SKU-150", "Quick Cash Tea", "930150", PriceSourceKind.StoreRetailPrice, 4.4m));
+        var viewModel = new PaymentViewModel(
+            cart,
+            new CashCheckoutService(),
+            new InMemoryOrderRepository(),
+            new InMemorySyncQueueRepository(),
+            Session);
+        var quickFive = Assert.Single(viewModel.QuickCashAmounts.Where(option => option.Amount == 5m));
+
+        await viewModel.QuickCashCommand.ExecuteAsync(quickFive);
+
+        var tender = Assert.Single(viewModel.PaymentTenders);
+        Assert.Equal(PaymentMethodKind.Cash, tender.Method);
+        Assert.Equal(5m, tender.Amount);
+        Assert.Equal(0.6m, viewModel.ChangeDue);
+        Assert.Equal("$5", quickFive.Label);
+    }
+
+    [Fact]
+    public async Task Payment_page_allows_only_one_tender_per_payment_method_and_reenables_after_remove()
+    {
+        var cart = new PosCartService();
+        cart.AddItem(CreateItem("SKU-152", "Single Method Tea", "930152", PriceSourceKind.StoreRetailPrice, 15m));
+        var workflow = new FakeCashPaymentWorkflowService();
+        var viewModel = new PaymentViewModel(cart, workflow, Session)
+        {
+            TenderAmountText = "5"
+        };
+
+        await viewModel.SelectCashCommand.ExecuteAsync(null);
+
+        var cashTender = Assert.Single(viewModel.PaymentTenders);
+        Assert.Equal(PaymentMethodKind.Cash, cashTender.Method);
+        Assert.False(viewModel.SelectCashCommand.CanExecute(null));
+
+        viewModel.TenderAmountText = "5";
+        await viewModel.SelectCashCommand.ExecuteAsync(null);
+
+        Assert.Single(viewModel.PaymentTenders);
+
+        viewModel.RemoveTenderCommand.Execute(cashTender);
+
+        Assert.Empty(viewModel.PaymentTenders);
+        viewModel.TenderAmountText = "5";
+        Assert.True(viewModel.SelectCashCommand.CanExecute(null));
+    }
+
+    [Fact]
+    public async Task Payment_page_allows_only_one_card_and_one_voucher_tender()
+    {
+        var cart = new PosCartService();
+        cart.AddItem(CreateItem("SKU-153", "Mixed Single Method Tea", "930153", PriceSourceKind.StoreRetailPrice, 20m));
+        var workflow = new FakeCashPaymentWorkflowService();
+        var viewModel = new PaymentViewModel(cart, workflow, Session);
+
+        viewModel.TenderAmountText = "5";
+        await viewModel.SelectCardCommand.ExecuteAsync(null);
+        viewModel.TenderAmountText = "5";
+        viewModel.VoucherCodeText = "VOUCHER-153";
+        await viewModel.SelectVoucherCommand.ExecuteAsync(null);
+
+        Assert.Equal(2, viewModel.PaymentTenders.Count);
+        Assert.Contains(viewModel.PaymentTenders, tender => tender.Method == PaymentMethodKind.Card);
+        Assert.Contains(viewModel.PaymentTenders, tender => tender.Method == PaymentMethodKind.Voucher);
+        Assert.False(viewModel.SelectCardCommand.CanExecute(null));
+        Assert.False(viewModel.SelectVoucherCommand.CanExecute(null));
+    }
+
+    [Fact]
+    public async Task Payment_page_locks_interactions_while_card_payment_is_pending()
+    {
+        var cart = new PosCartService();
+        cart.AddItem(CreateItem("SKU-154", "Pending Card Tea", "930154", PriceSourceKind.StoreRetailPrice, 10m));
+        var workflow = new FakeCashPaymentWorkflowService
+        {
+            AddTenderStarted = new(TaskCreationOptions.RunContinuationsAsynchronously),
+            AddTenderResult = new(TaskCreationOptions.RunContinuationsAsynchronously)
+        };
+        var viewModel = new PaymentViewModel(cart, workflow, Session);
+
+        var paymentTask = viewModel.SelectCardCommand.ExecuteAsync(null);
+        await workflow.AddTenderStarted.Task;
+
+        Assert.True(viewModel.IsCardPaymentInProgress);
+        Assert.True(viewModel.IsPaymentInteractionLocked);
+        Assert.False(viewModel.NumberInputCommand.CanExecute("1"));
+        Assert.False(viewModel.SelectCashCommand.CanExecute(null));
+        Assert.False(viewModel.SelectCardCommand.CanExecute(null));
+        Assert.False(viewModel.SelectVoucherCommand.CanExecute(null));
+        Assert.False(viewModel.QuickCashCommand.CanExecute(viewModel.QuickCashAmounts[0]));
+        Assert.False(viewModel.ConfirmPaymentCommand.CanExecute(null));
+        Assert.Equal("payment.status.cardProcessing", viewModel.StatusMessage);
+
+        workflow.AddTenderResult.SetResult(PaymentTenderAttemptResult.Success(
+            new PaymentTender(PaymentMethodKind.Card, 10m, "CARD-154"),
+            "payment.status.cardTenderAdded"));
+        await paymentTask;
+
+        Assert.False(viewModel.IsCardPaymentInProgress);
+        Assert.False(viewModel.IsPaymentInteractionLocked);
+        Assert.Single(viewModel.PaymentTenders);
+    }
+
+    [Fact]
+    public async Task Payment_page_manual_card_cancel_restores_interactions_without_adding_tender()
+    {
+        var cart = new PosCartService();
+        cart.AddItem(CreateItem("SKU-155", "Cancelled Card Tea", "930155", PriceSourceKind.StoreRetailPrice, 10m));
+        var workflow = new FakeCashPaymentWorkflowService
+        {
+            AddTenderStarted = new(TaskCreationOptions.RunContinuationsAsynchronously),
+            AddTenderResult = new(TaskCreationOptions.RunContinuationsAsynchronously)
+        };
+        var viewModel = new PaymentViewModel(cart, workflow, Session);
+        var cancelledNavigation = false;
+        viewModel.PaymentCancelled += (_, _) => cancelledNavigation = true;
+
+        var paymentTask = viewModel.SelectCardCommand.ExecuteAsync(null);
+        await workflow.AddTenderStarted.Task;
+
+        viewModel.CancelCommand.Execute(null);
+        await paymentTask;
+
+        Assert.False(cancelledNavigation);
+        Assert.Empty(viewModel.PaymentTenders);
+        Assert.False(viewModel.IsCardPaymentInProgress);
+        Assert.True(viewModel.SelectCardCommand.CanExecute(null));
+        Assert.Equal("payment.status.cardCancelled", viewModel.StatusMessage);
+    }
+
+    [Fact]
+    public async Task Payment_page_allows_second_cancel_during_late_card_approval_and_skips_tender()
+    {
+        var cart = new PosCartService();
+        cart.AddItem(CreateItem("SKU-157", "Late Card Tea", "930157", PriceSourceKind.StoreRetailPrice, 10m));
+        var workflow = new FakeCashPaymentWorkflowService
+        {
+            AddTenderStarted = new(TaskCreationOptions.RunContinuationsAsynchronously),
+            AddTenderResult = new(TaskCreationOptions.RunContinuationsAsynchronously),
+            IgnoreCancellation = true
+        };
+        var viewModel = new PaymentViewModel(cart, workflow, Session);
+        var cancelledNavigation = false;
+        viewModel.PaymentCancelled += (_, _) => cancelledNavigation = true;
+
+        var paymentTask = viewModel.SelectCardCommand.ExecuteAsync(null);
+        await workflow.AddTenderStarted.Task;
+
+        viewModel.CancelCommand.Execute(null);
+
+        Assert.False(viewModel.IsCardPaymentInProgress);
+        Assert.False(viewModel.IsPaymentInteractionLocked);
+        Assert.False(viewModel.SelectCardCommand.CanExecute(null));
+        Assert.False(viewModel.AddTenderCommand.CanExecute(null));
+        Assert.False(viewModel.ConfirmPaymentCommand.CanExecute(null));
+        Assert.True(viewModel.CancelCommand.CanExecute(null));
+
+        viewModel.CancelCommand.Execute(null);
+
+        Assert.True(cancelledNavigation);
+
+        workflow.AddTenderResult.SetResult(PaymentTenderAttemptResult.Success(
+            new PaymentTender(PaymentMethodKind.Card, 10m, "CARD-LATE"),
+            "payment.status.cardTenderAdded"));
+        await paymentTask;
+
+        Assert.Empty(viewModel.PaymentTenders);
+        Assert.Equal("payment.status.cardCancelled", viewModel.StatusMessage);
+    }
+
+    [Fact]
+    public async Task Payment_page_prepare_for_entry_ignores_late_card_approval_from_previous_entry()
+    {
+        var cart = new PosCartService();
+        cart.AddItem(CreateItem("SKU-161", "Stale Card Tea", "930161", PriceSourceKind.StoreRetailPrice, 10m));
+        var workflow = new FakeCashPaymentWorkflowService
+        {
+            AddTenderStarted = new(TaskCreationOptions.RunContinuationsAsynchronously),
+            AddTenderResult = new(TaskCreationOptions.RunContinuationsAsynchronously),
+            IgnoreCancellation = true
+        };
+        var viewModel = new PaymentViewModel(cart, workflow, Session);
+
+        var paymentTask = viewModel.SelectCardCommand.ExecuteAsync(null);
+        await workflow.AddTenderStarted.Task;
+
+        var nextSession = Session with { DeviceCode = "POS-02" };
+        viewModel.PrepareForEntry(nextSession);
+        workflow.AddTenderResult.SetResult(PaymentTenderAttemptResult.Success(
+            new PaymentTender(PaymentMethodKind.Card, 10m, "CARD-STALE"),
+            "payment.status.cardTenderAdded"));
+        await paymentTask;
+
+        Assert.Empty(viewModel.PaymentTenders);
+        Assert.Equal(nextSession, viewModel.Session);
+        Assert.Equal("payment.status.ready", viewModel.StatusMessage);
+        Assert.True(viewModel.SelectCardCommand.CanExecute(null));
+    }
+
+    [Fact]
+    public async Task Payment_page_prepare_for_entry_after_second_cancel_allows_new_tender_before_late_card_result()
+    {
+        var cart = new PosCartService();
+        cart.AddItem(CreateItem("SKU-162", "Reentry Tea", "930162", PriceSourceKind.StoreRetailPrice, 10m));
+        var workflow = new FakeCashPaymentWorkflowService
+        {
+            AddTenderStarted = new(TaskCreationOptions.RunContinuationsAsynchronously),
+            AddTenderResult = new(TaskCreationOptions.RunContinuationsAsynchronously),
+            IgnoreCancellation = true
+        };
+        var viewModel = new PaymentViewModel(cart, workflow, Session);
+        var paymentTask = viewModel.SelectCardCommand.ExecuteAsync(null);
+        await workflow.AddTenderStarted.Task;
+
+        viewModel.CancelCommand.Execute(null);
+        viewModel.CancelCommand.Execute(null);
+        viewModel.PrepareForEntry(Session);
+
+        Assert.True(viewModel.SelectCashCommand.CanExecute(null));
+        Assert.True(viewModel.AddTenderCommand.CanExecute(null));
+
+        workflow.AddTenderResult.SetResult(PaymentTenderAttemptResult.Success(
+            new PaymentTender(PaymentMethodKind.Card, 10m, "CARD-LATE"),
+            "payment.status.cardTenderAdded"));
+        await paymentTask;
+
+        Assert.Empty(viewModel.PaymentTenders);
+        Assert.Equal("payment.status.ready", viewModel.StatusMessage);
+    }
+
+    [Fact]
+    public async Task Payment_page_manual_card_cancel_shows_unconfirmed_cancel_outcome()
+    {
+        var cart = new PosCartService();
+        cart.AddItem(CreateItem("SKU-159", "Unconfirmed Cancel Tea", "930159", PriceSourceKind.StoreRetailPrice, 10m));
+        var workflow = new FakeCashPaymentWorkflowService
+        {
+            AddTenderStarted = new(TaskCreationOptions.RunContinuationsAsynchronously),
+            AddTenderResult = new(TaskCreationOptions.RunContinuationsAsynchronously),
+            IgnoreCancellation = true
+        };
+        var viewModel = new PaymentViewModel(cart, workflow, Session);
+
+        var paymentTask = viewModel.SelectCardCommand.ExecuteAsync(null);
+        await workflow.AddTenderStarted.Task;
+
+        viewModel.CancelCommand.Execute(null);
+        workflow.AddTenderResult.SetResult(PaymentTenderAttemptResult.Fail(
+            "payment.status.cardDeclined",
+            "ANZ Linkly cancellation outcome could not be confirmed."));
+        await paymentTask;
+
+        Assert.Empty(viewModel.PaymentTenders);
+        Assert.False(viewModel.IsCardPaymentInProgress);
+        Assert.False(viewModel.IsPaymentInteractionLocked);
+        Assert.Equal("ANZ Linkly cancellation outcome could not be confirmed.", viewModel.StatusMessage);
+    }
+
+    [Fact]
+    public async Task Payment_page_card_terminal_cancel_result_does_not_add_tender()
+    {
+        var cart = new PosCartService();
+        cart.AddItem(CreateItem("SKU-160", "Terminal Cancel Tea", "930160", PriceSourceKind.StoreRetailPrice, 10m));
+        var workflow = new FakeCashPaymentWorkflowService
+        {
+            AddTenderResult = new(TaskCreationOptions.RunContinuationsAsynchronously)
+        };
+        workflow.AddTenderResult.SetResult(PaymentTenderAttemptResult.Fail(
+            "payment.status.cardDeclined",
+            "CANCELLED (C0)"));
+        var viewModel = new PaymentViewModel(cart, workflow, Session);
+
+        await viewModel.SelectCardCommand.ExecuteAsync(null);
+
+        Assert.Empty(viewModel.PaymentTenders);
+        Assert.False(viewModel.IsCardPaymentInProgress);
+        Assert.False(viewModel.IsPaymentInteractionLocked);
+        Assert.True(viewModel.SelectCardCommand.CanExecute(null));
+        Assert.Equal("payment.status.cardCancelled", viewModel.StatusMessage);
+    }
+
+    [Fact]
+    public async Task Payment_page_square_card_cancel_result_uses_cancelled_status()
+    {
+        var cart = new PosCartService();
+        cart.AddItem(CreateItem("SKU-160A", "Square Terminal Cancel Tea", "930160A", PriceSourceKind.StoreRetailPrice, 10m));
+        var workflow = new FakeCashPaymentWorkflowService
+        {
+            AddTenderResult = new(TaskCreationOptions.RunContinuationsAsynchronously)
+        };
+        workflow.AddTenderResult.SetResult(PaymentTenderAttemptResult.Fail(
+            "payment.status.cardDeclined",
+            "Square checkout was canceled."));
+        var viewModel = new PaymentViewModel(cart, workflow, Session);
+
+        await viewModel.SelectCardCommand.ExecuteAsync(null);
+
+        Assert.Empty(viewModel.PaymentTenders);
+        Assert.False(viewModel.IsCardPaymentInProgress);
+        Assert.False(viewModel.IsPaymentInteractionLocked);
+        Assert.Equal("payment.status.cardCancelled", viewModel.StatusMessage);
+    }
+
+    [Fact]
+    public async Task Payment_page_card_timeout_exception_restores_interactions_without_adding_tender()
+    {
+        var cart = new PosCartService();
+        cart.AddItem(CreateItem("SKU-156", "Timed Out Card Tea", "930156", PriceSourceKind.StoreRetailPrice, 10m));
+        var workflow = new FakeCashPaymentWorkflowService
+        {
+            AddTenderException = new OperationCanceledException()
+        };
+        var viewModel = new PaymentViewModel(cart, workflow, Session);
+
+        await viewModel.SelectCardCommand.ExecuteAsync(null);
+
+        Assert.Empty(viewModel.PaymentTenders);
+        Assert.False(viewModel.IsCardPaymentInProgress);
+        Assert.True(viewModel.SelectCardCommand.CanExecute(null));
+        Assert.Equal("payment.status.cardTimedOut", viewModel.StatusMessage);
+    }
+
+    [Fact]
+    public async Task Payment_page_card_timeout_failure_result_uses_timeout_status()
+    {
+        var cart = new PosCartService();
+        cart.AddItem(CreateItem("SKU-158", "Timeout Result Card Tea", "930158", PriceSourceKind.StoreRetailPrice, 10m));
+        var workflow = new FakeCashPaymentWorkflowService
+        {
+            AddTenderResult = new(TaskCreationOptions.RunContinuationsAsynchronously)
+        };
+        workflow.AddTenderResult.SetResult(PaymentTenderAttemptResult.Fail(
+            "payment.status.cardDeclined",
+            "ANZ Linkly transaction timed out."));
+        var viewModel = new PaymentViewModel(cart, workflow, Session);
+
+        await viewModel.SelectCardCommand.ExecuteAsync(null);
+
+        Assert.Empty(viewModel.PaymentTenders);
+        Assert.False(viewModel.IsCardPaymentInProgress);
+        Assert.True(viewModel.SelectCardCommand.CanExecute(null));
+        Assert.Equal("payment.status.cardTimedOut", viewModel.StatusMessage);
+    }
+
+    [Fact]
+    public async Task Payment_page_requires_voucher_code_before_adding_voucher()
     {
         var cart = new PosCartService();
         cart.AddItem(CreateItem("SKU-144", "Voucher Tea", "930144", PriceSourceKind.StoreRetailPrice, 5m));
@@ -1634,10 +2109,15 @@ public sealed class PosTerminalCashPaymentViewModelTests
             new InMemorySyncQueueRepository(),
             Session);
 
-        viewModel.SelectVoucherCommand.Execute(null);
         viewModel.TenderAmountText = "5";
+        viewModel.SelectedPaymentMethod = PaymentMethodKind.Voucher;
 
         Assert.False(viewModel.AddTenderCommand.CanExecute(null));
+
+        await viewModel.SelectVoucherCommand.ExecuteAsync(null);
+
+        Assert.Empty(viewModel.PaymentTenders);
+        Assert.Equal("payment.status.voucherCodeRequired", viewModel.StatusMessage);
 
         viewModel.VoucherCodeText = "ABC123";
 
@@ -1652,10 +2132,9 @@ public sealed class PosTerminalCashPaymentViewModelTests
         var workflow = new FakeCashPaymentWorkflowService();
         var viewModel = new PaymentViewModel(cart, workflow, Session);
 
-        viewModel.SelectVoucherCommand.Execute(null);
         viewModel.TenderAmountText = "5";
         viewModel.VoucherCodeText = "ABC123";
-        await viewModel.AddTenderCommand.ExecuteAsync(null);
+        await viewModel.SelectVoucherCommand.ExecuteAsync(null);
         workflow.ThrowOnComplete = new PaymentUploadFailedException(Guid.NewGuid(), 5m, 0m, "upload failed");
         await viewModel.ConfirmPaymentCommand.ExecuteAsync(null);
 
@@ -1672,7 +2151,7 @@ public sealed class PosTerminalCashPaymentViewModelTests
         Assert.Equal("5.00", viewModel.TenderAmountText);
         Assert.Equal("payment.status.ready", viewModel.StatusMessage);
         Assert.True(viewModel.AddTenderCommand.CanExecute(null));
-        Assert.True(viewModel.ConfirmPaymentCommand.CanExecute(null));
+        Assert.False(viewModel.ConfirmPaymentCommand.CanExecute(null));
     }
 
     private static PosSessionState Session => new("HB POS", "S001", "Main Store", "POS-01", "C001", "Alice", true, 0);
@@ -1911,6 +2390,14 @@ public sealed class PosTerminalCashPaymentViewModelTests
 
         public PaymentUploadFailedException? ThrowOnComplete { get; set; }
 
+        public TaskCompletionSource? AddTenderStarted { get; set; }
+
+        public TaskCompletionSource<PaymentTenderAttemptResult>? AddTenderResult { get; set; }
+
+        public Exception? AddTenderException { get; set; }
+
+        public bool IgnoreCancellation { get; set; }
+
         public bool TryParseTenderedAmount(string? amountTenderedText, out decimal tenderedAmount)
         {
             return decimal.TryParse(amountTenderedText, out tenderedAmount);
@@ -1938,7 +2425,7 @@ public sealed class PosTerminalCashPaymentViewModelTests
             return Math.Max(0m, CalculateTenderedAmount(tenders) - actualAmount);
         }
 
-        public Task<PaymentTenderAttemptResult> AddTenderAsync(
+        public async Task<PaymentTenderAttemptResult> AddTenderAsync(
             PaymentMethodKind method,
             PosSessionState session,
             decimal actualAmount,
@@ -1947,7 +2434,25 @@ public sealed class PosTerminalCashPaymentViewModelTests
             string? referenceText = null,
             CancellationToken cancellationToken = default)
         {
-            return Task.FromResult(PaymentTenderAttemptResult.Success(TenderToAdd, "payment.status.tenderAdded"));
+            AddTenderStarted?.SetResult();
+
+            if (AddTenderException is not null)
+            {
+                throw AddTenderException;
+            }
+
+            if (AddTenderResult is not null)
+            {
+                return IgnoreCancellation
+                    ? await AddTenderResult.Task
+                    : await AddTenderResult.Task.WaitAsync(cancellationToken);
+            }
+
+            var tender = TenderToAdd.Method == method
+                ? TenderToAdd
+                : new PaymentTender(method, decimal.TryParse(amountText, out var amount) ? amount : 5m, referenceText);
+
+            return PaymentTenderAttemptResult.Success(tender, "payment.status.tenderAdded");
         }
 
         public Task<CashPaymentWorkflowResult> CompleteAsync(

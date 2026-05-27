@@ -1,4 +1,4 @@
-using Hbpos.Client.Wpf.Localization;
+﻿using Hbpos.Client.Wpf.Localization;
 using Hbpos.Client.Wpf.Services;
 using Microsoft.Data.Sqlite;
 
@@ -27,7 +27,7 @@ public sealed class LocalizationAndSettingsTests
         localization.SetCulture("zh-CN");
 
         Assert.Equal("zh-CN", localization.CurrentCulture.Name);
-        Assert.Equal("POS 收银台", localization.T("PosTerminal"));
+        Assert.Equal("POS \u6536\u94F6\u53F0", localization.T("PosTerminal"));
         Assert.Equal(1, notificationCount);
     }
 
@@ -41,9 +41,24 @@ public sealed class LocalizationAndSettingsTests
 
         localization.SetCulture("zh-CN");
 
-        Assert.Equal("\u6b63\u5728\u51c6\u5907\u6536\u94f6\u7cfb\u7edf...", localization.T("startup.loading"));
-        Assert.Equal("\u626b\u7801\u67aa", localization.T("shell.scannerBinding"));
-        Assert.Equal("\u91cd\u65b0\u5b66\u4e60\u626b\u7801\u67aa", localization.T("shell.scannerBinding.resetTooltip"));
+        Assert.Equal("\u6B63\u5728\u51C6\u5907\u6536\u94F6\u7CFB\u7EDF...", localization.T("startup.loading"));
+        Assert.Equal("\u626B\u7801\u67AA", localization.T("shell.scannerBinding"));
+        Assert.Equal("\u91CD\u65B0\u5B66\u4E60\u626B\u7801\u67AA", localization.T("shell.scannerBinding.resetTooltip"));
+    }
+
+    [Fact]
+    public void Localization_has_settings_text()
+    {
+        var localization = new LocalizationService();
+
+        Assert.Equal("Settings", localization.T("settings.title"));
+        Assert.Equal("Data Download", localization.T("settings.section.dataDownload.title"));
+
+        localization.SetCulture("zh-CN");
+
+        Assert.Equal("\u8BBE\u7F6E", localization.T("settings.title"));
+        Assert.Equal("\u6570\u636E\u4E0B\u8F7D", localization.T("settings.section.dataDownload.title"));
+        Assert.Equal("\u91CD\u65B0\u6CE8\u518C\u8BBE\u5907", localization.T("settings.deviceRegistration.action"));
     }
 
     [Fact]

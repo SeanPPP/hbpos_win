@@ -172,6 +172,7 @@ public sealed class ConfiguredCardTerminalClient : ICardTerminalClient
 {
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
     private static readonly TimeSpan SquarePollInterval = TimeSpan.FromSeconds(2);
+    private static readonly TimeSpan SquareCleanupTimeout = TimeSpan.FromSeconds(5);
 
     private readonly ICardTerminalSettingsProvider _settingsProvider;
     private readonly HttpClient _httpClient;
@@ -228,7 +229,16 @@ public sealed class ConfiguredCardTerminalClient : ICardTerminalClient
         timeoutCts.CancelAfter(settings.TerminalTimeout);
 
         var currentSettings = settings;
+        var checkoutDeviceId = SquareDeviceIdNormalizer.NormalizeForTerminalCheckout(settings.SquareDeviceId);
+        if (string.IsNullOrWhiteSpace(checkoutDeviceId))
+        {
+            return new PaymentAuthorizationResult(false, null, "Square terminal configuration is incomplete.");
+        }
+
         var hasRefreshedToken = false;
+        string? checkoutId = null;
+        var pollCount = 0;
+        string? lastLoggedStatus = null;
         var reference = Limit($"{session.DeviceCode}-{DateTimeOffset.UtcNow:yyyyMMddHHmmssfff}", 40);
         var createRequest = new
         {
@@ -242,7 +252,7 @@ public sealed class ConfiguredCardTerminalClient : ICardTerminalClient
                 },
                 device_options = new
                 {
-                    device_id = settings.SquareDeviceId
+                    device_id = checkoutDeviceId
                 },
                 location_id = settings.SquareLocationId,
                 reference_id = reference,
@@ -250,90 +260,140 @@ public sealed class ConfiguredCardTerminalClient : ICardTerminalClient
             }
         };
 
-        var createResult = await SendSquareWithTokenRefreshAsync(
-            currentSettings,
-            HttpMethod.Post,
-            "terminals/checkouts",
-            createRequest,
-            allowRefresh: !hasRefreshedToken,
-            cancellationToken: timeoutCts.Token);
-        currentSettings = createResult.Settings;
-        hasRefreshedToken = hasRefreshedToken || createResult.Refreshed;
-        using var createResponse = createResult.Response;
-        var createBody = await createResponse.Content.ReadAsStringAsync(timeoutCts.Token);
-        if (!createResponse.IsSuccessStatusCode)
-        {
-            return new PaymentAuthorizationResult(false, null, $"Square checkout failed with HTTP {(int)createResponse.StatusCode}.");
-        }
+        LogSquare(
+            $"authorize start storeCode={session.StoreCode} deviceCode={session.DeviceCode} amount={amount:0.00} environment={settings.Environment} locationId={LogValue(settings.SquareLocationId)} storedSquareDeviceId={LogValue(settings.SquareDeviceId)} checkoutDeviceId={LogValue(checkoutDeviceId)} timeoutSeconds={(int)settings.TerminalTimeout.TotalSeconds}");
 
-        using var createDocument = JsonDocument.Parse(createBody);
-        var checkout = createDocument.RootElement.GetProperty("checkout");
-        var checkoutId = checkout.GetProperty("id").GetString();
-        if (string.IsNullOrWhiteSpace(checkoutId))
+        try
         {
-            return new PaymentAuthorizationResult(false, null, "Square checkout did not return an id.");
-        }
-
-        while (true)
-        {
-            timeoutCts.Token.ThrowIfCancellationRequested();
-            var getResult = await SendSquareWithTokenRefreshAsync(
+            var createResult = await SendSquareWithTokenRefreshAsync(
                 currentSettings,
-                HttpMethod.Get,
-                $"terminals/checkouts/{Uri.EscapeDataString(checkoutId)}",
-                body: null,
+                HttpMethod.Post,
+                "terminals/checkouts",
+                createRequest,
                 allowRefresh: !hasRefreshedToken,
                 cancellationToken: timeoutCts.Token);
-            currentSettings = getResult.Settings;
-            hasRefreshedToken = hasRefreshedToken || getResult.Refreshed;
-            using var getResponse = getResult.Response;
-            var getBody = await getResponse.Content.ReadAsStringAsync(timeoutCts.Token);
-            if (!getResponse.IsSuccessStatusCode)
+            currentSettings = createResult.Settings;
+            hasRefreshedToken = hasRefreshedToken || createResult.Refreshed;
+            using var createResponse = createResult.Response;
+            var createBody = await createResponse.Content.ReadAsStringAsync(timeoutCts.Token);
+            if (!createResponse.IsSuccessStatusCode)
             {
-                return new PaymentAuthorizationResult(false, null, $"Square checkout status failed with HTTP {(int)getResponse.StatusCode}.");
+                LogSquare($"checkout create failed http={(int)createResponse.StatusCode} detail={LogValue(ReadSquareErrorMessage(createBody))}");
+                return FailSquareRequest("checkout", createResponse.StatusCode, createBody);
             }
 
-            using var getDocument = JsonDocument.Parse(getBody);
-            var currentCheckout = getDocument.RootElement.GetProperty("checkout");
-            var status = currentCheckout.GetProperty("status").GetString();
-            if (string.Equals(status, "COMPLETED", StringComparison.OrdinalIgnoreCase))
+            using (var createDocument = JsonDocument.Parse(createBody))
             {
-                var authorizedAmount = ReadAmount(currentCheckout) ?? amount;
-                if (authorizedAmount != amount)
+                var checkout = ReadRequiredCheckout(createDocument.RootElement);
+                checkoutId = ReadRequiredString(checkout, "id");
+                lastLoggedStatus = ReadOptionalString(checkout, "status");
+                if (string.IsNullOrWhiteSpace(checkoutId))
                 {
-                    return new PaymentAuthorizationResult(false, null, "Square authorized amount did not match the requested amount.");
+                    LogSquare("checkout create returned empty checkout id");
+                    return new PaymentAuthorizationResult(false, null, "Square checkout did not return an id.");
+                }
+            }
+
+            LogSquare($"checkout create succeeded checkoutId={checkoutId} status={LogValue(lastLoggedStatus)}");
+
+            while (true)
+            {
+                timeoutCts.Token.ThrowIfCancellationRequested();
+                pollCount++;
+                var getResult = await SendSquareWithTokenRefreshAsync(
+                    currentSettings,
+                    HttpMethod.Get,
+                    $"terminals/checkouts/{Uri.EscapeDataString(checkoutId)}",
+                    body: null,
+                    allowRefresh: !hasRefreshedToken,
+                    cancellationToken: timeoutCts.Token);
+                currentSettings = getResult.Settings;
+                hasRefreshedToken = hasRefreshedToken || getResult.Refreshed;
+                using var getResponse = getResult.Response;
+                var getBody = await getResponse.Content.ReadAsStringAsync(timeoutCts.Token);
+                if (!getResponse.IsSuccessStatusCode)
+                {
+                    LogSquare($"checkout poll failed checkoutId={checkoutId} poll={pollCount} http={(int)getResponse.StatusCode} detail={LogValue(ReadSquareErrorMessage(getBody))}");
+                    return FailSquareRequest("checkout status", getResponse.StatusCode, getBody);
                 }
 
-                var paymentId = ReadFirstPaymentId(currentCheckout) ?? checkoutId;
-                return new PaymentAuthorizationResult(
-                    true,
-                    $"SQ:{paymentId}",
-                    "Square",
-                    authorizedAmount,
-                    [
-                        new CardTransactionDto(
-                            "Square",
-                            paymentId,
-                            null,
-                            null,
-                            null,
-                            null,
-                            null,
-                            null,
-                            status,
-                            null,
-                            DateTimeOffset.UtcNow,
-                            authorizedAmount,
-                            null)
-                    ]);
-            }
+                using var getDocument = JsonDocument.Parse(getBody);
+                var currentCheckout = ReadRequiredCheckout(getDocument.RootElement);
+                var status = ReadRequiredString(currentCheckout, "status");
+                if (!string.Equals(lastLoggedStatus, status, StringComparison.OrdinalIgnoreCase))
+                {
+                    LogSquare($"checkout status checkoutId={checkoutId} poll={pollCount} status={status}");
+                    lastLoggedStatus = status;
+                }
 
-            if (string.Equals(status, "CANCELED", StringComparison.OrdinalIgnoreCase))
-            {
-                return new PaymentAuthorizationResult(false, null, "Square checkout was canceled.");
-            }
+                if (string.Equals(status, "COMPLETED", StringComparison.OrdinalIgnoreCase))
+                {
+                    var authorizedAmount = ReadAmount(currentCheckout) ?? amount;
+                    if (authorizedAmount != amount)
+                    {
+                        LogSquare($"checkout amount mismatch checkoutId={checkoutId} requested={amount:0.00} authorized={authorizedAmount:0.00}");
+                        return new PaymentAuthorizationResult(false, null, "Square authorized amount did not match the requested amount.");
+                    }
 
-            await Task.Delay(SquarePollInterval, timeoutCts.Token);
+                    var paymentId = ReadFirstPaymentId(currentCheckout) ?? checkoutId;
+                    LogSquare($"checkout completed checkoutId={checkoutId} paymentId={paymentId} amount={authorizedAmount:0.00}");
+                    return new PaymentAuthorizationResult(
+                        true,
+                        $"SQ:{paymentId}",
+                        "Square",
+                        authorizedAmount,
+                        [
+                            new CardTransactionDto(
+                                "Square",
+                                paymentId,
+                                null,
+                                null,
+                                null,
+                                null,
+                                null,
+                                null,
+                                status,
+                                null,
+                                DateTimeOffset.UtcNow,
+                                authorizedAmount,
+                                null)
+                        ]);
+                }
+
+                if (string.Equals(status, "CANCELED", StringComparison.OrdinalIgnoreCase))
+                {
+                    LogSquare($"checkout canceled checkoutId={checkoutId} poll={pollCount}");
+                    return new PaymentAuthorizationResult(false, null, "Square checkout was canceled.");
+                }
+
+                if (!IsSquarePendingStatus(status))
+                {
+                    LogSquare($"checkout entered unexpected status checkoutId={checkoutId} poll={pollCount} status={status}");
+                    return new PaymentAuthorizationResult(false, null, $"Square checkout entered unexpected status '{status}'.");
+                }
+
+                await Task.Delay(SquarePollInterval, timeoutCts.Token);
+            }
+        }
+        catch (OperationCanceledException) when (timeoutCts.IsCancellationRequested)
+        {
+            var cancellationReason = cancellationToken.IsCancellationRequested ? "caller-cancelled" : "local-timeout";
+            LogSquare($"authorize canceled checkoutId={LogValue(checkoutId)} reason={cancellationReason}; starting cleanup");
+            await CleanupSquareCheckoutBestEffortAsync(
+                currentSettings,
+                checkoutId,
+                allowRefresh: !hasRefreshedToken);
+            throw;
+        }
+        catch (HttpRequestException ex)
+        {
+            LogSquare($"authorize network failure checkoutId={LogValue(checkoutId)} message={LogValue(ex.Message)}");
+            return new PaymentAuthorizationResult(false, null, "Square terminal communication failed.");
+        }
+        catch (JsonException ex)
+        {
+            LogSquare($"authorize invalid response checkoutId={LogValue(checkoutId)} message={LogValue(ex.Message)}");
+            return new PaymentAuthorizationResult(false, null, "Square terminal returned an invalid response.");
         }
     }
 
@@ -351,6 +411,7 @@ public sealed class ConfiguredCardTerminalClient : ICardTerminalClient
             return new SquareSendResult(response, settings, false);
         }
 
+        LogSquare($"auth refresh requested method={method.Method} path={relativeUrl} environment={settings.Environment}");
         response.Dispose();
         var refreshedToken = await _squareAccessTokenProvider.GetSquareAccessTokenAsync(
             settings.Environment,
@@ -358,6 +419,7 @@ public sealed class ConfiguredCardTerminalClient : ICardTerminalClient
             cancellationToken);
         if (string.IsNullOrWhiteSpace(refreshedToken))
         {
+            LogSquare($"auth refresh failed method={method.Method} path={relativeUrl} reason=empty-token");
             return new SquareSendResult(
                 new HttpResponseMessage(System.Net.HttpStatusCode.Unauthorized),
                 settings,
@@ -365,6 +427,7 @@ public sealed class ConfiguredCardTerminalClient : ICardTerminalClient
         }
 
         var refreshedSettings = settings with { SquareAccessToken = refreshedToken };
+        LogSquare($"auth refresh succeeded method={method.Method} path={relativeUrl}");
         return new SquareSendResult(
             await SendSquareAsync(refreshedSettings, method, relativeUrl, body, cancellationToken),
             refreshedSettings,
@@ -392,6 +455,182 @@ public sealed class ConfiguredCardTerminalClient : ICardTerminalClient
         return await _httpClient.SendAsync(request, cancellationToken);
     }
 
+    private async Task CleanupSquareCheckoutBestEffortAsync(
+        CardTerminalSettings settings,
+        string? checkoutId,
+        bool allowRefresh)
+    {
+        if (string.IsNullOrWhiteSpace(checkoutId))
+        {
+            LogSquare("cleanup skipped because checkout id is empty");
+            return;
+        }
+
+        LogSquare($"cleanup start checkoutId={checkoutId} allowRefresh={allowRefresh}");
+        using var cleanupCts = new CancellationTokenSource(SquareCleanupTimeout);
+        var cancelResult = await CancelSquareCheckoutBestEffortAsync(
+            settings,
+            checkoutId,
+            allowRefresh,
+            cleanupCts.Token);
+        if (cancelResult.ShouldDismiss)
+        {
+            LogSquare($"cleanup dismiss required checkoutId={checkoutId}");
+            await DismissSquareCheckoutBestEffortAsync(
+                cancelResult.Settings,
+                checkoutId,
+                allowRefresh: allowRefresh && !cancelResult.Refreshed,
+                cleanupCts.Token);
+        }
+        else
+        {
+            LogSquare($"cleanup finished without dismiss checkoutId={checkoutId}");
+        }
+    }
+
+    private async Task<SquareCleanupResult> CancelSquareCheckoutBestEffortAsync(
+        CardTerminalSettings settings,
+        string checkoutId,
+        bool allowRefresh,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            var result = await SendSquareWithTokenRefreshAsync(
+                settings,
+                HttpMethod.Post,
+                $"terminals/checkouts/{Uri.EscapeDataString(checkoutId)}/cancel",
+                body: null,
+                allowRefresh,
+                cancellationToken);
+            var updatedSettings = result.Settings;
+            var refreshed = result.Refreshed;
+            using var response = result.Response;
+            var body = await response.Content.ReadAsStringAsync(cancellationToken);
+            if (!response.IsSuccessStatusCode)
+            {
+                LogSquare($"checkout cancel failed checkoutId={checkoutId} http={(int)response.StatusCode} detail={LogValue(ReadSquareErrorMessage(body))}");
+                return new SquareCleanupResult(updatedSettings, refreshed, true);
+            }
+
+            var status = TryReadSquareCheckoutStatus(body);
+            LogSquare($"checkout cancel result checkoutId={checkoutId} status={LogValue(status)} shouldDismiss={!IsSquareTerminalStatusFinal(status)}");
+            return new SquareCleanupResult(
+                updatedSettings,
+                refreshed,
+                !IsSquareTerminalStatusFinal(status));
+        }
+        catch (Exception ex) when (ex is not OutOfMemoryException and not StackOverflowException)
+        {
+            LogSquare($"checkout cancel exception checkoutId={checkoutId} message={LogValue(ex.Message)}");
+            return new SquareCleanupResult(settings, Refreshed: false, ShouldDismiss: true);
+        }
+    }
+
+    private async Task DismissSquareCheckoutBestEffortAsync(
+        CardTerminalSettings settings,
+        string checkoutId,
+        bool allowRefresh,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            var result = await SendSquareWithTokenRefreshAsync(
+                settings,
+                HttpMethod.Post,
+                $"terminals/checkouts/{Uri.EscapeDataString(checkoutId)}/dismiss",
+                body: null,
+                allowRefresh,
+                cancellationToken);
+            using var response = result.Response;
+            _ = await response.Content.ReadAsStringAsync(cancellationToken);
+            LogSquare($"checkout dismiss result checkoutId={checkoutId} http={(int)response.StatusCode}");
+        }
+        catch (Exception ex) when (ex is not OutOfMemoryException and not StackOverflowException)
+        {
+            LogSquare($"checkout dismiss exception checkoutId={checkoutId} message={LogValue(ex.Message)}");
+        }
+    }
+
+    private static PaymentAuthorizationResult FailSquareRequest(
+        string operation,
+        System.Net.HttpStatusCode statusCode,
+        string? responseBody)
+    {
+        var detail = ReadSquareErrorMessage(responseBody);
+        var message = string.IsNullOrWhiteSpace(detail)
+            ? $"Square {operation} failed with HTTP {(int)statusCode}."
+            : $"Square {operation} failed with HTTP {(int)statusCode}: {detail}";
+        return new PaymentAuthorizationResult(false, null, message);
+    }
+
+    private static string? ReadSquareErrorMessage(string? responseBody)
+    {
+        if (string.IsNullOrWhiteSpace(responseBody))
+        {
+            return null;
+        }
+
+        try
+        {
+            using var document = JsonDocument.Parse(responseBody);
+            if (!document.RootElement.TryGetProperty("errors", out var errorsElement) ||
+                errorsElement.ValueKind != JsonValueKind.Array ||
+                errorsElement.GetArrayLength() == 0)
+            {
+                return null;
+            }
+
+            var error = errorsElement[0];
+            var code = error.TryGetProperty("code", out var codeElement) && codeElement.ValueKind == JsonValueKind.String
+                ? codeElement.GetString()
+                : null;
+            var detail = error.TryGetProperty("detail", out var detailElement) && detailElement.ValueKind == JsonValueKind.String
+                ? detailElement.GetString()
+                : null;
+
+            return string.IsNullOrWhiteSpace(code)
+                ? detail
+                : string.IsNullOrWhiteSpace(detail)
+                    ? code
+                    : $"{code}: {detail}";
+        }
+        catch (JsonException)
+        {
+            return null;
+        }
+    }
+
+    private static string? TryReadSquareCheckoutStatus(string? responseBody)
+    {
+        if (string.IsNullOrWhiteSpace(responseBody))
+        {
+            return null;
+        }
+
+        try
+        {
+            using var document = JsonDocument.Parse(responseBody);
+            return document.RootElement.TryGetProperty("checkout", out var checkoutElement)
+                ? ReadOptionalString(checkoutElement, "status")
+                : null;
+        }
+        catch (JsonException)
+        {
+            return null;
+        }
+    }
+
+    private static JsonElement ReadRequiredCheckout(JsonElement root)
+    {
+        if (!root.TryGetProperty("checkout", out var checkoutElement) || checkoutElement.ValueKind != JsonValueKind.Object)
+        {
+            throw new JsonException("Square response is missing required object 'checkout'.");
+        }
+
+        return checkoutElement;
+    }
+
     private static long ToMinorUnits(decimal amount)
     {
         return decimal.ToInt64(decimal.Round(amount * 100m, 0, MidpointRounding.AwayFromZero));
@@ -415,9 +654,41 @@ public sealed class ConfiguredCardTerminalClient : ICardTerminalClient
                 : null;
     }
 
+    private static string ReadRequiredString(JsonElement element, string propertyName)
+    {
+        var value = ReadOptionalString(element, propertyName);
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            throw new JsonException($"Square response is missing required property '{propertyName}'.");
+        }
+
+        return value;
+    }
+
+    private static string? ReadOptionalString(JsonElement element, string propertyName)
+    {
+        return element.TryGetProperty(propertyName, out var propertyElement) &&
+            propertyElement.ValueKind == JsonValueKind.String
+                ? propertyElement.GetString()
+                : null;
+    }
+
     private static string Limit(string value, int maxLength)
     {
         return value.Length <= maxLength ? value : value[..maxLength];
+    }
+
+    private static bool IsSquarePendingStatus(string status)
+    {
+        return string.Equals(status, "PENDING", StringComparison.OrdinalIgnoreCase) ||
+            string.Equals(status, "IN_PROGRESS", StringComparison.OrdinalIgnoreCase) ||
+            string.Equals(status, "CANCEL_REQUESTED", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static bool IsSquareTerminalStatusFinal(string? status)
+    {
+        return string.Equals(status, "CANCELED", StringComparison.OrdinalIgnoreCase) ||
+            string.Equals(status, "COMPLETED", StringComparison.OrdinalIgnoreCase);
     }
 
     private static bool IsSquareAuthenticationFailure(HttpResponseMessage response)
@@ -425,8 +696,23 @@ public sealed class ConfiguredCardTerminalClient : ICardTerminalClient
         return response.StatusCode is System.Net.HttpStatusCode.Unauthorized or System.Net.HttpStatusCode.Forbidden;
     }
 
+    private static void LogSquare(string message)
+    {
+        ConsoleLog.Write("Square", message);
+    }
+
+    private static string LogValue(string? value)
+    {
+        return string.IsNullOrWhiteSpace(value) ? "<null>" : value;
+    }
+
     private sealed record SquareSendResult(
         HttpResponseMessage Response,
         CardTerminalSettings Settings,
         bool Refreshed);
+
+    private sealed record SquareCleanupResult(
+        CardTerminalSettings Settings,
+        bool Refreshed,
+        bool ShouldDismiss);
 }

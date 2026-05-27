@@ -1,0 +1,84 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<root>
+  <resheader name="resmimetype"><value>text/microsoft-resx</value></resheader>
+  <resheader name="version"><value>2.0</value></resheader>
+  <resheader name="reader"><value>System.Resources.ResXResourceReader, System.Windows.Forms, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089</value></resheader>
+  <resheader name="writer"><value>System.Resources.ResXResourceWriter, System.Windows.Forms, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089</value></resheader>
+  <data name="settings.title" xml:space="preserve"><value>Settings</value></data>
+  <data name="settings.subtitle.dataMaintenance" xml:space="preserve"><value>Data maintenance</value></data>
+  <data name="settings.subtitle.paymentTerminal" xml:space="preserve"><value>Card terminal settings</value></data>
+  <data name="settings.subtitle.deviceRegistration" xml:space="preserve"><value>Device registration</value></data>
+  <data name="settings.category.title" xml:space="preserve"><value>Categories</value></data>
+  <data name="settings.category.dataMaintenance" xml:space="preserve"><value>Data maintenance</value></data>
+  <data name="settings.category.paymentTerminal" xml:space="preserve"><value>Payment terminal</value></data>
+  <data name="settings.category.deviceRegistration" xml:space="preserve"><value>Device registration</value></data>
+  <data name="settings.section.dataDownload.title" xml:space="preserve"><value>Data Download</value></data>
+  <data name="settings.section.dataDownload.description" xml:space="preserve"><value>Sync the current store catalog from the server and refresh the local checkout item index.</value></data>
+  <data name="settings.section.dataDownload.action" xml:space="preserve"><value>Data Download</value></data>
+  <data name="settings.section.dataReset.title" xml:space="preserve"><value>Data Reset</value></data>
+  <data name="settings.section.dataReset.description" xml:space="preserve"><value>Force a fresh local catalog rebuild when data looks stale, prices do not refresh, or the product index needs a clean reset.</value></data>
+  <data name="settings.section.dataReset.action" xml:space="preserve"><value>Data Reset</value></data>
+  <data name="settings.square.title" xml:space="preserve"><value>Square</value></data>
+  <data name="settings.square.description" xml:space="preserve"><value>Use a Square access token to load locations and terminal devices.</value></data>
+  <data name="settings.square.switchHelp" xml:space="preserve"><value>Switch to another paired Square terminal in the same location, then save to use it for the next payment.</value></data>
+  <data name="settings.square.tokenSource" xml:space="preserve"><value>Token Source</value></data>
+  <data name="settings.square.tokenStatus.cached" xml:space="preserve"><value>Local encrypted token cached. HBPOS refreshes it when Square rejects it.</value></data>
+  <data name="settings.square.tokenStatus.missing" xml:space="preserve"><value>No local token cached. The next Square request will fetch one from HBPOS.</value></data>
+  <data name="settings.square.tokenHelp" xml:space="preserve"><value>Square token is stored encrypted on this device and fetched from HBPOS when missing or rejected.</value></data>
+  <data name="settings.square.sandbox" xml:space="preserve"><value>Sandbox</value></data>
+  <data name="settings.square.sandbox.toggle" xml:space="preserve"><value>Test mode only</value></data>
+  <data name="settings.square.location" xml:space="preserve"><value>Location</value></data>
+  <data name="settings.square.loadLocations" xml:space="preserve"><value>Load Locations</value></data>
+  <data name="settings.square.loadLocations.tooltip" xml:space="preserve"><value>Load Square locations</value></data>
+  <data name="settings.square.device" xml:space="preserve"><value>Device</value></data>
+  <data name="settings.square.loadDevices" xml:space="preserve"><value>Load Devices</value></data>
+  <data name="settings.square.loadDevices.tooltip" xml:space="preserve"><value>Load Square devices</value></data>
+  <data name="settings.square.deviceCodes" xml:space="preserve"><value>Device Codes</value></data>
+  <data name="settings.square.deviceCodeName" xml:space="preserve"><value>New Device Code Name</value></data>
+  <data name="settings.square.loadDeviceCodes" xml:space="preserve"><value>Load Codes</value></data>
+  <data name="settings.square.createDeviceCode" xml:space="preserve"><value>Create Code</value></data>
+  <data name="settings.square.deviceCodeList" xml:space="preserve"><value>Device Code List</value></data>
+  <data name="settings.square.refreshDeviceCode" xml:space="preserve"><value>Refresh Status</value></data>
+  <data name="settings.square.deviceCodesHelp" xml:space="preserve"><value>Create a device code, enter it on the Square Terminal, then refresh the status to map the paired terminal back into the device selector.</value></data>
+  <data name="settings.square.deviceCodes.unsupported" xml:space="preserve"><value>Square Device Codes are only supported in Production. Sandbox mode keeps device switching available but disables pairing maintenance.</value></data>
+  <data name="settings.square.timeoutSeconds" xml:space="preserve"><value>Terminal Timeout Seconds</value></data>
+  <data name="settings.square.save" xml:space="preserve"><value>Save Square</value></data>
+  <data name="settings.linkly.title" xml:space="preserve"><value>ANZ Linkly</value></data>
+  <data name="settings.linkly.description" xml:space="preserve"><value>Connect to the local Linkly EFT-Client, then enable ANZ Linkly for card payments.</value></data>
+  <data name="settings.linkly.host" xml:space="preserve"><value>Host</value></data>
+  <data name="settings.linkly.port" xml:space="preserve"><value>Port</value></data>
+  <data name="settings.linkly.test" xml:space="preserve"><value>Test Linkly</value></data>
+  <data name="settings.linkly.enable" xml:space="preserve"><value>Enable Linkly</value></data>
+  <data name="settings.deviceRegistration.description" xml:space="preserve"><value>Submit a fresh registration request for this checkout device while keeping the current cart and order sync safety checks in place.</value></data>
+  <data name="settings.deviceRegistration.action" xml:space="preserve"><value>Re-register Device</value></data>
+  <data name="settings.status.ready" xml:space="preserve"><value>Ready.</value></data>
+  <data name="settings.status.loaded" xml:space="preserve"><value>Settings loaded.</value></data>
+  <data name="settings.status.noSquareLocations" xml:space="preserve"><value>No Square locations returned.</value></data>
+  <data name="settings.status.squareLocationsLoaded" xml:space="preserve"><value>Loaded {0} Square locations.</value></data>
+  <data name="settings.status.selectSquareLocation" xml:space="preserve"><value>Select a Square location first.</value></data>
+  <data name="settings.status.noSquareDevices" xml:space="preserve"><value>No Square devices returned for this location.</value></data>
+  <data name="settings.status.squareDevicesLoaded" xml:space="preserve"><value>Loaded {0} Square devices.</value></data>
+  <data name="settings.status.selectSquareDevice" xml:space="preserve"><value>Select a Square device first.</value></data>
+  <data name="settings.status.squareDeviceSwitchPendingSave" xml:space="preserve"><value>Selected {0}. Save Square to switch the next payment to this terminal.</value></data>
+  <data name="settings.status.squareDeviceCodesLoaded" xml:space="preserve"><value>Loaded {0} Square device codes.</value></data>
+  <data name="settings.status.squareDeviceCodeNameRequired" xml:space="preserve"><value>Enter a device code name first.</value></data>
+  <data name="settings.status.squareDeviceCodeCreated" xml:space="preserve"><value>Created device code {0} for {1}. Enter it on the Square Terminal, then refresh status.</value></data>
+  <data name="settings.status.selectSquareDeviceCode" xml:space="preserve"><value>Select a Square device code first.</value></data>
+  <data name="settings.status.squareDeviceCodeNotPaired" xml:space="preserve"><value>Device code is not paired yet. Current status: {0}.</value></data>
+  <data name="settings.status.squareDeviceCodePaired" xml:space="preserve"><value>Device code paired successfully. {0} is selected and ready to save for the next payment.</value></data>
+  <data name="settings.status.loadSquareBeforeSave" xml:space="preserve"><value>Load Square locations and devices before saving.</value></data>
+  <data name="settings.status.squareSaved" xml:space="preserve"><value>Square terminal settings saved. The next payment will use {0}.</value></data>
+  <data name="settings.status.linklyTestSuccess" xml:space="preserve"><value>Linkly EFT-Client connection succeeded.</value></data>
+  <data name="settings.status.linklyTestFailed" xml:space="preserve"><value>Linkly EFT-Client connection failed.</value></data>
+  <data name="settings.status.testLinklyBeforeSave" xml:space="preserve"><value>Test Linkly connection before enabling ANZ Linkly.</value></data>
+  <data name="settings.status.linklySaved" xml:space="preserve"><value>ANZ Linkly terminal settings saved.</value></data>
+  <data name="settings.status.catalogDownloadNotConfigured" xml:space="preserve"><value>Catalog download service is not configured.</value></data>
+  <data name="settings.status.catalogDownloading" xml:space="preserve"><value>Downloading catalog data...</value></data>
+  <data name="settings.status.catalogDownloadCompleted" xml:space="preserve"><value>Catalog data download completed.</value></data>
+  <data name="settings.status.catalogResetNotConfigured" xml:space="preserve"><value>Catalog reset service is not configured.</value></data>
+  <data name="settings.status.catalogResetting" xml:space="preserve"><value>Resetting catalog data...</value></data>
+  <data name="settings.status.catalogResetCompleted" xml:space="preserve"><value>Catalog data reset completed.</value></data>
+  <data name="settings.status.reregisterNotConfigured" xml:space="preserve"><value>Device reregistration service is not configured.</value></data>
+  <data name="settings.status.reregisterStarting" xml:space="preserve"><value>Starting device reregistration...</value></data>
+  <data name="settings.status.operationCanceled" xml:space="preserve"><value>Operation canceled.</value></data>
+</root>

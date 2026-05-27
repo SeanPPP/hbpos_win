@@ -324,6 +324,11 @@
   <data name="payment.status.noTendersAdded" xml:space="preserve"><value>Add at least one tender before completing payment.</value></data>
   <data name="payment.status.remainingBalance" xml:space="preserve"><value>The order must be fully paid before completion.</value></data>
   <data name="payment.status.duplicateVoucher" xml:space="preserve"><value>This voucher has already been added.</value></data>
+  <data name="payment.status.voucherCodeRequired" xml:space="preserve"><value>Enter a voucher code before adding voucher payment.</value></data>
+  <data name="payment.status.duplicatePaymentMethod" xml:space="preserve"><value>This payment method has already been added.</value></data>
+  <data name="payment.status.cardProcessing" xml:space="preserve"><value>Waiting for card terminal result...</value></data>
+  <data name="payment.status.cardCancelled" xml:space="preserve"><value>Card payment cancelled.</value></data>
+  <data name="payment.status.cardTimedOut" xml:space="preserve"><value>Card payment timed out.</value></data>
   <data name="payment.status.retryVoucherUpload" xml:space="preserve"><value>Retry the voucher order upload before changing tenders.</value></data>
   <data name="payment.status.uploadFailed" xml:space="preserve"><value>Voucher order upload failed. Press Complete Payment to retry.</value></data>
   <data name="payment.status.completed" xml:space="preserve"><value>Payment completed.</value></data>

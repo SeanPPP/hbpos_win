@@ -114,6 +114,117 @@ public sealed class LinklyTerminalClientTests
     }
 
     [Fact]
+    public async Task PurchaseAsync_sends_cancel_key_after_caller_cancels_and_returns_decline()
+    {
+        using var cts = new CancellationTokenSource();
+        var readCount = 0;
+        var purchaseClient = new FakeLinklyEftClient(new EFTTransactionResponse
+        {
+            Success = false,
+            TxnRef = "TERM12605260000000",
+            AmtPurchase = 10m,
+            ResponseCode = "C0",
+            ResponseText = "CANCELLED"
+        })
+        {
+            OnRead = () =>
+            {
+                if (readCount++ == 0)
+                {
+                    cts.Cancel();
+                }
+            }
+        };
+        purchaseClient.ReadExceptions.Enqueue(new OperationCanceledException(cts.Token));
+        var factory = new QueueLinklyEftClientFactory(purchaseClient);
+        var client = new LinklyTerminalClient(factory);
+
+        var result = await client.PurchaseAsync(10m, CreateSession(), CreateSettings(), cts.Token);
+
+        Assert.False(result.Approved);
+        Assert.Contains("CANCELLED", result.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Equal(1, factory.CreatedCount);
+        Assert.IsType<EFTTransactionRequest>(purchaseClient.Requests[0]);
+        var cancelRequest = Assert.IsType<EFTSendKeyRequest>(purchaseClient.Requests[1]);
+        Assert.Equal(EFTPOSKey.OkCancel, cancelRequest.Key);
+    }
+
+    [Fact]
+    public async Task PurchaseAsync_recovers_approved_get_last_transaction_after_cancel_outcome_is_unknown()
+    {
+        using var cts = new CancellationTokenSource();
+        var readCount = 0;
+        var purchaseClient = new FakeLinklyEftClient
+        {
+            CancelRequestResult = false,
+            OnRead = () =>
+            {
+                if (readCount++ == 0)
+                {
+                    cts.Cancel();
+                }
+            }
+        };
+        purchaseClient.ReadExceptions.Enqueue(new OperationCanceledException(cts.Token));
+        var getLastClient = new FakeLinklyEftClient(new EFTGetLastTransactionResponse
+        {
+            Success = true,
+            LastTransactionSuccess = true,
+            TxnRef = "TERM12605260000000",
+            AmtPurchase = 10m,
+            ResponseCode = "00",
+            ResponseText = "APPROVED"
+        });
+        var client = new LinklyTerminalClient(new QueueLinklyEftClientFactory(purchaseClient, getLastClient));
+
+        var result = await client.PurchaseAsync(10m, CreateSession(), CreateSettings(), cts.Token);
+
+        Assert.True(result.Approved);
+        Assert.Equal("ANZ:TERM12605260000000", result.Reference);
+        Assert.IsType<EFTSendKeyRequest>(purchaseClient.Requests[1]);
+        Assert.IsType<EFTGetLastTransactionRequest>(getLastClient.LastRequest);
+    }
+
+    [Fact]
+    public async Task PurchaseAsync_recovers_approved_get_last_transaction_after_unknown_exception()
+    {
+        var purchaseClient = new FakeLinklyEftClient();
+        purchaseClient.ReadExceptions.Enqueue(new InvalidOperationException("Linkly parser failed."));
+        var getLastClient = new FakeLinklyEftClient(new EFTGetLastTransactionResponse
+        {
+            Success = true,
+            LastTransactionSuccess = true,
+            TxnRef = "TERM12605260000000",
+            AmtPurchase = 10m,
+            ResponseCode = "00",
+            ResponseText = "APPROVED"
+        });
+        var client = new LinklyTerminalClient(new QueueLinklyEftClientFactory(purchaseClient, getLastClient));
+
+        var result = await client.PurchaseAsync(10m, CreateSession(), CreateSettings());
+
+        Assert.True(result.Approved);
+        Assert.Equal("ANZ:TERM12605260000000", result.Reference);
+        Assert.IsType<EFTGetLastTransactionRequest>(getLastClient.LastRequest);
+    }
+
+    [Fact]
+    public async Task PurchaseAsync_returns_original_timeout_when_get_last_transaction_connect_throws()
+    {
+        var purchaseClient = new FakeLinklyEftClient { ThrowOnRead = true };
+        var getLastClient = new FakeLinklyEftClient
+        {
+            ConnectException = new NullReferenceException("Third-party Linkly connect failed.")
+        };
+        var client = new LinklyTerminalClient(new QueueLinklyEftClientFactory(purchaseClient, getLastClient));
+
+        var result = await client.PurchaseAsync(10m, CreateSession(), CreateSettings());
+
+        Assert.False(result.Approved);
+        Assert.Equal("ANZ Linkly transaction timed out.", result.Message);
+    }
+
+    [Fact]
     public async Task PurchaseAsync_fails_when_get_last_transaction_is_not_successful()
     {
         var purchaseClient = new FakeLinklyEftClient { ThrowOnRead = true };
@@ -173,8 +284,11 @@ public sealed class LinklyTerminalClientTests
     {
         private readonly Queue<ILinklyEftClient> _clients = new(clients);
 
+        public int CreatedCount { get; private set; }
+
         public ILinklyEftClient Create()
         {
+            CreatedCount++;
             return _clients.Dequeue();
         }
     }
@@ -185,25 +299,55 @@ public sealed class LinklyTerminalClientTests
 
         public EFTRequest? LastRequest { get; private set; }
 
+        public List<EFTRequest> Requests { get; } = [];
+
+        public Queue<Exception> ReadExceptions { get; } = new();
+
         public bool ConnectResult { get; init; } = true;
 
         public bool WriteResult { get; init; } = true;
 
+        public bool CancelRequestResult { get; init; } = true;
+
         public bool ThrowOnRead { get; init; }
+
+        public Exception? ConnectException { get; init; }
+
+        public Action? OnRead { get; init; }
 
         public Task<bool> ConnectAsync(string hostName, int hostPort, bool useSsl, bool useKeepAlive)
         {
+            if (ConnectException is not null)
+            {
+                throw ConnectException;
+            }
+
             return Task.FromResult(ConnectResult);
         }
 
         public Task<bool> WriteRequestAsync(EFTRequest request)
         {
             LastRequest = request;
+            Requests.Add(request);
             return Task.FromResult(WriteResult);
+        }
+
+        public Task<bool> SendCancelRequestAsync()
+        {
+            var request = new EFTSendKeyRequest { Key = EFTPOSKey.OkCancel };
+            LastRequest = request;
+            Requests.Add(request);
+            return Task.FromResult(CancelRequestResult);
         }
 
         public Task<EFTResponse?> ReadResponseAsync(CancellationToken cancellationToken)
         {
+            OnRead?.Invoke();
+            if (ReadExceptions.Count > 0)
+            {
+                throw ReadExceptions.Dequeue();
+            }
+
             if (ThrowOnRead)
             {
                 throw new OperationCanceledException(cancellationToken);

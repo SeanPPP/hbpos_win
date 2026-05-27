@@ -3,27 +3,33 @@
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:loc="clr-namespace:Hbpos.Client.Wpf.Localization"
         Width="460"
-        Height="320"
+        Height="380"
         WindowStyle="None"
         ResizeMode="NoResize"
         WindowStartupLocation="CenterScreen"
         ShowInTaskbar="False"
         Topmost="True"
         Background="White"
-        FontFamily="{StaticResource PosFontFamily}">
+        FontFamily="{StaticResource PosFontFamily}"
+        UseLayoutRounding="True">
     <Grid Background="White" Margin="10">
         <Border Background="White"
                 BorderBrush="#FFE3E7EF"
                 BorderThickness="1"
                 CornerRadius="18"
-                Padding="32">
+                Padding="28">
             <Grid>
             <Grid.RowDefinitions>
                 <RowDefinition Height="*" />
                 <RowDefinition Height="Auto" />
+                <RowDefinition Height="Auto" />
+                <RowDefinition Height="*" />
             </Grid.RowDefinitions>
 
-            <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center">
+            <StackPanel Grid.Row="1"
+                        HorizontalAlignment="Stretch"
+                        VerticalAlignment="Center"
+                        MaxWidth="364">
                 <Border Width="82"
                         Height="82"
                         Background="#FFE8F0FE"
@@ -36,30 +42,48 @@
                            Stretch="Uniform" />
                 </Border>
                 <TextBlock Text="{loc:Loc startup.title}"
-                           Margin="0,20,0,0"
+                           Margin="0,16,0,0"
                            FontSize="28"
                            FontWeight="Black"
                            Foreground="#FF1E293B"
-                           HorizontalAlignment="Center" />
+                           HorizontalAlignment="Stretch"
+                           TextAlignment="Center"
+                           TextWrapping="Wrap" />
                 <TextBlock Text="{loc:Loc startup.loading}"
-                           Margin="0,6,0,0"
+                           Margin="0,4,0,0"
                            FontSize="13"
                            Foreground="#FF64748B"
-                           HorizontalAlignment="Center" />
-                <TextBlock Text="{Binding ProgressText}"
-                           Margin="0,14,0,0"
-                           MinWidth="96"
-                           FontSize="26"
-                           FontWeight="SemiBold"
-                           Foreground="#FF2563EB"
-                           HorizontalAlignment="Center"
+                           HorizontalAlignment="Stretch"
                            TextAlignment="Center"
-                           TextWrapping="NoWrap" />
+                           TextWrapping="Wrap" />
+                <TextBlock Text="{Binding StatusText}"
+                           Margin="0,8,0,0"
+                           FontSize="13"
+                           Foreground="#FF475569"
+                           HorizontalAlignment="Stretch"
+                           TextAlignment="Center"
+                           TextWrapping="Wrap" />
+                <Border Margin="0,14,0,0"
+                        MinWidth="144"
+                        MinHeight="52"
+                        Padding="16,6"
+                        HorizontalAlignment="Center"
+                        Background="#0D2563EB"
+                        CornerRadius="12">
+                    <TextBlock Text="{Binding ProgressText}"
+                               FontSize="26"
+                               FontWeight="SemiBold"
+                               Foreground="#FF2563EB"
+                               HorizontalAlignment="Center"
+                               VerticalAlignment="Center"
+                               TextAlignment="Center"
+                               TextWrapping="NoWrap" />
+                </Border>
             </StackPanel>
 
-            <Border Grid.Row="1"
+            <Border Grid.Row="2"
                     Height="6"
-                    Margin="48,20,48,0"
+                    Margin="48,16,48,0"
                     Background="#FFE2E8F0"
                     CornerRadius="3"
                     ClipToBounds="True">

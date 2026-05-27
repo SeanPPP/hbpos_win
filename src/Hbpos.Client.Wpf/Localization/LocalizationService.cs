@@ -1,4 +1,4 @@
-using System.ComponentModel;
+﻿using System.ComponentModel;
 using System.Globalization;
 using System.Resources;
 
@@ -26,9 +26,11 @@ public sealed class LocalizationService : ILocalizationService
     public const string DefaultCultureName = "en-US";
     public const string ChineseCultureName = "zh-CN";
 
-    private static readonly ResourceManager ResourceManager = new(
-        "Hbpos.Client.Wpf.Resources.Strings",
-        typeof(LocalizationService).Assembly);
+    private static readonly ResourceManager[] ResourceManagers =
+    [
+        new("Hbpos.Client.Wpf.Resources.Strings", typeof(LocalizationService).Assembly),
+        new("Hbpos.Client.Wpf.Resources.SettingsStrings", typeof(LocalizationService).Assembly)
+    ];
 
     private static readonly IReadOnlyDictionary<string, CultureInfo> SupportedCultures =
         new[]
@@ -90,7 +92,22 @@ public sealed class LocalizationService : ILocalizationService
             return "[[]]";
         }
 
-        return ResourceManager.GetString(key, _currentCulture) ?? $"[[{key}]]";
+        foreach (var resourceManager in ResourceManagers)
+        {
+            try
+            {
+                var value = resourceManager.GetString(key, _currentCulture);
+                if (value is not null)
+                {
+                    return value;
+                }
+            }
+            catch (MissingManifestResourceException)
+            {
+            }
+        }
+
+        return $"[[{key}]]";
     }
 
     private static void ApplyThreadCulture(CultureInfo culture)

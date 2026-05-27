@@ -18,6 +18,12 @@ public partial class PaymentViewModel : ObservableObject
     private Guid? _pendingVoucherUploadOrderGuid;
     private decimal _pendingVoucherTenderedAmount;
     private decimal _pendingVoucherChangeAmount;
+    private CancellationTokenSource? _activeCardPaymentCts;
+    private CancellationTokenSource? _manuallyCancelledCardPaymentCts;
+    private bool _cardPaymentCancellationRequested;
+    private bool _awaitingLateCardResultAfterManualCancel;
+    private bool _discardLateCardResultAfterManualCancel;
+    private int _paymentEntryVersion;
 
     [ObservableProperty]
     private PosSessionState _session;
@@ -42,6 +48,12 @@ public partial class PaymentViewModel : ObservableObject
 
     [ObservableProperty]
     private int _pendingSyncCount;
+
+    [ObservableProperty]
+    private bool _isCardPaymentInProgress;
+
+    [ObservableProperty]
+    private bool _isPaymentInteractionLocked;
 
     public PaymentViewModel(
         PosCartService cart,
@@ -73,15 +85,18 @@ public partial class PaymentViewModel : ObservableObject
             _localization.CultureChanged += (_, _) => RaiseLocalizedProperties();
         }
 
-        NumberInputCommand = new RelayCommand<string>(AppendTenderAmount);
-        QuickCashCommand = new RelayCommand<decimal>(ApplyQuickCash);
-        SelectCashCommand = new RelayCommand(() => SelectedPaymentMethod = PaymentMethodKind.Cash);
-        SelectCardCommand = new RelayCommand(() => SelectedPaymentMethod = PaymentMethodKind.Card);
-        SelectVoucherCommand = new RelayCommand(() => SelectedPaymentMethod = PaymentMethodKind.Voucher);
+        NumberInputCommand = new RelayCommand<string>(AppendTenderAmount, _ => IsPaymentInteractionEnabled);
+        QuickCashCommand = new AsyncRelayCommand<QuickCashOption>(ApplyQuickCashAsync, CanApplyQuickCash);
+        SelectCashCommand = new AsyncRelayCommand(() => AddTenderByMethodAsync(PaymentMethodKind.Cash), () => CanAddTender(PaymentMethodKind.Cash, allowDefaultAmount: true));
+        SelectCardCommand = new AsyncRelayCommand(
+            () => AddTenderByMethodAsync(PaymentMethodKind.Card),
+            () => CanAddTender(PaymentMethodKind.Card, allowDefaultAmount: true),
+            AsyncRelayCommandOptions.AllowConcurrentExecutions);
+        SelectVoucherCommand = new AsyncRelayCommand(() => AddTenderByMethodAsync(PaymentMethodKind.Voucher), () => CanAddTender(PaymentMethodKind.Voucher, allowDefaultAmount: true));
         AddTenderCommand = new AsyncRelayCommand(AddTenderAsync, CanAddTender);
-        RemoveTenderCommand = new RelayCommand<PaymentTender>(RemoveTender);
+        RemoveTenderCommand = new RelayCommand<PaymentTender>(RemoveTender, CanRemoveTender);
         ConfirmPaymentCommand = new AsyncRelayCommand(ConfirmPaymentAsync, CanConfirmPayment);
-        CancelCommand = new RelayCommand(() => PaymentCancelled?.Invoke(this, EventArgs.Empty));
+        CancelCommand = new RelayCommand(CancelPayment, CanCancelPayment);
 
         RefreshCart();
     }
@@ -90,17 +105,17 @@ public partial class PaymentViewModel : ObservableObject
 
     public ObservableCollection<PaymentTender> PaymentTenders { get; } = [];
 
-    public IReadOnlyList<decimal> QuickCashAmounts => BuildQuickCashAmounts();
+    public IReadOnlyList<QuickCashOption> QuickCashAmounts => BuildQuickCashAmounts();
 
     public IRelayCommand<string> NumberInputCommand { get; }
 
-    public IRelayCommand<decimal> QuickCashCommand { get; }
+    public IAsyncRelayCommand<QuickCashOption> QuickCashCommand { get; }
 
-    public IRelayCommand SelectCashCommand { get; }
+    public IAsyncRelayCommand SelectCashCommand { get; }
 
-    public IRelayCommand SelectCardCommand { get; }
+    public IAsyncRelayCommand SelectCardCommand { get; }
 
-    public IRelayCommand SelectVoucherCommand { get; }
+    public IAsyncRelayCommand SelectVoucherCommand { get; }
 
     public IAsyncRelayCommand AddTenderCommand { get; }
 
@@ -142,6 +157,8 @@ public partial class PaymentViewModel : ObservableObject
 
     public string StatusMessage => _statusTextOverride ?? T(_statusKey);
 
+    public bool IsPaymentInteractionEnabled => !IsPaymentInteractionLocked;
+
     public decimal TotalAmount => _cart.TotalAmount;
 
     public decimal DiscountAmount => _cart.DiscountAmount;
@@ -160,26 +177,41 @@ public partial class PaymentViewModel : ObservableObject
 
     public bool IsVoucherSelected => SelectedPaymentMethod == PaymentMethodKind.Voucher;
 
+    public bool IsConfirmPaymentVisible => CanConfirmPayment();
+
     partial void OnTenderAmountTextChanged(string value)
     {
         RecalculateTenderSummary();
-        AddTenderCommand.NotifyCanExecuteChanged();
-        ConfirmPaymentCommand.NotifyCanExecuteChanged();
+        NotifyPaymentCommandStates();
     }
 
     partial void OnVoucherCodeTextChanged(string value)
     {
-        AddTenderCommand.NotifyCanExecuteChanged();
+        NotifyPaymentCommandStates();
     }
 
     partial void OnSelectedPaymentMethodChanged(PaymentMethodKind value)
     {
-        SyncTenderAmountToRemaining();
         AddTenderCommand.NotifyCanExecuteChanged();
+        SelectCashCommand.NotifyCanExecuteChanged();
+        SelectCardCommand.NotifyCanExecuteChanged();
+        SelectVoucherCommand.NotifyCanExecuteChanged();
+        QuickCashCommand.NotifyCanExecuteChanged();
         OnPropertyChanged(nameof(IsCashSelected));
         OnPropertyChanged(nameof(IsCardSelected));
         OnPropertyChanged(nameof(IsVoucherSelected));
         OnPropertyChanged(nameof(QuickCashAmounts));
+    }
+
+    partial void OnIsCardPaymentInProgressChanged(bool value)
+    {
+        NotifyPaymentCommandStates();
+    }
+
+    partial void OnIsPaymentInteractionLockedChanged(bool value)
+    {
+        OnPropertyChanged(nameof(IsPaymentInteractionEnabled));
+        NotifyPaymentCommandStates();
     }
 
     partial void OnSessionChanged(PosSessionState value)
@@ -193,6 +225,13 @@ public partial class PaymentViewModel : ObservableObject
         _pendingVoucherUploadOrderGuid = null;
         _pendingVoucherTenderedAmount = 0m;
         _pendingVoucherChangeAmount = 0m;
+        _paymentEntryVersion++;
+        _awaitingLateCardResultAfterManualCancel = false;
+        _discardLateCardResultAfterManualCancel = false;
+        CancelActiveCardPayment();
+        DetachCanceledActiveCardPayment();
+        IsCardPaymentInProgress = false;
+        IsPaymentInteractionLocked = false;
         PaymentTenders.Clear();
         VoucherCodeText = string.Empty;
         TenderAmountText = string.Empty;
@@ -200,6 +239,7 @@ public partial class PaymentViewModel : ObservableObject
         _statusTextOverride = null;
         SelectedPaymentMethod = PaymentMethodKind.Cash;
         RefreshCart();
+        SyncTenderAmountToRemaining(force: true);
         OnPropertyChanged(nameof(StatusMessage));
     }
 
@@ -211,13 +251,16 @@ public partial class PaymentViewModel : ObservableObject
         OnPropertyChanged(nameof(ActualAmount));
         RecalculateTenderSummary();
         RefreshCartValidationStatus();
-        SyncTenderAmountToRemaining();
-        AddTenderCommand.NotifyCanExecuteChanged();
-        ConfirmPaymentCommand.NotifyCanExecuteChanged();
+        NotifyPaymentCommandStates();
     }
 
     private void AppendTenderAmount(string? value)
     {
+        if (IsPaymentInteractionLocked || _activeCardPaymentCts is not null)
+        {
+            return;
+        }
+
         if (value == "Back")
         {
             TenderAmountText = TenderAmountText.Length > 0 ? TenderAmountText[..^1] : string.Empty;
@@ -238,51 +281,170 @@ public partial class PaymentViewModel : ObservableObject
         TenderAmountText += value;
     }
 
-    private void ApplyQuickCash(decimal amount)
+    private async Task ApplyQuickCashAsync(QuickCashOption? option)
     {
-        TenderAmountText = amount.ToString("0.00");
+        if (option is null)
+        {
+            return;
+        }
+
+        TenderAmountText = option.Amount.ToString("0.00");
+        await AddTenderByMethodAsync(PaymentMethodKind.Cash);
     }
 
     private async Task AddTenderAsync()
     {
+        await AddTenderByMethodAsync(SelectedPaymentMethod);
+    }
+
+    private async Task AddTenderByMethodAsync(PaymentMethodKind method)
+    {
+        if (IsPaymentInteractionLocked)
+        {
+            return;
+        }
+
         if (_pendingVoucherUploadOrderGuid is not null)
         {
             SetStatus("payment.status.retryVoucherUpload");
             return;
         }
 
-        if (TrySetBlockingCartIssueStatus())
+        if (HasTenderForMethod(method))
         {
-            AddTenderCommand.NotifyCanExecuteChanged();
-            ConfirmPaymentCommand.NotifyCanExecuteChanged();
+            SelectedPaymentMethod = method;
+            SetStatus("payment.status.duplicatePaymentMethod");
+            NotifyPaymentCommandStates();
             return;
         }
 
-        var result = await _workflowService.AddTenderAsync(
-            SelectedPaymentMethod,
-            Session,
-            ActualAmount,
-            PaymentTenders.ToList(),
-            TenderAmountText,
-            IsVoucherSelected ? VoucherCodeText : null);
+        if (TrySetBlockingCartIssueStatus())
+        {
+            NotifyPaymentCommandStates();
+            return;
+        }
+
+        SelectedPaymentMethod = method;
+        if (method == PaymentMethodKind.Voucher && string.IsNullOrWhiteSpace(VoucherCodeText))
+        {
+            SetStatus("payment.status.voucherCodeRequired");
+            NotifyPaymentCommandStates();
+            return;
+        }
+
+        var amountText = ResolveTenderAmountText(method);
+        PaymentTenderAttemptResult result;
+        CancellationTokenSource? cardPaymentCts = null;
+        var cardPaymentWasManuallyCancelled = false;
+        var paymentEntryVersion = _paymentEntryVersion;
+        try
+        {
+            if (method == PaymentMethodKind.Card)
+            {
+                _cardPaymentCancellationRequested = false;
+                _awaitingLateCardResultAfterManualCancel = false;
+                _discardLateCardResultAfterManualCancel = false;
+                _activeCardPaymentCts?.Dispose();
+                _activeCardPaymentCts = new CancellationTokenSource();
+                cardPaymentCts = _activeCardPaymentCts;
+                IsCardPaymentInProgress = true;
+                IsPaymentInteractionLocked = true;
+                SetStatus("payment.status.cardProcessing");
+            }
+
+            result = await _workflowService.AddTenderAsync(
+                method,
+                Session,
+                ActualAmount,
+                PaymentTenders.ToList(),
+                amountText,
+                method == PaymentMethodKind.Voucher ? VoucherCodeText : null,
+                method == PaymentMethodKind.Card ? cardPaymentCts?.Token ?? CancellationToken.None : CancellationToken.None);
+            if (method == PaymentMethodKind.Card && cardPaymentCts?.IsCancellationRequested == true)
+            {
+                cardPaymentWasManuallyCancelled = IsManualCardCancellation(cardPaymentCts);
+            }
+        }
+        catch (OperationCanceledException) when (method == PaymentMethodKind.Card)
+        {
+            if (IsCurrentPaymentEntry(paymentEntryVersion))
+            {
+                SetCardCancellationStatus(IsManualCardCancellation(cardPaymentCts));
+                ResetManualCardCancellationState();
+                NotifyPaymentCommandStates();
+            }
+
+            return;
+        }
+        finally
+        {
+            if (method == PaymentMethodKind.Card)
+            {
+                ClearActiveCardPayment(cardPaymentCts);
+            }
+        }
+
+        if (!IsCurrentPaymentEntry(paymentEntryVersion))
+        {
+            return;
+        }
+
+        if (method == PaymentMethodKind.Card &&
+            cardPaymentCts?.IsCancellationRequested == true &&
+            (!result.Succeeded || result.Tender is null))
+        {
+            if (cardPaymentWasManuallyCancelled && IsConfirmedCardCancellation(result.StatusMessage))
+            {
+                SetCardCancellationStatus(wasManuallyCancelled: true);
+            }
+            else if (!cardPaymentWasManuallyCancelled)
+            {
+                SetCardCancellationStatus(wasManuallyCancelled: false);
+            }
+            else
+            {
+                SetStatus(result.StatusKey, result.StatusMessage);
+            }
+
+            ResetManualCardCancellationState();
+            NotifyPaymentCommandStates();
+            return;
+        }
+
+        if (method == PaymentMethodKind.Card && _discardLateCardResultAfterManualCancel)
+        {
+            SetCardCancellationStatus(wasManuallyCancelled: true);
+            ResetManualCardCancellationState();
+            NotifyPaymentCommandStates();
+            return;
+        }
 
         if (!result.Succeeded || result.Tender is null)
         {
+            if (method == PaymentMethodKind.Card && TrySetCardTerminalFailureStatus(result))
+            {
+                ResetManualCardCancellationState();
+                NotifyPaymentCommandStates();
+                return;
+            }
+
             SetStatus(result.StatusKey, result.StatusMessage);
+            ResetManualCardCancellationState();
+            NotifyPaymentCommandStates();
             return;
         }
 
+        ResetManualCardCancellationState();
         PaymentTenders.Add(result.Tender);
-        if (IsVoucherSelected)
+        if (method == PaymentMethodKind.Voucher)
         {
             VoucherCodeText = string.Empty;
         }
 
+        TenderAmountText = string.Empty;
         RecalculateTenderSummary();
-        SyncTenderAmountToRemaining(force: true);
         SetStatus(result.StatusKey);
-        AddTenderCommand.NotifyCanExecuteChanged();
-        ConfirmPaymentCommand.NotifyCanExecuteChanged();
+        NotifyPaymentCommandStates();
     }
 
     private void RemoveTender(PaymentTender? tender)
@@ -300,14 +462,26 @@ public partial class PaymentViewModel : ObservableObject
 
         PaymentTenders.Remove(tender);
         RecalculateTenderSummary();
-        SyncTenderAmountToRemaining(force: true);
+        TenderAmountText = string.Empty;
         SetStatus("payment.status.tenderRemoved");
-        AddTenderCommand.NotifyCanExecuteChanged();
-        ConfirmPaymentCommand.NotifyCanExecuteChanged();
+        NotifyPaymentCommandStates();
+    }
+
+    private bool CanRemoveTender(PaymentTender? tender)
+    {
+        return tender is not null &&
+            IsPaymentInteractionEnabled &&
+            _activeCardPaymentCts is null &&
+            _pendingVoucherUploadOrderGuid is null;
     }
 
     private async Task ConfirmPaymentAsync()
     {
+        if (IsPaymentInteractionLocked)
+        {
+            return;
+        }
+
         if (TrySetBlockingCartIssueStatus())
         {
             ConfirmPaymentCommand.NotifyCanExecuteChanged();
@@ -320,18 +494,13 @@ public partial class PaymentViewModel : ObservableObject
             return;
         }
 
-        if (PaymentTenders.Count == 0 && CanAddImplicitCashTender())
-        {
-            await AddTenderAsync();
-        }
-
         if (PaymentTenders.Count == 0)
         {
             SetStatus("payment.status.noTendersAdded");
             return;
         }
 
-        if (TotalTendered < ActualAmount)
+        if (RemainingAmount > 0m)
         {
             SetStatus("payment.status.remainingBalance");
             return;
@@ -355,8 +524,7 @@ public partial class PaymentViewModel : ObservableObject
             _pendingVoucherTenderedAmount = ex.TenderedAmount;
             _pendingVoucherChangeAmount = ex.ChangeAmount;
             SetStatus("payment.status.uploadFailed", ex.Message);
-            ConfirmPaymentCommand.NotifyCanExecuteChanged();
-            AddTenderCommand.NotifyCanExecuteChanged();
+            NotifyPaymentCommandStates();
             return;
         }
 
@@ -404,33 +572,53 @@ public partial class PaymentViewModel : ObservableObject
 
     private bool CanAddTender()
     {
-        if (_pendingVoucherUploadOrderGuid is not null ||
+        return CanAddTender(SelectedPaymentMethod, allowDefaultAmount: false);
+    }
+
+    private bool CanAddTender(PaymentMethodKind method, bool allowDefaultAmount)
+    {
+        if (IsPaymentInteractionLocked ||
+            _activeCardPaymentCts is not null ||
+            _pendingVoucherUploadOrderGuid is not null ||
             _cart.IsEmpty || _cart.HasNonIntegerQuantity || _cart.HasReturnLine || _cart.HasZeroPriceLine)
         {
             return false;
         }
 
-        if (!_workflowService.TryParseTenderedAmount(TenderAmountText, out var amount) || amount <= 0m)
+        if (HasTenderForMethod(method))
         {
             return false;
         }
 
-        var remainingAmount = Math.Max(0m, RemainingAmount);
+        var amountText = ResolveTenderAmountText(method, allowDefaultAmount);
+        if (!_workflowService.TryParseTenderedAmount(amountText, out var amount) || amount <= 0m)
+        {
+            return false;
+        }
+
+        var remainingAmount = method == PaymentMethodKind.Cash
+            ? Math.Max(0m, RemainingAmount)
+            : GetExternalRemainingAmount();
         if (remainingAmount <= 0m)
         {
             return false;
         }
 
-        if (SelectedPaymentMethod == PaymentMethodKind.Voucher && string.IsNullOrWhiteSpace(VoucherCodeText))
+        if (method == PaymentMethodKind.Voucher && !allowDefaultAmount && string.IsNullOrWhiteSpace(VoucherCodeText))
         {
             return false;
         }
 
-        return SelectedPaymentMethod == PaymentMethodKind.Cash || amount <= remainingAmount;
+        return method == PaymentMethodKind.Cash || amount <= remainingAmount;
     }
 
     private bool CanConfirmPayment()
     {
+        if (IsPaymentInteractionLocked || _activeCardPaymentCts is not null)
+        {
+            return false;
+        }
+
         if (_pendingVoucherUploadOrderGuid is not null)
         {
             return true;
@@ -440,21 +628,8 @@ public partial class PaymentViewModel : ObservableObject
             !_cart.HasNonIntegerQuantity &&
             !_cart.HasReturnLine &&
             !_cart.HasZeroPriceLine &&
-            ((PaymentTenders.Count > 0 && TotalTendered >= ActualAmount) || CanAddImplicitCashTender());
-    }
-
-    private bool CanAddImplicitCashTender()
-    {
-        return SelectedPaymentMethod == PaymentMethodKind.Cash &&
-            PaymentTenders.Count == 0 &&
-            TryParseEnoughCashTender();
-    }
-
-    private bool TryParseEnoughCashTender()
-    {
-        return _workflowService.TryParseTenderedAmount(TenderAmountText, out var amount) &&
-            amount >= ActualAmount &&
-            ActualAmount > 0m;
+            PaymentTenders.Count > 0 &&
+            RemainingAmount <= 0m;
     }
 
     private void RefreshCartValidationStatus()
@@ -499,36 +674,21 @@ public partial class PaymentViewModel : ObservableObject
         TotalTendered = _workflowService.CalculateTenderedAmount(PaymentTenders.ToList());
         RemainingAmount = Math.Max(0m, _workflowService.CalculateRemainingAmount(ActualAmount, PaymentTenders.ToList()));
         ChangeDue = PaymentTenders.Count == 0 && _workflowService.TryParseTenderedAmount(TenderAmountText, out var tenderedAmount)
-            ? Math.Max(0m, decimal.Round(tenderedAmount - ActualAmount, 2, MidpointRounding.AwayFromZero))
+            ? Math.Max(0m, CashRoundingPolicy.CalculateCashChange(ActualAmount, [], tenderedAmount))
             : _workflowService.CalculateChange(PaymentTenders.ToList(), ActualAmount);
         OnPropertyChanged(nameof(QuickCashAmounts));
     }
 
-    private IReadOnlyList<decimal> BuildQuickCashAmounts()
+    private IReadOnlyList<QuickCashOption> BuildQuickCashAmounts()
     {
-        var amountDue = RemainingAmount > 0m ? RemainingAmount : ActualAmount;
-        if (amountDue <= 0m)
-        {
-            return [5m, 10m, 20m, 50m];
-        }
-
-        var rounded = Math.Ceiling(amountDue);
-        var amounts = new SortedSet<decimal>
-        {
-            amountDue,
-            rounded,
-            NextMultiple(amountDue, 5m),
-            NextMultiple(amountDue, 10m),
-            NextMultiple(amountDue, 20m),
-            NextMultiple(amountDue, 50m)
-        };
-
-        return amounts.Where(amount => amount >= amountDue).Take(6).ToList();
-    }
-
-    private static decimal NextMultiple(decimal value, decimal multiple)
-    {
-        return Math.Ceiling(value / multiple) * multiple;
+        return
+        [
+            new QuickCashOption(5m, "$5", "#FFC15AA1", "White"),
+            new QuickCashOption(10m, "$10", "#FF2E6BB8", "White"),
+            new QuickCashOption(20m, "$20", "#FFE45858", "White"),
+            new QuickCashOption(50m, "$50", "#FFF2C94C", "#FF2E1500"),
+            new QuickCashOption(100m, "$100", "#FF2F9E6D", "White")
+        ];
     }
 
     private void SyncTenderAmountToRemaining(bool force = false)
@@ -538,10 +698,189 @@ public partial class PaymentViewModel : ObservableObject
             return;
         }
 
-        var nextAmount = RemainingAmount > 0m
-            ? RemainingAmount
-            : ActualAmount > 0m ? ActualAmount : 0m;
-        TenderAmountText = nextAmount > 0m ? nextAmount.ToString("0.00") : string.Empty;
+        var amount = SelectedPaymentMethod == PaymentMethodKind.Cash
+            ? CashRoundingPolicy.GetCashPayableAmount(ActualAmount, PaymentTenders.ToList())
+            : GetExternalRemainingAmount();
+        TenderAmountText = amount > 0m ? amount.ToString("0.00") : string.Empty;
+    }
+
+    private bool CanApplyQuickCash(QuickCashOption? option)
+    {
+        return option is not null && CanAddTender(PaymentMethodKind.Cash, allowDefaultAmount: true);
+    }
+
+    private string ResolveTenderAmountText(PaymentMethodKind method)
+    {
+        return ResolveTenderAmountText(method, allowDefaultAmount: true);
+    }
+
+    private string ResolveTenderAmountText(PaymentMethodKind method, bool allowDefaultAmount)
+    {
+        if (!string.IsNullOrWhiteSpace(TenderAmountText) || !allowDefaultAmount)
+        {
+            return TenderAmountText;
+        }
+
+        var amount = method == PaymentMethodKind.Cash
+            ? CashRoundingPolicy.GetCashPayableAmount(ActualAmount, PaymentTenders.ToList())
+            : GetExternalRemainingAmount();
+        return amount > 0m ? amount.ToString("0.00") : string.Empty;
+    }
+
+    private decimal GetExternalRemainingAmount()
+    {
+        var tenderedAmount = PaymentTenders.Sum(tender => tender.Amount);
+        return Math.Max(0m, decimal.Round(ActualAmount - tenderedAmount, 2, MidpointRounding.AwayFromZero));
+    }
+
+    private bool HasTenderForMethod(PaymentMethodKind method)
+    {
+        return PaymentTenders.Any(tender => tender.Method == method);
+    }
+
+    private void CancelPayment()
+    {
+        if (IsCardPaymentInProgress)
+        {
+            CancelActiveCardPayment();
+            return;
+        }
+
+        if (_awaitingLateCardResultAfterManualCancel)
+        {
+            _discardLateCardResultAfterManualCancel = true;
+            NotifyPaymentCommandStates();
+            PaymentCancelled?.Invoke(this, EventArgs.Empty);
+            return;
+        }
+
+        PaymentCancelled?.Invoke(this, EventArgs.Empty);
+    }
+
+    private bool CanCancelPayment()
+    {
+        return IsCardPaymentInProgress ||
+            _awaitingLateCardResultAfterManualCancel ||
+            (IsPaymentInteractionEnabled && _activeCardPaymentCts is null);
+    }
+
+    private void CancelActiveCardPayment()
+    {
+        if (_activeCardPaymentCts is null || _activeCardPaymentCts.IsCancellationRequested)
+        {
+            return;
+        }
+
+        _cardPaymentCancellationRequested = true;
+        _awaitingLateCardResultAfterManualCancel = true;
+        _discardLateCardResultAfterManualCancel = false;
+        _manuallyCancelledCardPaymentCts = _activeCardPaymentCts;
+        _activeCardPaymentCts.Cancel();
+        IsCardPaymentInProgress = false;
+        IsPaymentInteractionLocked = false;
+        SetStatus("payment.status.cardCancelled");
+        NotifyPaymentCommandStates();
+    }
+
+    private void ClearActiveCardPayment(CancellationTokenSource? cardPaymentCts)
+    {
+        if (!ReferenceEquals(_activeCardPaymentCts, cardPaymentCts))
+        {
+            return;
+        }
+
+        IsCardPaymentInProgress = false;
+        IsPaymentInteractionLocked = false;
+        _activeCardPaymentCts?.Dispose();
+        _activeCardPaymentCts = null;
+        if (ReferenceEquals(_manuallyCancelledCardPaymentCts, cardPaymentCts))
+        {
+            _manuallyCancelledCardPaymentCts = null;
+        }
+
+        _cardPaymentCancellationRequested = false;
+    }
+
+    private void DetachCanceledActiveCardPayment()
+    {
+        if (_activeCardPaymentCts?.IsCancellationRequested != true)
+        {
+            return;
+        }
+
+        if (ReferenceEquals(_manuallyCancelledCardPaymentCts, _activeCardPaymentCts))
+        {
+            _manuallyCancelledCardPaymentCts = null;
+        }
+
+        _activeCardPaymentCts = null;
+        _cardPaymentCancellationRequested = false;
+    }
+
+    private void SetCardCancellationStatus(bool wasManuallyCancelled)
+    {
+        SetStatus(wasManuallyCancelled ? "payment.status.cardCancelled" : "payment.status.cardTimedOut");
+    }
+
+    private bool IsManualCardCancellation(CancellationTokenSource? cardPaymentCts)
+    {
+        return _cardPaymentCancellationRequested || ReferenceEquals(_manuallyCancelledCardPaymentCts, cardPaymentCts);
+    }
+
+    private bool TrySetCardTerminalFailureStatus(PaymentTenderAttemptResult result)
+    {
+        if (IsConfirmedCardCancellation(result.StatusMessage))
+        {
+            SetStatus("payment.status.cardCancelled");
+            return true;
+        }
+
+        if (IsTimeoutMessage(result.StatusMessage))
+        {
+            SetStatus("payment.status.cardTimedOut");
+            return true;
+        }
+
+        return false;
+    }
+
+    private static bool IsTimeoutMessage(string? message)
+    {
+        return !string.IsNullOrWhiteSpace(message) &&
+            (message.Contains("timed out", StringComparison.OrdinalIgnoreCase) ||
+             message.Contains("timeout", StringComparison.OrdinalIgnoreCase));
+    }
+
+    private static bool IsConfirmedCardCancellation(string? message)
+    {
+        return !string.IsNullOrWhiteSpace(message) &&
+            message.Contains("cancel", StringComparison.OrdinalIgnoreCase) &&
+            !message.Contains("could not be confirmed", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private bool IsCurrentPaymentEntry(int paymentEntryVersion)
+    {
+        return paymentEntryVersion == _paymentEntryVersion;
+    }
+
+    private void ResetManualCardCancellationState()
+    {
+        _awaitingLateCardResultAfterManualCancel = false;
+        _discardLateCardResultAfterManualCancel = false;
+    }
+
+    private void NotifyPaymentCommandStates()
+    {
+        NumberInputCommand.NotifyCanExecuteChanged();
+        AddTenderCommand.NotifyCanExecuteChanged();
+        SelectCashCommand.NotifyCanExecuteChanged();
+        SelectCardCommand.NotifyCanExecuteChanged();
+        SelectVoucherCommand.NotifyCanExecuteChanged();
+        QuickCashCommand.NotifyCanExecuteChanged();
+        RemoveTenderCommand.NotifyCanExecuteChanged();
+        ConfirmPaymentCommand.NotifyCanExecuteChanged();
+        CancelCommand.NotifyCanExecuteChanged();
+        OnPropertyChanged(nameof(IsConfirmPaymentVisible));
     }
 
     private void SetStatus(string key, string? statusText = null)
@@ -573,3 +912,5 @@ public partial class PaymentViewModel : ObservableObject
         OnPropertyChanged(nameof(StatusMessage));
     }
 }
+
+public sealed record QuickCashOption(decimal Amount, string Label, string NoteColorKey, string ForegroundColorKey);

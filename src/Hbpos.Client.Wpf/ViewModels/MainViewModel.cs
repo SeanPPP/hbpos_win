@@ -15,6 +15,7 @@ namespace Hbpos.Client.Wpf.ViewModels;
 public sealed partial class MainViewModel : ObservableObject
 {
     private const string DefaultTestStoreCode = "1002";
+    private static readonly TimeSpan StartupCatalogIndexLoadTimeout = TimeSpan.FromSeconds(30);
 
     private readonly LocalSellableItemIndex _priceIndex;
     private readonly PosCartService _cart;
@@ -56,6 +57,7 @@ public sealed partial class MainViewModel : ObservableObject
     private CancellationTokenSource? _startupCatalogIndexLoadCts;
     private Task? _deviceRegistrationStoreLoadTask;
     private Task? _posPostShowStartupTask;
+    private bool _customerDisplayPrewarmed;
     private Task? _startupCatalogIndexLoadTask;
     private AppStartupOptions? _startupOptions;
 
@@ -413,6 +415,12 @@ public sealed partial class MainViewModel : ObservableObject
     {
         _deviceRegistrationStoreLoadTask = null;
         _posPostShowStartupTask = null;
+        if (DeviceRegistration is not null)
+        {
+            DeviceRegistration.IsBusy = true;
+            DeviceRegistration.StatusMessage = "正在加载本地商品...";
+        }
+
         Session = Session with
         {
             StoreCode = args.StoreCode,
@@ -440,6 +448,7 @@ public sealed partial class MainViewModel : ObservableObject
         CachedPosTerminalScreen = null;
         ClearCashPaymentCache();
         CachedSpecialProductsScreen = null;
+        _customerDisplayPrewarmed = false;
         CancelStartupCatalogIndexLoad();
         IReadOnlyList<SellableItemDto> cachedItems = [];
         if (startupOptions.PreviewMode)
@@ -503,9 +512,9 @@ public sealed partial class MainViewModel : ObservableObject
         _clockTimer.Start();
         ApplySessionToScreens();
         PrepareCachedCashPaymentScreen();
+        PrewarmCustomerDisplay();
+        _ = BeginStartupCatalogIndexLoadAsync(startupOptions);
         NavigateFromStartup(startupOptions.InitialScreen);
-        BeginStartupCatalogIndexLoad(startupOptions);
-
     }
 
     private Task ContinuePosStartupAfterShownAsync(AppStartupOptions startupOptions, Window? owner)
@@ -559,7 +568,7 @@ public sealed partial class MainViewModel : ObservableObject
         }
     }
 
-    private void BeginStartupCatalogIndexLoad(AppStartupOptions startupOptions)
+    private async Task BeginStartupCatalogIndexLoadAsync(AppStartupOptions startupOptions)
     {
         if (startupOptions.PreviewMode)
         {
@@ -567,14 +576,36 @@ public sealed partial class MainViewModel : ObservableObject
         }
 
         _startupCatalogIndexLoadCts ??= new CancellationTokenSource();
+        _startupCatalogIndexLoadCts.CancelAfter(StartupCatalogIndexLoadTimeout);
         _startupCatalogIndexLoadTask ??= LoadStartupCatalogIndexAsync(_startupCatalogIndexLoadCts.Token);
+        var cts = _startupCatalogIndexLoadCts;
+        var loadTask = _startupCatalogIndexLoadTask;
+        try
+        {
+            await loadTask;
+        }
+        finally
+        {
+            if (ReferenceEquals(_startupCatalogIndexLoadCts, cts))
+            {
+                _startupCatalogIndexLoadCts = null;
+            }
+
+            if (ReferenceEquals(_startupCatalogIndexLoadTask, loadTask))
+            {
+                _startupCatalogIndexLoadTask = null;
+            }
+
+            cts.Dispose();
+        }
     }
 
     private void CancelStartupCatalogIndexLoad()
     {
-        _startupCatalogIndexLoadCts?.Cancel();
+        var cts = _startupCatalogIndexLoadCts;
         _startupCatalogIndexLoadCts = null;
         _startupCatalogIndexLoadTask = null;
+        cts?.Cancel();
     }
 
     partial void OnSessionChanged(PosSessionState value)
@@ -685,7 +716,7 @@ public sealed partial class MainViewModel : ObservableObject
     private DeviceRegistrationViewModel CreateDeviceRegistrationViewModel(AppStartupOptions startupOptions)
     {
         var viewModel = new DeviceRegistrationViewModel(_deviceRegistrationWorkflowService);
-        viewModel.DeviceActivated += async (_, args) => await ActivateDeviceAsync(args, startupOptions);
+        viewModel.DeviceActivatedAsync += (_, args) => ActivateDeviceAsync(args, startupOptions);
         viewModel.DeviceReregistered += (_, _) => ApplyDeviceReregistered();
         viewModel.CancelRequested += (_, _) => CancelDeviceReregistration();
         return viewModel;
@@ -951,6 +982,17 @@ public sealed partial class MainViewModel : ObservableObject
         return await _shellCatalogService.LoadLocalCatalogAsync(storeCode, cancellationToken);
     }
 
+    private void PrewarmCustomerDisplay()
+    {
+        if (_customerDisplayPrewarmed)
+        {
+            return;
+        }
+
+        _customerDisplayOrchestrator.Prewarm(CustomerDisplay, Session, _cart);
+        _customerDisplayPrewarmed = true;
+    }
+
     private async Task BeginDeviceReregistrationAsync()
     {
         if (_startupOptions?.PreviewMode == true)
@@ -1189,7 +1231,8 @@ public sealed partial class MainViewModel : ObservableObject
             _suspendedOrderService,
             _remoteOrderHistoryService,
             Session,
-            OnSuspendedOrderRecalledAsync);
+            OnSuspendedOrderRecalledAsync,
+            ShowPos);
     }
 
     private Task OnSuspendedOrderRecalledAsync()

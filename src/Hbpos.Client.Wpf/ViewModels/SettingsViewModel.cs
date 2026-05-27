@@ -15,6 +15,8 @@ public enum SettingsCategory
 
 public sealed partial class SettingsViewModel : ObservableObject
 {
+    private const string DefaultSquareDeviceCodeName = "HBPOS Terminal";
+
     private readonly ICardTerminalSetupService _setupService;
     private readonly ILocalizationService? _localization;
     private readonly Func<CancellationToken, Task>? _downloadCatalogAsync;
@@ -24,6 +26,13 @@ public sealed partial class SettingsViewModel : ObservableObject
     private string? _savedSquareLocationId;
     private string? _savedSquareDeviceId;
     private string? _devicesLoadedForLocationId;
+    private string _statusKey = "settings.status.ready";
+    private object[] _statusArgs = [];
+    private string? _statusOverride;
+    private string? _linklyTestStatusKey;
+    private object[] _linklyTestStatusArgs = [];
+    private string? _linklyTestStatusOverride;
+    private string _lastSquareDeviceCodeNameSuggestion = DefaultSquareDeviceCodeName;
 
     [ObservableProperty]
     private SettingsCategory _selectedCategory = SettingsCategory.DataMaintenance;
@@ -39,6 +48,12 @@ public sealed partial class SettingsViewModel : ObservableObject
 
     [ObservableProperty]
     private SquareDeviceOption? _selectedSquareDevice;
+
+    [ObservableProperty]
+    private SquareDeviceCodeOption? _selectedSquareDeviceCode;
+
+    [ObservableProperty]
+    private string _squareDeviceCodeNameText = DefaultSquareDeviceCodeName;
 
     [ObservableProperty]
     private string _linklyHostText = CardTerminalConfiguration.Default.LinklyHost;
@@ -85,17 +100,22 @@ public sealed partial class SettingsViewModel : ObservableObject
         LoadLocationsCommand = new AsyncRelayCommand(LoadLocationsAsync, CanLoadLocations);
         LoadDevicesCommand = new AsyncRelayCommand(LoadDevicesAsync, CanLoadDevices);
         SaveSquareCommand = new AsyncRelayCommand(SaveSquareAsync, CanSaveSquare);
+        LoadDeviceCodesCommand = new AsyncRelayCommand(LoadDeviceCodesAsync, CanLoadDeviceCodes);
+        CreateDeviceCodeCommand = new AsyncRelayCommand(CreateDeviceCodeAsync, CanCreateDeviceCode);
+        RefreshDeviceCodeStatusCommand = new AsyncRelayCommand(RefreshDeviceCodeStatusAsync, CanRefreshDeviceCodeStatus);
         TestLinklyCommand = new AsyncRelayCommand(TestLinklyAsync, CanTestLinkly);
         SaveLinklyCommand = new AsyncRelayCommand(SaveLinklyAsync, CanSaveLinkly);
         DownloadCatalogCommand = new AsyncRelayCommand(DownloadCatalogAsync, CanDownloadCatalog);
         ResetCatalogCommand = new AsyncRelayCommand(ResetCatalogAsync, CanResetCatalog);
         ReregisterDeviceCommand = new AsyncRelayCommand(ReregisterDeviceAsync, CanReregisterDevice);
-        StatusMessage = "Ready.";
+        RefreshLocalizedMessages();
     }
 
     public ObservableCollection<SquareLocationOption> SquareLocations { get; } = [];
 
     public ObservableCollection<SquareDeviceOption> SquareDevices { get; } = [];
+
+    public ObservableCollection<SquareDeviceCodeOption> SquareDeviceCodes { get; } = [];
 
     public IAsyncRelayCommand LoadCommand { get; }
 
@@ -104,6 +124,12 @@ public sealed partial class SettingsViewModel : ObservableObject
     public IAsyncRelayCommand LoadDevicesCommand { get; }
 
     public IAsyncRelayCommand SaveSquareCommand { get; }
+
+    public IAsyncRelayCommand LoadDeviceCodesCommand { get; }
+
+    public IAsyncRelayCommand CreateDeviceCodeCommand { get; }
+
+    public IAsyncRelayCommand RefreshDeviceCodeStatusCommand { get; }
 
     public IAsyncRelayCommand TestLinklyCommand { get; }
 
@@ -121,25 +147,25 @@ public sealed partial class SettingsViewModel : ObservableObject
 
     public IAsyncRelayCommand ReregisterDeviceCommand { get; }
 
-    public string ScreenTitleText => "Settings";
+    public string ScreenTitleText => T("settings.title");
 
     public string SettingsSubtitleText => SelectedCategory switch
     {
-        SettingsCategory.DataMaintenance => "Data maintenance",
-        SettingsCategory.PaymentTerminal => "Card terminal settings",
-        SettingsCategory.DeviceRegistration => "Device registration",
-        _ => "Settings"
+        SettingsCategory.DataMaintenance => T("settings.subtitle.dataMaintenance"),
+        SettingsCategory.PaymentTerminal => T("settings.subtitle.paymentTerminal"),
+        SettingsCategory.DeviceRegistration => T("settings.subtitle.deviceRegistration"),
+        _ => T("settings.title")
     };
 
-    public string CardTerminalTitleText => "Card Terminal Settings";
+    public string CardTerminalTitleText => T("settings.subtitle.paymentTerminal");
 
-    public string DataMaintenanceTitleText => "数据维护";
+    public string DataMaintenanceTitleText => T("settings.category.dataMaintenance");
 
-    public string DeviceRegistrationTitleText => "设备注册";
+    public string DeviceRegistrationTitleText => T("settings.category.deviceRegistration");
 
-    public string SquareTitleText => "Square";
+    public string SquareTitleText => T("settings.square.title");
 
-    public string LinklyTitleText => "ANZ Linkly";
+    public string LinklyTitleText => T("settings.linkly.title");
 
     public bool IsDataMaintenanceSelected => SelectedCategory == SettingsCategory.DataMaintenance;
 
@@ -148,8 +174,14 @@ public sealed partial class SettingsViewModel : ObservableObject
     public bool IsDeviceRegistrationSelected => SelectedCategory == SettingsCategory.DeviceRegistration;
 
     public string SquareTokenStatusText => HasSavedSquareToken
-        ? "Local encrypted token cached. HBPOS refreshes it when Square rejects it."
-        : "No local token cached. The next Square request will fetch one from HBPOS.";
+        ? T("settings.square.tokenStatus.cached")
+        : T("settings.square.tokenStatus.missing");
+
+    public bool IsSquareDeviceCodesSupported => !IsSandbox;
+
+    public bool IsSquareDeviceCodesUnsupported => !IsSquareDeviceCodesSupported;
+
+    public string SquareDeviceCodesUnavailableText => T("settings.square.deviceCodes.unsupported");
 
     public CardTerminalEnvironment SelectedEnvironment => IsSandbox
         ? CardTerminalEnvironment.Sandbox
@@ -169,89 +201,96 @@ public sealed partial class SettingsViewModel : ObservableObject
             _savedSquareDeviceId = _loadedConfiguration.SquareDeviceId;
             _devicesLoadedForLocationId = null;
             LinklyConnectionSucceeded = false;
-            LinklyTestStatusMessage = string.Empty;
+            ClearLinklyTestStatus();
             SquareLocations.Clear();
             SquareDevices.Clear();
+            ResetSquareDeviceCodes();
             SelectedSquareLocation = null;
             SelectedSquareDevice = null;
-            StatusMessage = "Settings loaded.";
-        });
+            LogSquareSettings(
+                $"load settings succeeded environment={SelectedEnvironment} hasSavedToken={HasSavedSquareToken} savedLocationId={LogValue(_savedSquareLocationId)} savedDeviceId={LogValue(_savedSquareDeviceId)}");
+            SetStatus("settings.status.loaded");
+        }, operationName: "load settings");
     }
 
     private async Task LoadLocationsAsync()
     {
+        LogSquareSettings($"load locations requested environment={SelectedEnvironment}");
         await RunBusyAsync(async () =>
         {
             SquareLocations.ReplaceWith(await _setupService.ListSquareLocationsAsync(
                 accessToken: null,
                 SelectedEnvironment));
             SquareDevices.Clear();
+            ResetSquareDeviceCodes();
             _devicesLoadedForLocationId = null;
             SelectedSquareDevice = null;
             SelectedSquareLocation = SquareLocations.FirstOrDefault(location =>
                 string.Equals(location.Id, _savedSquareLocationId, StringComparison.OrdinalIgnoreCase));
             HasSavedSquareToken = true;
-            StatusMessage = SquareLocations.Count == 0
-                ? "No Square locations returned."
-                : $"Loaded {SquareLocations.Count} Square locations.";
-        });
+            LogSquareSettings(
+                $"load locations succeeded environment={SelectedEnvironment} count={SquareLocations.Count} selectedLocationId={LogValue(SelectedSquareLocation?.Id)}");
+            SetStatus(
+                SquareLocations.Count == 0 ? "settings.status.noSquareLocations" : "settings.status.squareLocationsLoaded",
+                SquareLocations.Count);
+        }, operationName: "load square locations");
     }
 
     private async Task LoadDevicesAsync()
     {
         if (SelectedSquareLocation is null)
         {
-            StatusMessage = "Select a Square location first.";
+            SetStatus("settings.status.selectSquareLocation");
             return;
         }
 
+        LogSquareSettings($"load devices requested environment={SelectedEnvironment} locationId={LogValue(SelectedSquareLocation.Id)}");
         await RunBusyAsync(async () =>
         {
-            SquareDevices.ReplaceWith(await _setupService.ListSquareDevicesAsync(
-                accessToken: null,
-                SelectedEnvironment,
-                SelectedSquareLocation.Id));
-            _devicesLoadedForLocationId = SelectedSquareLocation.Id;
-            SelectedSquareDevice = SquareDevices.FirstOrDefault(device =>
-                string.Equals(device.Id, _savedSquareDeviceId, StringComparison.OrdinalIgnoreCase));
+            await LoadSquareDevicesForLocationAsync(SelectedSquareLocation.Id, selectSavedDevice: true);
             HasSavedSquareToken = true;
-            StatusMessage = SquareDevices.Count == 0
-                ? "No Square devices returned for this location."
-                : $"Loaded {SquareDevices.Count} Square devices.";
-        });
+            LogSquareSettings(
+                $"load devices succeeded environment={SelectedEnvironment} locationId={LogValue(SelectedSquareLocation.Id)} count={SquareDevices.Count} selectedDeviceId={LogValue(SelectedSquareDevice?.Id)}");
+            SetStatus(
+                SquareDevices.Count == 0 ? "settings.status.noSquareDevices" : "settings.status.squareDevicesLoaded",
+                SquareDevices.Count);
+        }, operationName: "load square devices");
     }
 
     private async Task SaveSquareAsync()
     {
         if (SelectedSquareLocation is null)
         {
-            StatusMessage = "Select a Square location first.";
+            SetStatus("settings.status.selectSquareLocation");
             return;
         }
 
         if (SelectedSquareDevice is null)
         {
-            StatusMessage = "Select a Square device first.";
+            SetStatus("settings.status.selectSquareDevice");
             return;
         }
 
         if (!SquareLocations.Any(location => string.Equals(location.Id, SelectedSquareLocation.Id, StringComparison.OrdinalIgnoreCase)) ||
-            !SquareDevices.Any(device => string.Equals(device.Id, SelectedSquareDevice.Id, StringComparison.OrdinalIgnoreCase)) ||
+            !SquareDevices.Any(device => SquareDeviceIdNormalizer.AreEquivalent(device.Id, SelectedSquareDevice.Id)) ||
             !string.Equals(_devicesLoadedForLocationId, SelectedSquareLocation.Id, StringComparison.OrdinalIgnoreCase))
         {
-            StatusMessage = "Load Square locations and devices before saving.";
+            SetStatus("settings.status.loadSquareBeforeSave");
             return;
         }
 
+        LogSquareSettings(
+            $"save square requested environment={SelectedEnvironment} locationId={LogValue(SelectedSquareLocation.Id)} deviceId={LogValue(SelectedSquareDevice.Id)}");
         await RunBusyAsync(async () =>
         {
+            var savedDeviceId = SquareDeviceIdNormalizer.NormalizeForTerminalCheckout(SelectedSquareDevice.Id);
             var configuration = new CardTerminalConfiguration(
                 CardProcessorKind.Square,
                 SelectedEnvironment,
                 NormalizeHost(LinklyHostText),
                 ParsePort(LinklyPortText),
                 SelectedSquareLocation.Id,
-                SelectedSquareDevice.Id,
+                savedDeviceId,
                 HasSavedSquareToken,
                 ParseTimeoutSeconds(TimeoutSecondsText));
 
@@ -262,8 +301,110 @@ public sealed partial class SettingsViewModel : ObservableObject
             _savedSquareLocationId = configuration.SquareLocationId;
             _savedSquareDeviceId = configuration.SquareDeviceId;
             HasSavedSquareToken = configuration.HasProtectedSquareAccessToken;
-            StatusMessage = "Square terminal settings saved.";
-        });
+            LogSquareSettings(
+                $"save square succeeded environment={SelectedEnvironment} locationId={LogValue(configuration.SquareLocationId)} selectedDeviceId={LogValue(SelectedSquareDevice.Id)} savedDeviceId={LogValue(configuration.SquareDeviceId)}");
+            SetStatus("settings.status.squareSaved", SelectedSquareDevice.Name);
+        }, operationName: "save square settings");
+    }
+
+    private async Task LoadDeviceCodesAsync()
+    {
+        if (SelectedSquareLocation is null)
+        {
+            SetStatus("settings.status.selectSquareLocation");
+            return;
+        }
+
+        LogSquareSettings($"load device codes requested environment={SelectedEnvironment} locationId={LogValue(SelectedSquareLocation.Id)}");
+        await RunBusyAsync(async () =>
+        {
+            SquareDeviceCodes.ReplaceWith(await _setupService.ListSquareDeviceCodesAsync(
+                accessToken: null,
+                SelectedEnvironment,
+                SelectedSquareLocation.Id));
+            SelectedSquareDeviceCode = SquareDeviceCodes.FirstOrDefault(deviceCode =>
+                SquareDeviceIdNormalizer.AreEquivalent(deviceCode.DeviceId, _savedSquareDeviceId));
+            HasSavedSquareToken = true;
+            SuggestSquareDeviceCodeName(force: false);
+            LogSquareSettings(
+                $"load device codes succeeded environment={SelectedEnvironment} locationId={LogValue(SelectedSquareLocation.Id)} count={SquareDeviceCodes.Count} selectedDeviceCodeId={LogValue(SelectedSquareDeviceCode?.Id)}");
+            SetStatus("settings.status.squareDeviceCodesLoaded", SquareDeviceCodes.Count);
+        }, operationName: "load square device codes");
+    }
+
+    private async Task CreateDeviceCodeAsync()
+    {
+        if (SelectedSquareLocation is null)
+        {
+            SetStatus("settings.status.selectSquareLocation");
+            return;
+        }
+
+        if (string.IsNullOrWhiteSpace(SquareDeviceCodeNameText))
+        {
+            SetStatus("settings.status.squareDeviceCodeNameRequired");
+            return;
+        }
+
+        LogSquareSettings(
+            $"create device code requested environment={SelectedEnvironment} locationId={LogValue(SelectedSquareLocation.Id)} name={LogValue(SquareDeviceCodeNameText.Trim())}");
+        await RunBusyAsync(async () =>
+        {
+            var created = await _setupService.CreateSquareDeviceCodeAsync(
+                accessToken: null,
+                SelectedEnvironment,
+                SelectedSquareLocation.Id,
+                SquareDeviceCodeNameText);
+            SquareDeviceCodes.Insert(0, created);
+            SelectedSquareDeviceCode = created;
+            HasSavedSquareToken = true;
+            LogSquareSettings(
+                $"create device code succeeded environment={SelectedEnvironment} locationId={LogValue(SelectedSquareLocation.Id)} deviceCodeId={created.Id} status={created.Status}");
+            SetStatus("settings.status.squareDeviceCodeCreated", created.Code, created.Name);
+        }, operationName: "create square device code");
+    }
+
+    private async Task RefreshDeviceCodeStatusAsync()
+    {
+        if (SelectedSquareDeviceCode is null)
+        {
+            SetStatus("settings.status.selectSquareDeviceCode");
+            return;
+        }
+
+        LogSquareSettings(
+            $"refresh device code requested environment={SelectedEnvironment} deviceCodeId={LogValue(SelectedSquareDeviceCode.Id)}");
+        await RunBusyAsync(async () =>
+        {
+            var refreshed = await _setupService.GetSquareDeviceCodeAsync(
+                accessToken: null,
+                SelectedEnvironment,
+                SelectedSquareDeviceCode.Id);
+            ReplaceSquareDeviceCode(refreshed);
+            SelectedSquareDeviceCode = refreshed;
+            HasSavedSquareToken = true;
+
+            if (string.Equals(refreshed.Status, "PAIRED", StringComparison.OrdinalIgnoreCase) &&
+                !string.IsNullOrWhiteSpace(refreshed.DeviceId) &&
+                SelectedSquareLocation is not null)
+            {
+                await LoadSquareDevicesForLocationAsync(SelectedSquareLocation.Id, selectSavedDevice: false);
+                SelectedSquareDevice = SquareDevices.FirstOrDefault(device =>
+                    SquareDeviceIdNormalizer.AreEquivalent(device.Id, refreshed.DeviceId));
+
+                if (SelectedSquareDevice is not null)
+                {
+                    LogSquareSettings(
+                        $"refresh device code paired environment={SelectedEnvironment} deviceCodeId={refreshed.Id} squareDeviceId={LogValue(refreshed.DeviceId)} selectedDeviceId={LogValue(SelectedSquareDevice.Id)}");
+                    SetStatus("settings.status.squareDeviceCodePaired", SelectedSquareDevice.Name);
+                    return;
+                }
+            }
+
+            LogSquareSettings(
+                $"refresh device code completed environment={SelectedEnvironment} deviceCodeId={refreshed.Id} status={refreshed.Status} squareDeviceId={LogValue(refreshed.DeviceId)}");
+            SetStatus("settings.status.squareDeviceCodeNotPaired", refreshed.Status);
+        }, operationName: "refresh square device code");
     }
 
     private async Task TestLinklyAsync()
@@ -271,15 +412,26 @@ public sealed partial class SettingsViewModel : ObservableObject
         await RunBusyAsync(async () =>
         {
             LinklyConnectionSucceeded = false;
+            ClearLinklyTestStatus();
             var result = await _setupService.TestLinklyConnectionAsync(
                 NormalizeHost(LinklyHostText),
                 ParsePort(LinklyPortText),
                 TimeSpan.FromSeconds(ParseTimeoutSeconds(TimeoutSecondsText)));
             LinklyConnectionSucceeded = result.Succeeded;
-            LinklyTestStatusMessage = result.Message ?? (result.Succeeded
-                ? "Linkly EFT-Client connection succeeded."
-                : "Linkly EFT-Client connection failed.");
-            StatusMessage = LinklyTestStatusMessage;
+
+            if (string.IsNullOrWhiteSpace(result.Message))
+            {
+                var key = result.Succeeded
+                    ? "settings.status.linklyTestSuccess"
+                    : "settings.status.linklyTestFailed";
+                SetLinklyTestStatus(key);
+                SetStatus(key);
+            }
+            else
+            {
+                SetLinklyTestStatusOverride(result.Message);
+                SetStatusOverride(result.Message);
+            }
         });
     }
 
@@ -287,7 +439,7 @@ public sealed partial class SettingsViewModel : ObservableObject
     {
         if (!LinklyConnectionSucceeded)
         {
-            StatusMessage = "Test Linkly connection before enabling ANZ Linkly.";
+            SetStatus("settings.status.testLinklyBeforeSave");
             return;
         }
 
@@ -303,7 +455,7 @@ public sealed partial class SettingsViewModel : ObservableObject
 
             await _setupService.SaveLinklyAsync(configuration);
             _loadedConfiguration = configuration;
-            StatusMessage = "ANZ Linkly terminal settings saved.";
+            SetStatus("settings.status.linklySaved");
         });
     }
 
@@ -311,15 +463,15 @@ public sealed partial class SettingsViewModel : ObservableObject
     {
         if (_downloadCatalogAsync is null)
         {
-            StatusMessage = "Catalog download service is not configured.";
+            SetStatus("settings.status.catalogDownloadNotConfigured");
             return;
         }
 
         await RunBusyAsync(async () =>
         {
-            StatusMessage = "Downloading catalog data...";
+            SetStatus("settings.status.catalogDownloading");
             await _downloadCatalogAsync(cancellationToken);
-            StatusMessage = "Catalog data download completed.";
+            SetStatus("settings.status.catalogDownloadCompleted");
         });
     }
 
@@ -327,15 +479,15 @@ public sealed partial class SettingsViewModel : ObservableObject
     {
         if (_resetCatalogAsync is null)
         {
-            StatusMessage = "Catalog reset service is not configured.";
+            SetStatus("settings.status.catalogResetNotConfigured");
             return;
         }
 
         await RunBusyAsync(async () =>
         {
-            StatusMessage = "Resetting catalog data...";
+            SetStatus("settings.status.catalogResetting");
             await _resetCatalogAsync(cancellationToken);
-            StatusMessage = "Catalog data reset completed.";
+            SetStatus("settings.status.catalogResetCompleted");
         });
     }
 
@@ -343,13 +495,13 @@ public sealed partial class SettingsViewModel : ObservableObject
     {
         if (_reregisterDeviceAsync is null)
         {
-            StatusMessage = "Device reregistration service is not configured.";
+            SetStatus("settings.status.reregisterNotConfigured");
             return;
         }
 
         await RunBusyAsync(async () =>
         {
-            StatusMessage = "Starting device reregistration...";
+            SetStatus("settings.status.reregisterStarting");
             await _reregisterDeviceAsync();
         });
     }
@@ -372,6 +524,24 @@ public sealed partial class SettingsViewModel : ObservableObject
             SquareLocations.Any(location => string.Equals(location.Id, SelectedSquareLocation.Id, StringComparison.OrdinalIgnoreCase)) &&
             SquareDevices.Any(device => string.Equals(device.Id, SelectedSquareDevice.Id, StringComparison.OrdinalIgnoreCase)) &&
             string.Equals(_devicesLoadedForLocationId, SelectedSquareLocation.Id, StringComparison.OrdinalIgnoreCase);
+    }
+
+    private bool CanLoadDeviceCodes()
+    {
+        return !IsBusy && IsSquareDeviceCodesSupported && SelectedSquareLocation is not null;
+    }
+
+    private bool CanCreateDeviceCode()
+    {
+        return !IsBusy &&
+            IsSquareDeviceCodesSupported &&
+            SelectedSquareLocation is not null &&
+            !string.IsNullOrWhiteSpace(SquareDeviceCodeNameText);
+    }
+
+    private bool CanRefreshDeviceCodeStatus()
+    {
+        return !IsBusy && IsSquareDeviceCodesSupported && SelectedSquareDeviceCode is not null;
     }
 
     private bool CanTestLinkly()
@@ -399,7 +569,7 @@ public sealed partial class SettingsViewModel : ObservableObject
         return !IsBusy && _reregisterDeviceAsync is not null;
     }
 
-    private async Task RunBusyAsync(Func<Task> action)
+    private async Task RunBusyAsync(Func<Task> action, string? operationName = null)
     {
         IsBusy = true;
         try
@@ -408,11 +578,19 @@ public sealed partial class SettingsViewModel : ObservableObject
         }
         catch (OperationCanceledException)
         {
-            StatusMessage = "Operation canceled.";
+            if (!string.IsNullOrWhiteSpace(operationName))
+            {
+                LogSquareSettings($"{operationName} canceled");
+            }
+            SetStatus("settings.status.operationCanceled");
         }
         catch (Exception ex)
         {
-            StatusMessage = ex.Message;
+            if (!string.IsNullOrWhiteSpace(operationName))
+            {
+                LogSquareSettings($"{operationName} failed message={LogValue(ex.Message)}");
+            }
+            SetStatusOverride(ex.Message);
         }
         finally
         {
@@ -430,6 +608,8 @@ public sealed partial class SettingsViewModel : ObservableObject
         OnPropertyChanged(nameof(SquareTitleText));
         OnPropertyChanged(nameof(LinklyTitleText));
         OnPropertyChanged(nameof(SquareTokenStatusText));
+        OnPropertyChanged(nameof(SquareDeviceCodesUnavailableText));
+        RefreshLocalizedMessages();
     }
 
     partial void OnSelectedCategoryChanged(SettingsCategory value)
@@ -442,13 +622,18 @@ public sealed partial class SettingsViewModel : ObservableObject
 
     partial void OnIsSandboxChanged(bool value)
     {
+        LogSquareSettings($"environment changed environment={SelectedEnvironment}");
         SquareLocations.Clear();
         SquareDevices.Clear();
+        ResetSquareDeviceCodes();
         _devicesLoadedForLocationId = null;
         SelectedSquareLocation = null;
         SelectedSquareDevice = null;
         RaiseCommandStates();
         OnPropertyChanged(nameof(SelectedEnvironment));
+        OnPropertyChanged(nameof(IsSquareDeviceCodesSupported));
+        OnPropertyChanged(nameof(IsSquareDeviceCodesUnsupported));
+        OnPropertyChanged(nameof(SquareDeviceCodesUnavailableText));
     }
 
     partial void OnHasSavedSquareTokenChanged(bool value)
@@ -459,6 +644,7 @@ public sealed partial class SettingsViewModel : ObservableObject
 
     partial void OnSelectedSquareLocationChanged(SquareLocationOption? value)
     {
+        LogSquareSettings($"selected location changed locationId={LogValue(value?.Id)}");
         if (!string.Equals(_devicesLoadedForLocationId, value?.Id, StringComparison.OrdinalIgnoreCase))
         {
             SquareDevices.Clear();
@@ -466,10 +652,33 @@ public sealed partial class SettingsViewModel : ObservableObject
             _devicesLoadedForLocationId = null;
         }
 
+        ResetSquareDeviceCodes();
         RaiseCommandStates();
     }
 
     partial void OnSelectedSquareDeviceChanged(SquareDeviceOption? value)
+    {
+        SuggestSquareDeviceCodeName(force: false);
+        LogSquareSettings($"selected device changed deviceId={LogValue(value?.Id)}");
+        if (!IsBusy &&
+            value is not null &&
+            SelectedSquareLocation is not null &&
+            string.Equals(_devicesLoadedForLocationId, SelectedSquareLocation.Id, StringComparison.OrdinalIgnoreCase) &&
+            !SquareDeviceIdNormalizer.AreEquivalent(value.Id, _savedSquareDeviceId))
+        {
+            SetStatus("settings.status.squareDeviceSwitchPendingSave", value.Name);
+        }
+
+        RaiseCommandStates();
+    }
+
+    partial void OnSelectedSquareDeviceCodeChanged(SquareDeviceCodeOption? value)
+    {
+        LogSquareSettings($"selected device code changed deviceCodeId={LogValue(value?.Id)} status={LogValue(value?.Status)}");
+        RaiseCommandStates();
+    }
+
+    partial void OnSquareDeviceCodeNameTextChanged(string value)
     {
         RaiseCommandStates();
     }
@@ -504,6 +713,9 @@ public sealed partial class SettingsViewModel : ObservableObject
         LoadLocationsCommand.NotifyCanExecuteChanged();
         LoadDevicesCommand.NotifyCanExecuteChanged();
         SaveSquareCommand.NotifyCanExecuteChanged();
+        LoadDeviceCodesCommand.NotifyCanExecuteChanged();
+        CreateDeviceCodeCommand.NotifyCanExecuteChanged();
+        RefreshDeviceCodeStatusCommand.NotifyCanExecuteChanged();
         TestLinklyCommand.NotifyCanExecuteChanged();
         SaveLinklyCommand.NotifyCanExecuteChanged();
         DownloadCatalogCommand.NotifyCanExecuteChanged();
@@ -514,7 +726,67 @@ public sealed partial class SettingsViewModel : ObservableObject
     private void ResetLinklyConnectionTest()
     {
         LinklyConnectionSucceeded = false;
+        ClearLinklyTestStatus();
+    }
+
+    private void SetStatus(string key, params object[] args)
+    {
+        _statusKey = key;
+        _statusArgs = args;
+        _statusOverride = null;
+        StatusMessage = Format(key, args);
+    }
+
+    private void SetStatusOverride(string statusText)
+    {
+        _statusOverride = statusText;
+        StatusMessage = statusText;
+    }
+
+    private void SetLinklyTestStatus(string key, params object[] args)
+    {
+        _linklyTestStatusKey = key;
+        _linklyTestStatusArgs = args;
+        _linklyTestStatusOverride = null;
+        LinklyTestStatusMessage = Format(key, args);
+    }
+
+    private void SetLinklyTestStatusOverride(string statusText)
+    {
+        _linklyTestStatusOverride = statusText;
+        LinklyTestStatusMessage = statusText;
+    }
+
+    private void ClearLinklyTestStatus()
+    {
+        _linklyTestStatusKey = null;
+        _linklyTestStatusArgs = [];
+        _linklyTestStatusOverride = null;
         LinklyTestStatusMessage = string.Empty;
+    }
+
+    private void RefreshLocalizedMessages()
+    {
+        StatusMessage = _statusOverride ?? Format(_statusKey, _statusArgs);
+        LinklyTestStatusMessage = _linklyTestStatusOverride
+            ?? (_linklyTestStatusKey is null ? string.Empty : Format(_linklyTestStatusKey, _linklyTestStatusArgs));
+    }
+
+    private string T(string key)
+    {
+        return _localization?.T(key) ?? LocalizationResourceProvider.Instance[key];
+    }
+
+    private string Format(string key, params object[] args)
+    {
+        var template = T(key);
+        if (args.Length == 0)
+        {
+            return template;
+        }
+
+        var culture = _localization?.CurrentCulture ?? System.Globalization.CultureInfo.CurrentCulture;
+        return string.Format(culture, template, args);
     }
 
     private static string NormalizeHost(string? host)
@@ -534,5 +806,70 @@ public sealed partial class SettingsViewModel : ObservableObject
         return int.TryParse(text, out var seconds) && seconds > 0
             ? seconds
             : CardTerminalConfiguration.Default.TerminalTimeoutSeconds;
+    }
+
+    private async Task LoadSquareDevicesForLocationAsync(string locationId, bool selectSavedDevice)
+    {
+        SquareDevices.ReplaceWith(await _setupService.ListSquareDevicesAsync(
+            accessToken: null,
+            SelectedEnvironment,
+            locationId));
+        _devicesLoadedForLocationId = locationId;
+        SelectedSquareDevice = selectSavedDevice
+            ? SquareDevices.FirstOrDefault(device =>
+                SquareDeviceIdNormalizer.AreEquivalent(device.Id, _savedSquareDeviceId))
+            : SelectedSquareDevice is not null
+                ? SquareDevices.FirstOrDefault(device =>
+                    SquareDeviceIdNormalizer.AreEquivalent(device.Id, SelectedSquareDevice.Id))
+                : null;
+    }
+
+    private void ResetSquareDeviceCodes()
+    {
+        SquareDeviceCodes.Clear();
+        SelectedSquareDeviceCode = null;
+        SuggestSquareDeviceCodeName(force: true);
+    }
+
+    private void ReplaceSquareDeviceCode(SquareDeviceCodeOption updated)
+    {
+        for (var index = 0; index < SquareDeviceCodes.Count; index++)
+        {
+            if (string.Equals(SquareDeviceCodes[index].Id, updated.Id, StringComparison.OrdinalIgnoreCase))
+            {
+                SquareDeviceCodes[index] = updated;
+                return;
+            }
+        }
+
+        SquareDeviceCodes.Insert(0, updated);
+    }
+
+    private void SuggestSquareDeviceCodeName(bool force)
+    {
+        var suggestion = SelectedSquareDevice?.Name?.Trim();
+        if (string.IsNullOrWhiteSpace(suggestion))
+        {
+            suggestion = DefaultSquareDeviceCodeName;
+        }
+
+        if (force ||
+            string.IsNullOrWhiteSpace(SquareDeviceCodeNameText) ||
+            string.Equals(SquareDeviceCodeNameText, _lastSquareDeviceCodeNameSuggestion, StringComparison.Ordinal))
+        {
+            SquareDeviceCodeNameText = suggestion;
+        }
+
+        _lastSquareDeviceCodeNameSuggestion = suggestion;
+    }
+
+    private static void LogSquareSettings(string message)
+    {
+        ConsoleLog.Write("Square", $"settings ui {message}");
+    }
+
+    private static string LogValue(string? value)
+    {
+        return string.IsNullOrWhiteSpace(value) ? "<null>" : value;
     }
 }

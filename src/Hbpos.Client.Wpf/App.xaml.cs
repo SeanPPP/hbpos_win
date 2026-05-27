@@ -13,6 +13,7 @@ public partial class App : Application
     private const int SplashShownPercent = 10;
     private const int HostBuiltPercent = 30;
     private const int HostStartedPercent = 50;
+    private const int MainWindowPreparingPercent = 65;
     private const int MainWindowInitializedPercent = 85;
     private const int StartupCompletedPercent = 100;
 
@@ -37,7 +38,7 @@ public partial class App : Application
         if (!startupOptions.PreviewMode)
         {
             _startupProgressState = new StartupProgressState();
-            _startupProgressState.SetStage(SplashShownPercent);
+            _startupProgressState.SetStage(SplashShownPercent, "正在启动...");
             _startupSplashWindow = new StartupSplashWindow(_startupProgressState);
             _startupSplashWindow.Show();
             await Dispatcher.InvokeAsync(static () => { }, DispatcherPriority.Render);
@@ -51,15 +52,16 @@ public partial class App : Application
                     services.AddHbposClientServices(startupOptions);
                 })
                 .Build();
-            _startupProgressState?.SetStage(HostBuiltPercent);
+            _startupProgressState?.SetStage(HostBuiltPercent, "正在初始化服务...");
 
             await _host.StartAsync();
             LocalizationResourceProvider.Instance.Configure(_host.Services.GetRequiredService<ILocalizationService>());
-            _startupProgressState?.SetStage(HostStartedPercent);
+            _startupProgressState?.SetStage(HostStartedPercent, "正在启动本地组件...");
 
             var mainWindow = _host.Services.GetRequiredService<MainWindow>();
+            _startupProgressState?.SetStage(MainWindowPreparingPercent, "正在加载本地商品...");
             await mainWindow.InitializeForStartupAsync();
-            _startupProgressState?.SetStage(MainWindowInitializedPercent);
+            _startupProgressState?.SetStage(MainWindowInitializedPercent, "正在准备主界面...");
             FinishStartupExperience();
             MainWindow = mainWindow;
             mainWindow.Show();
@@ -109,7 +111,7 @@ public partial class App : Application
             return;
         }
 
-        _startupProgressState?.SetStage(StartupCompletedPercent);
+        _startupProgressState?.SetStage(StartupCompletedPercent, "启动完成");
         _startupSplashWindow.Close();
         _startupSplashWindow = null;
         _startupProgressState = null;

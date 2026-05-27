@@ -55,6 +55,7 @@ public sealed class CashPaymentWorkflowService(
     ICardTerminalClient? cardTerminalClient = null,
     IVoucherTenderClient? voucherTenderClient = null) : ICashPaymentWorkflowService
 {
+    private readonly CashRoundingPolicy _cashRoundingPolicy = new();
     private readonly ICardTerminalClient _cardTerminalClient = cardTerminalClient ?? UnavailableCardTerminalClient.Instance;
     private readonly IVoucherTenderClient _voucherTenderClient = voucherTenderClient ?? UnavailableVoucherTenderClient.Instance;
 
@@ -72,24 +73,55 @@ public sealed class CashPaymentWorkflowService(
 
     public decimal CalculateChange(string? amountTenderedText, decimal actualAmount)
     {
-        return TryParseTenderedAmount(amountTenderedText, out var tenderedAmount)
-            ? decimal.Round(tenderedAmount - actualAmount, 2, MidpointRounding.AwayFromZero)
-            : 0m;
+        if (!TryParseTenderedAmount(amountTenderedText, out var tenderedAmount))
+        {
+            return 0m;
+        }
+
+        var normalizedTenderedAmount = _cashRoundingPolicy.NormalizeCashTender(tenderedAmount);
+        var roundedCashDue = _cashRoundingPolicy.CalculateRoundedCashDue(actualAmount);
+        return _cashRoundingPolicy.CalculateChange(normalizedTenderedAmount, roundedCashDue);
     }
 
     public decimal CalculateTenderedAmount(IReadOnlyList<PaymentTender> tenders)
     {
-        return decimal.Round(tenders.Sum(tender => tender.Amount), 2, MidpointRounding.AwayFromZero);
+        return RoundCurrency(tenders.Sum(tender => NormalizeTender(tender).Amount));
     }
 
     public decimal CalculateRemainingAmount(decimal actualAmount, IReadOnlyList<PaymentTender> tenders)
     {
-        return decimal.Round(actualAmount - CalculateTenderedAmount(tenders), 2, MidpointRounding.AwayFromZero);
+        var normalizedTenders = tenders.Select(NormalizeTender).ToList();
+        var nonCashTotal = RoundCurrency(normalizedTenders
+            .Where(tender => tender.Method != PaymentMethodKind.Cash)
+            .Sum(tender => tender.Amount));
+        var cashTotal = RoundCurrency(normalizedTenders
+            .Where(tender => tender.Method == PaymentMethodKind.Cash)
+            .Sum(tender => tender.Amount));
+        if (cashTotal <= 0m)
+        {
+            return RoundCurrency(actualAmount - nonCashTotal);
+        }
+
+        var roundedCashDue = _cashRoundingPolicy.CalculateRoundedCashDue(actualAmount, nonCashTotal);
+        return RoundCurrency(roundedCashDue - cashTotal);
     }
 
     public decimal CalculateChange(IReadOnlyList<PaymentTender> tenders, decimal actualAmount)
     {
-        return Math.Max(0m, decimal.Round(CalculateTenderedAmount(tenders) - actualAmount, 2, MidpointRounding.AwayFromZero));
+        var normalizedTenders = tenders.Select(NormalizeTender).ToList();
+        var nonCashTotal = RoundCurrency(normalizedTenders
+            .Where(tender => tender.Method != PaymentMethodKind.Cash)
+            .Sum(tender => tender.Amount));
+        var cashTotal = RoundCurrency(normalizedTenders
+            .Where(tender => tender.Method == PaymentMethodKind.Cash)
+            .Sum(tender => tender.Amount));
+        if (cashTotal <= 0m)
+        {
+            return 0m;
+        }
+
+        var roundedCashDue = _cashRoundingPolicy.CalculateRoundedCashDue(actualAmount, nonCashTotal);
+        return _cashRoundingPolicy.CalculateChange(cashTotal, roundedCashDue);
     }
 
     public async Task<PaymentTenderAttemptResult> AddTenderAsync(
@@ -120,12 +152,10 @@ public sealed class CashPaymentWorkflowService(
 
         return method switch
         {
-            PaymentMethodKind.Cash => PaymentTenderAttemptResult.Success(
-                new PaymentTender(method, amount),
-                "payment.status.cashTenderAdded"),
+            PaymentMethodKind.Cash => CreateCashTenderAttempt(amount),
             PaymentMethodKind.Card => await AuthorizeExternalTenderAsync(
                 amount,
-                remainingAmount,
+                CalculateExternalRemainingAmount(actualAmount, currentTenders),
                 session,
                 null,
                 cancellationToken,
@@ -136,7 +166,7 @@ public sealed class CashPaymentWorkflowService(
                 "payment.status.cardTenderAdded"),
             PaymentMethodKind.Voucher => await AuthorizeExternalTenderAsync(
                 amount,
-                remainingAmount,
+                CalculateExternalRemainingAmount(actualAmount, currentTenders),
                 session,
                 referenceText,
                 cancellationToken,
@@ -343,6 +373,39 @@ public sealed class CashPaymentWorkflowService(
     private static string? NormalizeVoucherCode(string? voucherCode)
     {
         return string.IsNullOrWhiteSpace(voucherCode) ? null : voucherCode.Trim();
+    }
+
+    private PaymentTenderAttemptResult CreateCashTenderAttempt(decimal amount)
+    {
+        var normalizedAmount = _cashRoundingPolicy.NormalizeCashTender(amount);
+        return normalizedAmount <= 0m
+            ? PaymentTenderAttemptResult.Fail("payment.status.invalidAmount")
+            : PaymentTenderAttemptResult.Success(
+                new PaymentTender(PaymentMethodKind.Cash, normalizedAmount),
+                "payment.status.cashTenderAdded");
+    }
+
+    private decimal CalculateExternalRemainingAmount(decimal actualAmount, IReadOnlyList<PaymentTender> currentTenders)
+    {
+        return Math.Max(0m, RoundCurrency(actualAmount - CalculateTenderedAmountForActualBalance(currentTenders)));
+    }
+
+    private decimal CalculateTenderedAmountForActualBalance(IReadOnlyList<PaymentTender> tenders)
+    {
+        return RoundCurrency(tenders.Sum(tender => NormalizeTender(tender).Amount));
+    }
+
+    private PaymentTender NormalizeTender(PaymentTender tender)
+    {
+        var normalizedAmount = tender.Method == PaymentMethodKind.Cash
+            ? _cashRoundingPolicy.NormalizeCashTender(tender.Amount)
+            : RoundCurrency(tender.Amount);
+        return tender with { Amount = normalizedAmount };
+    }
+
+    private static decimal RoundCurrency(decimal amount)
+    {
+        return decimal.Round(amount, 2, MidpointRounding.AwayFromZero);
     }
 }
 

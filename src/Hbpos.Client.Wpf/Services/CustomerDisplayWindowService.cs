@@ -30,6 +30,10 @@ public interface ICustomerDisplayWindowService
 
     event EventHandler? Closed;
 
+    void Prewarm(CustomerDisplayViewModel viewModel)
+    {
+    }
+
     CustomerDisplayWindowResult Open(CustomerDisplayViewModel viewModel, Window? owner);
 
     CustomerDisplayWindowResult Toggle(CustomerDisplayViewModel viewModel, Window? owner);
@@ -54,7 +58,7 @@ public sealed class CustomerDisplayWindowService : ICustomerDisplayWindowService
         _displayTopology = displayTopology;
     }
 
-    public bool IsOpen => _window is not null;
+    public bool IsOpen => _window?.IsVisible == true && _mode != CustomerDisplayWindowMode.Closed;
 
     public CustomerDisplayWindowMode Mode => _mode;
 
@@ -66,6 +70,11 @@ public sealed class CustomerDisplayWindowService : ICustomerDisplayWindowService
         bool UseFullDisplayBoundsForPlacement,
         WindowState FinalWindowState,
         bool TitleBarVisibleAfterStateChange);
+
+    public void Prewarm(CustomerDisplayViewModel viewModel)
+    {
+        EnsureWindow(viewModel, owner: null);
+    }
 
     public CustomerDisplayWindowResult Open(CustomerDisplayViewModel viewModel, Window? owner)
     {
@@ -105,22 +114,30 @@ public sealed class CustomerDisplayWindowService : ICustomerDisplayWindowService
         return new CustomerDisplayWindowResult(mode, GetOpenedStatusKey(mode));
     }
 
-    private CustomerDisplayWindow EnsureWindow(CustomerDisplayViewModel viewModel, Window owner)
+    private CustomerDisplayWindow EnsureWindow(CustomerDisplayViewModel viewModel, Window? owner)
     {
         if (_window is not null)
         {
-            _window.Owner ??= owner;
+            if (owner is not null && _window.Owner is null && !_window.IsVisible)
+            {
+                _window.Owner = owner;
+            }
+
             _window.DataContext = viewModel;
             return _window;
         }
 
         _window = new CustomerDisplayWindow
         {
-            Owner = owner,
             DataContext = viewModel,
             WindowStartupLocation = WindowStartupLocation.Manual,
             WindowState = WindowState.Normal
         };
+        if (owner is not null)
+        {
+            _window.Owner = owner;
+        }
+
         _displayTopology.AttachWorkAreaConstraint(_window);
         _window.Closed += OnWindowClosed;
         return _window;

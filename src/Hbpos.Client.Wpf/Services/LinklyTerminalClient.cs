@@ -51,6 +51,8 @@ public interface ILinklyEftClient : IDisposable
 
     Task<bool> WriteRequestAsync(EFTRequest request);
 
+    Task<bool> SendCancelRequestAsync();
+
     Task<EFTResponse?> ReadResponseAsync(CancellationToken cancellationToken);
 
     bool Disconnect();
@@ -80,6 +82,11 @@ public sealed class LinklyEftClientAdapter(EFTClientIPAsync client) : ILinklyEft
         return client.WriteRequestAsync(request);
     }
 
+    public Task<bool> SendCancelRequestAsync()
+    {
+        return client.WriteRequestAsync(new EFTSendKeyRequest { Key = EFTPOSKey.OkCancel });
+    }
+
     public async Task<EFTResponse?> ReadResponseAsync(CancellationToken cancellationToken)
     {
         return await client.ReadResponseAsync(cancellationToken);
@@ -100,6 +107,7 @@ public sealed class LinklyTerminalClient(ILinklyEftClientFactory clientFactory) 
 {
     private const string ProcessorName = "ANZ";
     private const string Merchant = "00";
+    private const string CancelledMessage = "ANZ Linkly transaction was cancelled.";
 
     public async Task<LinklyConnectionTestResult> TestConnectionAsync(
         string host,
@@ -191,11 +199,17 @@ public sealed class LinklyTerminalClient(ILinklyEftClientFactory clientFactory) 
             return new PaymentAuthorizationResult(false, null, "Card amount must be greater than zero.");
         }
 
+        if (cancellationToken.IsCancellationRequested)
+        {
+            return new PaymentAuthorizationResult(false, null, CancelledMessage);
+        }
+
         using var timeoutCts = CreateTimeoutToken(settings.TerminalTimeout, cancellationToken);
         var txnRef = NormalizeReference(originalReference) ?? BuildTxnRef(session);
         var request = CreateTransactionRequest(transactionType, amount, txnRef);
         var receipts = new List<string>();
         using var client = clientFactory.Create();
+        var transactionRequestSent = false;
 
         try
         {
@@ -211,7 +225,90 @@ public sealed class LinklyTerminalClient(ILinklyEftClientFactory clientFactory) 
                 return new PaymentAuthorizationResult(false, null, "ANZ Linkly transaction request could not be sent.");
             }
 
+            transactionRequestSent = true;
             var response = await ReadTransactionResponseAsync(client, receipts, timeoutCts.Token);
+            return ToAuthorizationResult(response, amount, txnRef, receipts);
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            if (transactionRequestSent)
+            {
+                return await TryCancelActiveTransactionAsync(
+                    client,
+                    settings,
+                    amount,
+                    txnRef,
+                    receipts);
+            }
+
+            return new PaymentAuthorizationResult(false, null, CancelledMessage);
+        }
+        catch (Exception ex) when (ex is OperationCanceledException or ConnectionException)
+        {
+            var fallbackMessage = ex is OperationCanceledException
+                ? "ANZ Linkly transaction timed out."
+                : "ANZ Linkly connection was closed.";
+
+            if (!transactionRequestSent)
+            {
+                return new PaymentAuthorizationResult(false, null, fallbackMessage);
+            }
+
+            return await TryRecoverLastTransactionAsync(
+                settings,
+                amount,
+                txnRef,
+                receipts,
+                fallbackMessage,
+                cancellationToken);
+        }
+        catch (Exception ex)
+        {
+            var fallbackMessage = $"ANZ Linkly transaction failed: {ex.Message}";
+            if (transactionRequestSent)
+            {
+                return await TryRecoverLastTransactionAsync(
+                    settings,
+                    amount,
+                    txnRef,
+                    receipts,
+                    fallbackMessage,
+                    cancellationToken);
+            }
+
+            return new PaymentAuthorizationResult(false, null, fallbackMessage);
+        }
+        finally
+        {
+            SafeDisconnect(client);
+        }
+    }
+
+    private async Task<PaymentAuthorizationResult> TryCancelActiveTransactionAsync(
+        ILinklyEftClient client,
+        CardTerminalSettings settings,
+        decimal amount,
+        string txnRef,
+        IReadOnlyList<string> capturedReceipts)
+    {
+        var receipts = new List<string>(capturedReceipts);
+        const string fallbackMessage = "ANZ Linkly cancellation outcome could not be confirmed.";
+        using var cancelCts = CreateTimeoutToken(settings.TerminalTimeout, CancellationToken.None);
+
+        try
+        {
+            if (!await client.SendCancelRequestAsync().WaitAsync(cancelCts.Token))
+            {
+                return await TryRecoverLastTransactionAsync(
+                    settings,
+                    amount,
+                    txnRef,
+                    receipts,
+                    fallbackMessage,
+                    CancellationToken.None);
+            }
+
+            var response = await ReadTransactionResponseAsync(client, receipts, cancelCts.Token);
             return ToAuthorizationResult(response, amount, txnRef, receipts);
         }
         catch (Exception ex) when (ex is OperationCanceledException or ConnectionException)
@@ -221,16 +318,18 @@ public sealed class LinklyTerminalClient(ILinklyEftClientFactory clientFactory) 
                 amount,
                 txnRef,
                 receipts,
-                ex is OperationCanceledException ? "ANZ Linkly transaction timed out." : "ANZ Linkly connection was closed.",
-                cancellationToken);
+                fallbackMessage,
+                CancellationToken.None);
         }
-        catch (Exception ex)
+        catch
         {
-            return new PaymentAuthorizationResult(false, null, $"ANZ Linkly transaction failed: {ex.Message}");
-        }
-        finally
-        {
-            SafeDisconnect(client);
+            return await TryRecoverLastTransactionAsync(
+                settings,
+                amount,
+                txnRef,
+                receipts,
+                fallbackMessage,
+                CancellationToken.None);
         }
     }
 
@@ -242,6 +341,11 @@ public sealed class LinklyTerminalClient(ILinklyEftClientFactory clientFactory) 
         string fallbackMessage,
         CancellationToken cancellationToken)
     {
+        if (cancellationToken.IsCancellationRequested)
+        {
+            return new PaymentAuthorizationResult(false, null, CancelledMessage);
+        }
+
         using var timeoutCts = CreateTimeoutToken(settings.TerminalTimeout, cancellationToken);
         using var client = clientFactory.Create();
         var receipts = new List<string>(capturedReceipts);
@@ -281,7 +385,15 @@ public sealed class LinklyTerminalClient(ILinklyEftClientFactory clientFactory) 
                 }
             }
         }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            return new PaymentAuthorizationResult(false, null, CancelledMessage);
+        }
         catch (Exception ex) when (ex is OperationCanceledException or ConnectionException)
+        {
+            return new PaymentAuthorizationResult(false, null, fallbackMessage);
+        }
+        catch
         {
             return new PaymentAuthorizationResult(false, null, fallbackMessage);
         }

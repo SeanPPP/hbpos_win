@@ -1,4 +1,4 @@
-using System.ComponentModel;
+﻿using System.ComponentModel;
 using System.Globalization;
 using System.Resources;
 using System.Windows.Data;
@@ -10,9 +10,11 @@ public sealed class LocalizationResourceProvider : INotifyPropertyChanged
 {
     public static LocalizationResourceProvider Instance { get; } = new();
 
-    private static readonly ResourceManager FallbackResourceManager = new(
-        "Hbpos.Client.Wpf.Resources.Strings",
-        typeof(LocalizationResourceProvider).Assembly);
+    private static readonly ResourceManager[] FallbackResourceManagers =
+    [
+        new("Hbpos.Client.Wpf.Resources.Strings", typeof(LocalizationResourceProvider).Assembly),
+        new("Hbpos.Client.Wpf.Resources.SettingsStrings", typeof(LocalizationResourceProvider).Assembly)
+    ];
 
     private ILocalizationService? _localization;
 
@@ -25,7 +27,7 @@ public sealed class LocalizationResourceProvider : INotifyPropertyChanged
     public CultureInfo CurrentCulture => _localization?.CurrentCulture ?? CultureInfo.GetCultureInfo(LocalizationService.DefaultCultureName);
 
     public string this[string key] =>
-        _localization?.T(key) ?? FallbackResourceManager.GetString(key, CurrentCulture) ?? $"[[{key}]]";
+        _localization?.T(key) ?? GetFallbackString(key) ?? $"[[{key}]]";
 
     public void Configure(ILocalizationService localization)
     {
@@ -48,6 +50,26 @@ public sealed class LocalizationResourceProvider : INotifyPropertyChanged
     {
         PropertyChanged?.Invoke(this, new PropertyChangedEventArgs("Item[]"));
         PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(CurrentCulture)));
+    }
+
+    private string? GetFallbackString(string key)
+    {
+        foreach (var resourceManager in FallbackResourceManagers)
+        {
+            try
+            {
+                var value = resourceManager.GetString(key, CurrentCulture);
+                if (value is not null)
+                {
+                    return value;
+                }
+            }
+            catch (MissingManifestResourceException)
+            {
+            }
+        }
+
+        return null;
     }
 }
 

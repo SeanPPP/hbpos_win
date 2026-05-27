@@ -134,21 +134,43 @@
             </DataGrid>
 
             <Border Grid.Row="2" Padding="20,16" Background="#E8FFFFFF" BorderBrush="#FFE2E2E6" BorderThickness="0,1,0,0">
-                <StackPanel>
-                    <DockPanel Margin="0,0,0,4">
+                <Grid Grid.IsSharedSizeScope="True">
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="Auto" />
+                    </Grid.RowDefinitions>
+
+                    <Grid Margin="0,0,0,4">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" SharedSizeGroup="PaymentSummaryAmountColumn" />
+                        </Grid.ColumnDefinitions>
                         <TextBlock Text="{loc:Loc Subtotal}" FontSize="11" Foreground="{StaticResource PosMutedForegroundBrush}" />
-                        <TextBlock Text="{Binding TotalAmount, StringFormat={}{0:C2}}" DockPanel.Dock="Right" FontSize="14" FontWeight="SemiBold" />
-                    </DockPanel>
-                    <DockPanel Margin="0,0,0,8">
+                        <TextBlock Grid.Column="1" Text="{Binding TotalAmount, StringFormat={}{0:C2}}" HorizontalAlignment="Right" TextAlignment="Right" FontSize="14" FontWeight="SemiBold" />
+                    </Grid>
+
+                    <Grid Grid.Row="1" Margin="0,0,0,8">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" SharedSizeGroup="PaymentSummaryAmountColumn" />
+                        </Grid.ColumnDefinitions>
                         <TextBlock Text="{loc:Loc Discount}" FontSize="11" Foreground="{StaticResource PosMutedForegroundBrush}" />
-                        <TextBlock Text="{Binding DiscountAmount, StringFormat={}{0:C2}}" DockPanel.Dock="Right" FontSize="14" FontWeight="SemiBold" />
-                    </DockPanel>
-                    <Border Height="1" Background="{StaticResource PosBorderBrush}" Margin="0,0,0,8" />
-                    <DockPanel>
+                        <TextBlock Grid.Column="1" Text="{Binding DiscountAmount, StringFormat={}{0:C2}}" HorizontalAlignment="Right" TextAlignment="Right" FontSize="14" FontWeight="SemiBold" />
+                    </Grid>
+
+                    <Border Grid.Row="2" Height="1" Background="{StaticResource PosBorderBrush}" Margin="0,0,0,8" />
+
+                    <Grid Grid.Row="3">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" SharedSizeGroup="PaymentSummaryAmountColumn" />
+                        </Grid.ColumnDefinitions>
                         <TextBlock Text="{loc:Loc AmountDue}" VerticalAlignment="Center" FontSize="14" FontWeight="Black" Foreground="{StaticResource PosPrimaryBrush}" />
-                        <TextBlock Text="{Binding ActualAmount, StringFormat={}{0:C2}}" DockPanel.Dock="Right" FontSize="28" FontWeight="Black" Foreground="{StaticResource PosPrimaryBrush}" />
-                    </DockPanel>
-                </StackPanel>
+                        <TextBlock Grid.Column="1" Text="{Binding ActualAmount, StringFormat={}{0:C2}}" HorizontalAlignment="Right" TextAlignment="Right" FontSize="28" FontWeight="Black" Foreground="{StaticResource PosPrimaryBrush}" />
+                    </Grid>
+                </Grid>
             </Border>
         </Grid>
 
@@ -207,10 +229,25 @@
                     </ItemsControl.ItemsPanel>
                     <ItemsControl.ItemTemplate>
                         <DataTemplate>
-                            <Button Content="{Binding StringFormat={}{0:C0}}"
+                            <Button Background="{Binding NoteColorKey}"
+                                    BorderBrush="{Binding NoteColorKey}"
+                                    Foreground="{Binding ForegroundColorKey}"
                                     Command="{Binding DataContext.QuickCashCommand, RelativeSource={RelativeSource AncestorType=ItemsControl}}"
                                     CommandParameter="{Binding}"
-                                    Style="{StaticResource PosQuickAmountButtonStyle}" />
+                                    Style="{StaticResource PosQuickAmountButtonStyle}">
+                                <StackPanel Orientation="Horizontal" HorizontalAlignment="Center">
+                                    <materialDesign:PackIcon Kind="Cash"
+                                                             Width="16"
+                                                             Height="16"
+                                                             Margin="0,0,8,0"
+                                                             VerticalAlignment="Center"
+                                                             Foreground="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}" />
+                                    <TextBlock Text="{Binding Label}"
+                                               VerticalAlignment="Center"
+                                               FontWeight="Bold"
+                                               Foreground="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}" />
+                                </StackPanel>
+                            </Button>
                         </DataTemplate>
                     </ItemsControl.ItemTemplate>
                 </ItemsControl>
@@ -398,12 +435,16 @@
             </Border>
 
             <Border Grid.Row="3" Margin="24,0,24,24" Padding="14" Background="White" BorderBrush="#FFFFD59B" BorderThickness="1" CornerRadius="12" VerticalAlignment="Top">
-                <StackPanel Orientation="Horizontal">
-                    <Border Width="32" Height="32" Margin="0,0,10,0" Background="{StaticResource PosAccentBrush}" CornerRadius="16">
+                <Grid>
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="Auto" />
+                        <ColumnDefinition Width="*" />
+                    </Grid.ColumnDefinitions>
+                    <Border Width="32" Height="32" Margin="0,0,10,0" Background="{StaticResource PosAccentBrush}" CornerRadius="16" VerticalAlignment="Top">
                         <materialDesign:PackIcon Kind="Information" Width="18" Height="18" Foreground="White" HorizontalAlignment="Center" VerticalAlignment="Center" />
                     </Border>
-                    <TextBlock Text="{Binding StatusMessage}" TextWrapping="Wrap" FontWeight="SemiBold" Foreground="#8F4E00" VerticalAlignment="Center" />
-                </StackPanel>
+                    <TextBlock Grid.Column="1" Text="{Binding StatusMessage}" TextWrapping="Wrap" FontWeight="SemiBold" Foreground="#8F4E00" VerticalAlignment="Center" />
+                </Grid>
             </Border>
         </Grid>
     </Grid>

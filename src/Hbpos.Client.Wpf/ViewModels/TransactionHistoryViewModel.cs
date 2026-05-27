@@ -10,11 +10,12 @@ namespace Hbpos.Client.Wpf.ViewModels;
 public enum TransactionHistorySource
 {
     LocalOrders,
-    SuspendedOrders,
     RemoteOrders
 }
 
 public sealed record HistorySourceOption(TransactionHistorySource Source, string Label);
+
+public sealed record TerminalFilterOption(string? DeviceCode, string Label);
 
 public sealed record HistoryOrderListItem(
     Guid OrderGuid,
@@ -28,7 +29,9 @@ public sealed record HistoryOrderListItem(
     decimal ActualAmount,
     int LineCount,
     string PaymentSummary,
-    string StatusLabel)
+    string StatusLabel,
+    bool IsSuspendedOrder = false,
+    bool CanRecall = false)
 {
     public string ShortOrderId => OrderGuid.ToString("N")[..8].ToUpperInvariant();
 
@@ -41,6 +44,7 @@ public sealed partial class TransactionHistoryViewModel : ObservableObject
     private readonly ISuspendedOrderService? _suspendedOrderService;
     private readonly IRemoteOrderHistoryService? _remoteOrderHistoryService;
     private readonly Func<Task>? _onSuspendedOrderRecalledAsync;
+    private readonly Action? _returnToPos;
     private bool _suppressSelectedOrderLoad;
     private bool _suppressSourceAutoLoad;
 
@@ -51,16 +55,19 @@ public sealed partial class TransactionHistoryViewModel : ObservableObject
     private string _dateFilterText = "Today";
 
     [ObservableProperty]
-    private string _dateFromText = DateTime.Today.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
+    private DateTime? _dateFrom = DateTime.Today;
 
     [ObservableProperty]
-    private string _dateToText = DateTime.Today.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
+    private DateTime? _dateTo = DateTime.Today;
 
     [ObservableProperty]
     private string _storeFilterText = "All Stores";
 
     [ObservableProperty]
     private string _terminalFilterText = "All Terminals";
+
+    [ObservableProperty]
+    private TerminalFilterOption? _selectedTerminalOption;
 
     [ObservableProperty]
     private HistorySourceOption? _selectedSourceOption;
@@ -90,17 +97,17 @@ public sealed partial class TransactionHistoryViewModel : ObservableObject
     private PosSessionState _session = new("HB POS", "1002", "Main Branch", "Terminal 04", "C001", "Alice", false, 0);
 
     public TransactionHistoryViewModel()
-        : this(null, null, null, null, null, initialize: true)
+        : this(null, null, null, null, null, null, initialize: true)
     {
     }
 
     public TransactionHistoryViewModel(ILocalOrderRepository orderRepository)
-        : this(new ReceiptQueryService(orderRepository), null, null, null, null, initialize: true)
+        : this(new ReceiptQueryService(orderRepository), null, null, null, null, null, initialize: true)
     {
     }
 
     public TransactionHistoryViewModel(IReceiptQueryService receiptQueryService)
-        : this(receiptQueryService, null, null, null, null, initialize: true)
+        : this(receiptQueryService, null, null, null, null, null, initialize: true)
     {
     }
 
@@ -109,8 +116,9 @@ public sealed partial class TransactionHistoryViewModel : ObservableObject
         ISuspendedOrderService? suspendedOrderService,
         IRemoteOrderHistoryService? remoteOrderHistoryService,
         PosSessionState session,
-        Func<Task>? onSuspendedOrderRecalledAsync = null)
-        : this(receiptQueryService, suspendedOrderService, remoteOrderHistoryService, session, onSuspendedOrderRecalledAsync, initialize: true)
+        Func<Task>? onSuspendedOrderRecalledAsync = null,
+        Action? returnToPos = null)
+        : this(receiptQueryService, suspendedOrderService, remoteOrderHistoryService, session, onSuspendedOrderRecalledAsync, returnToPos, initialize: true)
     {
     }
 
@@ -120,12 +128,14 @@ public sealed partial class TransactionHistoryViewModel : ObservableObject
         IRemoteOrderHistoryService? remoteOrderHistoryService,
         PosSessionState? session,
         Func<Task>? onSuspendedOrderRecalledAsync,
+        Action? returnToPos,
         bool initialize)
     {
         _receiptQueryService = receiptQueryService;
         _suspendedOrderService = suspendedOrderService;
         _remoteOrderHistoryService = remoteOrderHistoryService;
         _onSuspendedOrderRecalledAsync = onSuspendedOrderRecalledAsync;
+        _returnToPos = returnToPos;
         if (session is not null)
         {
             Session = session;
@@ -133,20 +143,25 @@ public sealed partial class TransactionHistoryViewModel : ObservableObject
             TerminalFilterText = session.DeviceCode;
         }
 
-        SourceOptions.Add(new HistorySourceOption(TransactionHistorySource.LocalOrders, "本地订单"));
-        SourceOptions.Add(new HistorySourceOption(TransactionHistorySource.SuspendedOrders, "挂单"));
-        SourceOptions.Add(new HistorySourceOption(TransactionHistorySource.RemoteOrders, "远程订单"));
+        RefreshTerminalOptions(selectAllTerminals: session is null);
+
+        SourceOptions.Add(new HistorySourceOption(TransactionHistorySource.LocalOrders, "本地"));
+        SourceOptions.Add(new HistorySourceOption(TransactionHistorySource.RemoteOrders, "在线"));
         _selectedSourceOption = SourceOptions[0];
 
         LoadCommand = new AsyncRelayCommand(() => LoadAsync());
+        ReturnToPosCommand = new RelayCommand(ReturnToPos, CanReturnToPos);
         RecallSelectedCommand = new AsyncRelayCommand(RecallSelectedAsync, CanRecallSelected);
-        ReprintCommand = new RelayCommand(() => ReprintRequested?.Invoke(this, EventArgs.Empty), () => SelectedOrder is not null && SelectedSource == TransactionHistorySource.LocalOrders);
+        RecallOrderCommand = new AsyncRelayCommand<HistoryOrderListItem>(RecallOrderAsync, CanRecallOrder);
+        ReprintCommand = new RelayCommand(() => ReprintRequested?.Invoke(this, EventArgs.Empty), CanReprintSelected);
         RefundCommand = new RelayCommand(() => { }, () => false);
     }
 
     public event EventHandler? ReprintRequested;
 
     public ObservableCollection<HistorySourceOption> SourceOptions { get; } = [];
+
+    public ObservableCollection<TerminalFilterOption> TerminalOptions { get; } = [];
 
     public ObservableCollection<HistoryOrderListItem> Orders { get; } = [];
 
@@ -156,7 +171,11 @@ public sealed partial class TransactionHistoryViewModel : ObservableObject
 
     public IAsyncRelayCommand LoadCommand { get; }
 
+    public IRelayCommand ReturnToPosCommand { get; }
+
     public IAsyncRelayCommand RecallSelectedCommand { get; }
+
+    public IAsyncRelayCommand<HistoryOrderListItem> RecallOrderCommand { get; }
 
     public IRelayCommand ReprintCommand { get; }
 
@@ -164,9 +183,33 @@ public sealed partial class TransactionHistoryViewModel : ObservableObject
 
     public TransactionHistorySource SelectedSource => SelectedSourceOption?.Source ?? TransactionHistorySource.LocalOrders;
 
-    public bool IsRecallVisible => SelectedSource == TransactionHistorySource.SuspendedOrders;
+    public bool IsRecallVisible => SelectedOrder?.CanRecall == true;
 
-    public bool IsReprintVisible => SelectedSource != TransactionHistorySource.SuspendedOrders;
+    public bool IsReprintVisible => CanReprintSelected();
+
+    public bool IsLocalSourceSelected
+    {
+        get => SelectedSource == TransactionHistorySource.LocalOrders;
+        set
+        {
+            if (value)
+            {
+                SetSelectedSource(TransactionHistorySource.LocalOrders);
+            }
+        }
+    }
+
+    public bool IsOnlineSourceSelected
+    {
+        get => SelectedSource == TransactionHistorySource.RemoteOrders;
+        set
+        {
+            if (value)
+            {
+                SetSelectedSource(TransactionHistorySource.RemoteOrders);
+            }
+        }
+    }
 
     public string TitleText => "TransactionHistory";
 
@@ -185,9 +228,8 @@ public sealed partial class TransactionHistoryViewModel : ObservableObject
         {
             var orders = SelectedSource switch
             {
-                TransactionHistorySource.SuspendedOrders => await LoadSuspendedOrdersAsync(cancellationToken),
                 TransactionHistorySource.RemoteOrders => await LoadRemoteOrdersAsync(cancellationToken),
-                _ => await LoadLocalOrdersAsync(cancellationToken)
+                _ => await LoadLocalAndSuspendedOrdersAsync(cancellationToken)
             };
 
             Orders.ReplaceWith(orders);
@@ -214,7 +256,7 @@ public sealed partial class TransactionHistoryViewModel : ObservableObject
     public Task ShowSuspendedOrdersAsync(CancellationToken cancellationToken = default)
     {
         _suppressSourceAutoLoad = true;
-        SelectedSourceOption = SourceOptions.First(x => x.Source == TransactionHistorySource.SuspendedOrders);
+        SelectedSourceOption = SourceOptions.First(x => x.Source == TransactionHistorySource.LocalOrders);
         _suppressSourceAutoLoad = false;
         return LoadAsync(cancellationToken);
     }
@@ -224,8 +266,11 @@ public sealed partial class TransactionHistoryViewModel : ObservableObject
         OnPropertyChanged(nameof(SelectedSource));
         OnPropertyChanged(nameof(IsRecallVisible));
         OnPropertyChanged(nameof(IsReprintVisible));
+        OnPropertyChanged(nameof(IsLocalSourceSelected));
+        OnPropertyChanged(nameof(IsOnlineSourceSelected));
         ReprintCommand.NotifyCanExecuteChanged();
         RecallSelectedCommand.NotifyCanExecuteChanged();
+        RecallOrderCommand.NotifyCanExecuteChanged();
         if (!_suppressSourceAutoLoad)
         {
             _ = LoadAsync(CancellationToken.None);
@@ -236,6 +281,9 @@ public sealed partial class TransactionHistoryViewModel : ObservableObject
     {
         ReprintCommand.NotifyCanExecuteChanged();
         RecallSelectedCommand.NotifyCanExecuteChanged();
+        RecallOrderCommand.NotifyCanExecuteChanged();
+        OnPropertyChanged(nameof(IsRecallVisible));
+        OnPropertyChanged(nameof(IsReprintVisible));
 
         if (_suppressSelectedOrderLoad)
         {
@@ -248,10 +296,24 @@ public sealed partial class TransactionHistoryViewModel : ObservableObject
     partial void OnSessionChanged(PosSessionState value)
     {
         StoreFilterText = $"{value.StoreName} ({value.StoreCode})";
-        if (string.IsNullOrWhiteSpace(TerminalFilterText) || TerminalFilterText == "All Terminals")
-        {
-            TerminalFilterText = value.DeviceCode;
-        }
+        RefreshTerminalOptions(SelectedTerminalOption?.DeviceCode is null);
+    }
+
+    partial void OnSelectedTerminalOptionChanged(TerminalFilterOption? value)
+    {
+        TerminalFilterText = value?.DeviceCode ?? "All Terminals";
+    }
+
+    private async Task<IReadOnlyList<HistoryOrderListItem>> LoadLocalAndSuspendedOrdersAsync(CancellationToken cancellationToken)
+    {
+        var localOrdersTask = LoadLocalOrdersAsync(cancellationToken);
+        var suspendedOrdersTask = LoadSuspendedOrdersAsync(cancellationToken);
+        await Task.WhenAll(localOrdersTask, suspendedOrdersTask);
+
+        return localOrdersTask.Result
+            .Concat(suspendedOrdersTask.Result)
+            .OrderByDescending(order => order.OccurredAt)
+            .ToList();
     }
 
     private async Task<IReadOnlyList<HistoryOrderListItem>> LoadLocalOrdersAsync(CancellationToken cancellationToken)
@@ -262,24 +324,26 @@ public sealed partial class TransactionHistoryViewModel : ObservableObject
         }
 
         var query = new LocalOrderHistoryQuery(
-            ParseDateFrom(DateFromText),
-            ParseDateTo(DateToText),
-            NormalizeTerminalFilter(TerminalFilterText),
+            ParseDateFrom(DateFrom),
+            ParseDateTo(DateTo),
+            SelectedTerminalDeviceCode,
             NormalizeKeyword(SearchText));
         var orders = await _receiptQueryService.GetRecentOrdersAsync(query, 100, cancellationToken);
-        return orders.Select(order => new HistoryOrderListItem(
-            order.OrderGuid,
-            TransactionHistorySource.LocalOrders,
-            order.StoreCode,
-            order.DeviceCode,
-            order.CashierName,
-            order.SoldAt,
-            order.TotalAmount,
-            order.DiscountAmount,
-            order.ActualAmount,
-            order.LineCount,
-            order.PaymentSummary,
-            order.StatusLabel)).ToList();
+        return orders
+            .Select(order => new HistoryOrderListItem(
+                order.OrderGuid,
+                TransactionHistorySource.LocalOrders,
+                order.StoreCode,
+                order.DeviceCode,
+                order.CashierName,
+                order.SoldAt,
+                order.TotalAmount,
+                order.DiscountAmount,
+                order.ActualAmount,
+                order.LineCount,
+                order.PaymentSummary,
+                order.StatusLabel))
+            .ToList();
     }
 
     private async Task<IReadOnlyList<HistoryOrderListItem>> LoadSuspendedOrdersAsync(CancellationToken cancellationToken)
@@ -291,18 +355,18 @@ public sealed partial class TransactionHistoryViewModel : ObservableObject
 
         var orders = await _suspendedOrderService.GetPendingOrdersAsync(
             Session.StoreCode,
-            NormalizeTerminalFilter(TerminalFilterText),
+            SelectedTerminalDeviceCode,
             NormalizeKeyword(SearchText),
             100,
             cancellationToken);
-        var from = ParseDateFrom(DateFromText);
-        var to = ParseDateTo(DateToText);
+        var from = ParseDateFrom(DateFrom);
+        var to = ParseDateTo(DateTo);
         return orders
             .Where(order => from is null || order.SuspendedAt >= from.Value)
             .Where(order => to is null || order.SuspendedAt <= to.Value)
             .Select(order => new HistoryOrderListItem(
                 order.SuspendedOrderGuid,
-                TransactionHistorySource.SuspendedOrders,
+                TransactionHistorySource.LocalOrders,
                 order.StoreCode,
                 order.DeviceCode,
                 order.CashierName,
@@ -311,8 +375,10 @@ public sealed partial class TransactionHistoryViewModel : ObservableObject
                 order.DiscountAmount,
                 order.ActualAmount,
                 order.LineCount,
-                string.Empty,
-                "待取回"))
+                "挂单",
+                "待取回",
+                IsSuspendedOrder: true,
+                CanRecall: true))
             .ToList();
     }
 
@@ -326,9 +392,9 @@ public sealed partial class TransactionHistoryViewModel : ObservableObject
         var result = await _remoteOrderHistoryService.QueryAsync(
             new RemoteOrderHistoryQuery(
                 Session.StoreCode,
-                ParseDateFrom(DateFromText),
-                ParseDateTo(DateToText),
-                NormalizeTerminalFilter(TerminalFilterText),
+                ParseDateFrom(DateFrom),
+                ParseDateTo(DateTo),
+                SelectedTerminalDeviceCode,
                 NormalizeKeyword(SearchText),
                 100),
             cancellationToken);
@@ -355,14 +421,15 @@ public sealed partial class TransactionHistoryViewModel : ObservableObject
             return;
         }
 
-        ReceiptDetails? receipt = SelectedOrder.Source switch
-        {
-            TransactionHistorySource.SuspendedOrders => await GetSuspendedReceiptAsync(SelectedOrder.OrderGuid, cancellationToken),
-            TransactionHistorySource.RemoteOrders => _remoteOrderHistoryService is null
-                ? null
-                : await _remoteOrderHistoryService.GetDetailsAsync(SelectedOrder.OrderGuid, cancellationToken),
-            _ => _receiptQueryService is null ? null : await _receiptQueryService.GetReceiptAsync(SelectedOrder.OrderGuid, cancellationToken)
-        };
+        ReceiptDetails? receipt = SelectedOrder.IsSuspendedOrder
+            ? await GetSuspendedReceiptAsync(SelectedOrder.OrderGuid, cancellationToken)
+            : SelectedOrder.Source switch
+            {
+                TransactionHistorySource.RemoteOrders => _remoteOrderHistoryService is null
+                    ? null
+                    : await _remoteOrderHistoryService.GetDetailsAsync(SelectedOrder.OrderGuid, cancellationToken),
+                _ => _receiptQueryService is null ? null : await _receiptQueryService.GetReceiptAsync(SelectedOrder.OrderGuid, cancellationToken)
+            };
 
         if (receipt is null)
         {
@@ -392,23 +459,39 @@ public sealed partial class TransactionHistoryViewModel : ObservableObject
 
     private bool CanRecallSelected()
     {
-        return SelectedOrder is not null && SelectedOrder.Source == TransactionHistorySource.SuspendedOrders;
+        return CanRecallOrder(SelectedOrder);
+    }
+
+    private bool CanRecallOrder(HistoryOrderListItem? order)
+    {
+        return order?.CanRecall == true;
+    }
+
+    private bool CanReprintSelected()
+    {
+        return SelectedOrder is { IsSuspendedOrder: false, Source: TransactionHistorySource.LocalOrders };
     }
 
     private async Task RecallSelectedAsync()
     {
-        if (SelectedOrder is null || _suspendedOrderService is null)
+        await RecallOrderAsync(SelectedOrder);
+    }
+
+    private async Task RecallOrderAsync(HistoryOrderListItem? order)
+    {
+        if (!CanRecallOrder(order) || _suspendedOrderService is null)
         {
             return;
         }
 
         try
         {
-            await _suspendedOrderService.RecallOrderAsync(SelectedOrder.OrderGuid);
+            await _suspendedOrderService.RecallOrderAsync(order!.OrderGuid);
             if (_onSuspendedOrderRecalledAsync is not null)
             {
                 await _onSuspendedOrderRecalledAsync();
             }
+
             await LoadAsync();
         }
         catch (Exception ex)
@@ -438,6 +521,16 @@ public sealed partial class TransactionHistoryViewModel : ObservableObject
             []);
     }
 
+    private void ReturnToPos()
+    {
+        _returnToPos?.Invoke();
+    }
+
+    private bool CanReturnToPos()
+    {
+        return _returnToPos is not null;
+    }
+
     private void ClearReceiptPreview()
     {
         ReceiptLines.Clear();
@@ -454,33 +547,44 @@ public sealed partial class TransactionHistoryViewModel : ObservableObject
         return string.IsNullOrWhiteSpace(value) ? null : value.Trim();
     }
 
-    private static string? NormalizeTerminalFilter(string? value)
+    private string? SelectedTerminalDeviceCode => SelectedTerminalOption?.DeviceCode;
+
+    private void SetSelectedSource(TransactionHistorySource source)
     {
-        if (string.IsNullOrWhiteSpace(value))
+        if (SelectedSource == source)
         {
-            return null;
+            return;
         }
 
-        var trimmed = value.Trim();
-        return trimmed.Equals("All Terminals", StringComparison.OrdinalIgnoreCase)
-            || trimmed.Equals("全部终端", StringComparison.OrdinalIgnoreCase)
-            ? null
-            : trimmed;
+        SelectedSourceOption = SourceOptions.First(option => option.Source == source);
     }
 
-    private static DateTimeOffset? ParseDateFrom(string? value)
+    private void RefreshTerminalOptions(bool selectAllTerminals)
     {
-        return DateTime.TryParse(value, CultureInfo.CurrentCulture, DateTimeStyles.AssumeLocal, out var parsed)
-            || DateTime.TryParse(value, CultureInfo.InvariantCulture, DateTimeStyles.AssumeLocal, out parsed)
-            ? new DateTimeOffset(parsed.Date)
-            : null;
+        var currentDeviceCode = Session.DeviceCode.Trim();
+        TerminalOptions.Clear();
+        var allTerminals = new TerminalFilterOption(null, "All Terminals");
+        TerminalOptions.Add(allTerminals);
+
+        TerminalFilterOption selected = allTerminals;
+        if (!string.IsNullOrWhiteSpace(currentDeviceCode))
+        {
+            var currentTerminal = new TerminalFilterOption(currentDeviceCode, currentDeviceCode);
+            TerminalOptions.Add(currentTerminal);
+            selected = selectAllTerminals ? allTerminals : currentTerminal;
+        }
+
+        SelectedTerminalOption = selected;
+        TerminalFilterText = selected.DeviceCode ?? "All Terminals";
     }
 
-    private static DateTimeOffset? ParseDateTo(string? value)
+    private static DateTimeOffset? ParseDateFrom(DateTime? value)
     {
-        return DateTime.TryParse(value, CultureInfo.CurrentCulture, DateTimeStyles.AssumeLocal, out var parsed)
-            || DateTime.TryParse(value, CultureInfo.InvariantCulture, DateTimeStyles.AssumeLocal, out parsed)
-            ? new DateTimeOffset(parsed.Date.AddDays(1).AddTicks(-1))
-            : null;
+        return value is null ? null : new DateTimeOffset(value.Value.Date);
+    }
+
+    private static DateTimeOffset? ParseDateTo(DateTime? value)
+    {
+        return value is null ? null : new DateTimeOffset(value.Value.Date.AddDays(1).AddTicks(-1));
     }
 }

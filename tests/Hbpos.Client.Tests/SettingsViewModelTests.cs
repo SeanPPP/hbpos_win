@@ -1,5 +1,6 @@
-using Hbpos.Client.Wpf.Services;
+﻿using Hbpos.Client.Wpf.Services;
 using Hbpos.Client.Wpf.ViewModels;
+using Hbpos.Client.Wpf.Localization;
 
 namespace Hbpos.Client.Tests;
 
@@ -183,7 +184,180 @@ public sealed class SettingsViewModelTests
         Assert.Equal("DEV-1", service.SavedConfiguration.SquareDeviceId);
         Assert.Equal(45, service.SavedConfiguration.TerminalTimeoutSeconds);
         Assert.Null(service.SavedSquareAccessToken);
-        Assert.Equal("Square terminal settings saved.", viewModel.StatusMessage);
+        Assert.Equal("Square terminal settings saved. The next payment will use Counter.", viewModel.StatusMessage);
+    }
+
+    [Fact]
+    public async Task SaveSquareCommand_saves_normalized_square_terminal_device_id()
+    {
+        var service = new FakeCardTerminalSetupService(squareAccessToken: CachedToken)
+        {
+            SquareDevicesResult = [new("device:533CS145C3000413", "Square Terminal 0413", "AVAILABLE")]
+        };
+        var viewModel = new SettingsViewModel(service);
+
+        await viewModel.LoadLocationsCommand.ExecuteAsync(null);
+        viewModel.SelectedSquareLocation = viewModel.SquareLocations.Single();
+        await viewModel.LoadDevicesCommand.ExecuteAsync(null);
+        viewModel.SelectedSquareDevice = viewModel.SquareDevices.Single();
+        await viewModel.SaveSquareCommand.ExecuteAsync(null);
+
+        Assert.NotNull(service.SavedConfiguration);
+        Assert.Equal("533CS145C3000413", service.SavedConfiguration!.SquareDeviceId);
+    }
+
+    [Fact]
+    public async Task SaveSquareCommand_switches_to_another_device_in_same_location()
+    {
+        var service = new FakeCardTerminalSetupService(
+            CardTerminalConfiguration.Default with
+            {
+                Processor = CardProcessorKind.Square,
+                SquareLocationId = "LOC-1",
+                SquareDeviceId = "DEV-1",
+                HasProtectedSquareAccessToken = true
+            },
+            CachedToken)
+        {
+            SquareDevicesResult =
+            [
+                new("DEV-1", "Counter 1", "AVAILABLE"),
+                new("DEV-2", "Counter 2", "AVAILABLE")
+            ]
+        };
+        var viewModel = new SettingsViewModel(service);
+
+        await viewModel.LoadAsync();
+        await viewModel.LoadLocationsCommand.ExecuteAsync(null);
+        viewModel.SelectedSquareLocation = viewModel.SquareLocations.Single();
+        await viewModel.LoadDevicesCommand.ExecuteAsync(null);
+        viewModel.SelectedSquareDevice = viewModel.SquareDevices.Last();
+
+        Assert.Equal("Selected Counter 2. Save Square to switch the next payment to this terminal.", viewModel.StatusMessage);
+
+        await viewModel.SaveSquareCommand.ExecuteAsync(null);
+
+        Assert.NotNull(service.SavedConfiguration);
+        Assert.Equal("DEV-2", service.SavedConfiguration!.SquareDeviceId);
+        Assert.Equal("Square terminal settings saved. The next payment will use Counter 2.", viewModel.StatusMessage);
+    }
+
+    [Fact]
+    public async Task Device_code_commands_are_disabled_in_sandbox_mode()
+    {
+        var viewModel = new SettingsViewModel(new FakeCardTerminalSetupService(
+            CardTerminalConfiguration.Default with
+            {
+                Environment = CardTerminalEnvironment.Sandbox
+            },
+            CachedToken));
+
+        await viewModel.LoadAsync();
+
+        Assert.False(viewModel.IsSquareDeviceCodesSupported);
+        Assert.False(viewModel.LoadDeviceCodesCommand.CanExecute(null));
+        Assert.False(viewModel.CreateDeviceCodeCommand.CanExecute(null));
+        Assert.False(viewModel.RefreshDeviceCodeStatusCommand.CanExecute(null));
+    }
+
+    [Fact]
+    public async Task CreateDeviceCodeCommand_creates_and_selects_new_code()
+    {
+        var service = new FakeCardTerminalSetupService(squareAccessToken: CachedToken)
+        {
+            CreateDeviceCodeResult = new("DC-1", "Counter 3", "PAIR123", "UNPAIRED", "LOC-1", null, DateTimeOffset.UtcNow.AddMinutes(5), DateTimeOffset.UtcNow)
+        };
+        var viewModel = new SettingsViewModel(service);
+
+        await viewModel.LoadLocationsCommand.ExecuteAsync(null);
+        viewModel.SelectedSquareLocation = viewModel.SquareLocations.Single();
+        viewModel.SquareDeviceCodeNameText = "Counter 3";
+        await viewModel.CreateDeviceCodeCommand.ExecuteAsync(null);
+
+        Assert.NotNull(service.LastCreatedDeviceCodeRequest);
+        Assert.Equal("LOC-1", service.LastCreatedDeviceCodeRequest!.Value.LocationId);
+        Assert.Equal("Counter 3", service.LastCreatedDeviceCodeRequest.Value.Name);
+        Assert.Single(viewModel.SquareDeviceCodes);
+        Assert.Equal("PAIR123", viewModel.SelectedSquareDeviceCode!.Code);
+        Assert.Equal("Created device code PAIR123 for Counter 3. Enter it on the Square Terminal, then refresh status.", viewModel.StatusMessage);
+    }
+
+    [Fact]
+    public async Task RefreshDeviceCodeStatusCommand_pairs_and_selects_matching_device_without_saving()
+    {
+        var service = new FakeCardTerminalSetupService(squareAccessToken: CachedToken)
+        {
+            SquareDevicesResult =
+            [
+                new("DEV-1", "Counter 1", "AVAILABLE"),
+                new("DEV-2", "Counter 2", "AVAILABLE")
+            ],
+            GetDeviceCodeResult = new("DC-1", "Counter 2", "PAIR123", "PAIRED", "LOC-1", "DEV-2", DateTimeOffset.UtcNow.AddMinutes(5), DateTimeOffset.UtcNow)
+        };
+        var viewModel = new SettingsViewModel(service);
+
+        await viewModel.LoadLocationsCommand.ExecuteAsync(null);
+        viewModel.SelectedSquareLocation = viewModel.SquareLocations.Single();
+        await viewModel.LoadDevicesCommand.ExecuteAsync(null);
+        await viewModel.CreateDeviceCodeCommand.ExecuteAsync(null);
+        await viewModel.RefreshDeviceCodeStatusCommand.ExecuteAsync(null);
+
+        Assert.NotNull(viewModel.SelectedSquareDevice);
+        Assert.Equal("DEV-2", viewModel.SelectedSquareDevice!.Id);
+        Assert.Null(service.SavedConfiguration);
+        Assert.Equal("Device code paired successfully. Counter 2 is selected and ready to save for the next payment.", viewModel.StatusMessage);
+    }
+
+    [Fact]
+    public async Task RefreshDeviceCodeStatusCommand_matches_devices_api_id_to_device_code_id()
+    {
+        var service = new FakeCardTerminalSetupService(squareAccessToken: CachedToken)
+        {
+            SquareDevicesResult =
+            [
+                new("device:533CS145C3000413", "Square Terminal 0413", "AVAILABLE")
+            ],
+            GetDeviceCodeResult = new("DC-1", "Square Terminal 0413", "PAIR123", "PAIRED", "LOC-1", "533CS145C3000413", DateTimeOffset.UtcNow.AddMinutes(5), DateTimeOffset.UtcNow)
+        };
+        var viewModel = new SettingsViewModel(service);
+
+        await viewModel.LoadLocationsCommand.ExecuteAsync(null);
+        viewModel.SelectedSquareLocation = viewModel.SquareLocations.Single();
+        await viewModel.LoadDevicesCommand.ExecuteAsync(null);
+        await viewModel.CreateDeviceCodeCommand.ExecuteAsync(null);
+        await viewModel.RefreshDeviceCodeStatusCommand.ExecuteAsync(null);
+
+        Assert.NotNull(viewModel.SelectedSquareDevice);
+        Assert.Equal("device:533CS145C3000413", viewModel.SelectedSquareDevice!.Id);
+        Assert.Null(service.SavedConfiguration);
+    }
+
+    [Fact]
+    public async Task LoadDevicesCommand_selects_saved_device_when_saved_id_has_devices_api_prefix()
+    {
+        var service = new FakeCardTerminalSetupService(
+            CardTerminalConfiguration.Default with
+            {
+                Processor = CardProcessorKind.Square,
+                SquareLocationId = "LOC-1",
+                SquareDeviceId = "device:533CS145C3000413",
+                HasProtectedSquareAccessToken = true
+            },
+            CachedToken)
+        {
+            SquareDevicesResult =
+            [
+                new("device:533CS145C3000413", "Square Terminal 0413", "AVAILABLE")
+            ]
+        };
+        var viewModel = new SettingsViewModel(service);
+
+        await viewModel.LoadAsync();
+        await viewModel.LoadLocationsCommand.ExecuteAsync(null);
+        await viewModel.LoadDevicesCommand.ExecuteAsync(null);
+
+        Assert.NotNull(viewModel.SelectedSquareDevice);
+        Assert.Equal("device:533CS145C3000413", viewModel.SelectedSquareDevice!.Id);
     }
 
     [Fact]
@@ -253,6 +427,21 @@ public sealed class SettingsViewModelTests
         Assert.Equal("connection failed", viewModel.LinklyTestStatusMessage);
         Assert.Equal("connection failed", viewModel.StatusMessage);
     }
+    [Fact]
+    public void Localized_properties_and_status_refresh_when_culture_changes()
+    {
+        var localization = new LocalizationService();
+        var viewModel = new SettingsViewModel(new FakeCardTerminalSetupService(), localization);
+
+        Assert.Equal("Settings", viewModel.ScreenTitleText);
+        Assert.Equal("Ready.", viewModel.StatusMessage);
+
+        localization.SetCulture("zh-CN");
+
+        Assert.Equal("\u8BBE\u7F6E", viewModel.ScreenTitleText);
+        Assert.Equal("\u5C31\u7EEA\u3002", viewModel.StatusMessage);
+        Assert.Equal("\u6570\u636E\u7EF4\u62A4", viewModel.DataMaintenanceTitleText);
+    }
 
     private sealed class FakeCardTerminalSetupService(
         CardTerminalConfiguration? configuration = null,
@@ -266,6 +455,20 @@ public sealed class SettingsViewModelTests
         public string? SavedSquareAccessToken { get; private set; }
 
         public LinklyConnectionTestResult LinklyTestResult { get; init; } = new(false, "failed");
+
+        public IReadOnlyList<SquareLocationOption> SquareLocationsResult { get; init; } = [new("LOC-1", "Main")];
+
+        public IReadOnlyList<SquareDeviceOption> SquareDevicesResult { get; set; } = [new("DEV-1", "Counter", "AVAILABLE")];
+
+        public IReadOnlyList<SquareDeviceCodeOption> SquareDeviceCodesResult { get; set; } = [];
+
+        public SquareDeviceCodeOption CreateDeviceCodeResult { get; set; } =
+            new("DC-1", "Counter", "PAIR123", "UNPAIRED", "LOC-1", null, DateTimeOffset.UtcNow.AddMinutes(5), DateTimeOffset.UtcNow);
+
+        public SquareDeviceCodeOption GetDeviceCodeResult { get; set; } =
+            new("DC-1", "Counter", "PAIR123", "UNPAIRED", "LOC-1", null, DateTimeOffset.UtcNow.AddMinutes(5), DateTimeOffset.UtcNow);
+
+        public (string LocationId, string Name)? LastCreatedDeviceCodeRequest { get; private set; }
 
         public Task<CardTerminalConfiguration> LoadConfigurationAsync(CancellationToken cancellationToken = default)
         {
@@ -287,8 +490,7 @@ public sealed class SettingsViewModelTests
                 throw new InvalidOperationException("Enter a Square Access Token first.");
             }
 
-            IReadOnlyList<SquareLocationOption> locations = [new("LOC-1", "Main")];
-            return Task.FromResult(locations);
+            return Task.FromResult(SquareLocationsResult);
         }
 
         public Task<IReadOnlyList<SquareDeviceOption>> ListSquareDevicesAsync(
@@ -303,8 +505,54 @@ public sealed class SettingsViewModelTests
             }
 
             Assert.Equal("LOC-1", locationId);
-            IReadOnlyList<SquareDeviceOption> devices = [new("DEV-1", "Counter", "AVAILABLE")];
-            return Task.FromResult(devices);
+            return Task.FromResult(SquareDevicesResult);
+        }
+
+        public Task<IReadOnlyList<SquareDeviceCodeOption>> ListSquareDeviceCodesAsync(
+            string? accessToken,
+            CardTerminalEnvironment environment,
+            string locationId,
+            CancellationToken cancellationToken = default)
+        {
+            if (string.IsNullOrWhiteSpace(accessToken) && string.IsNullOrWhiteSpace(_squareAccessToken))
+            {
+                throw new InvalidOperationException("Enter a Square Access Token first.");
+            }
+
+            Assert.Equal("LOC-1", locationId);
+            return Task.FromResult(SquareDeviceCodesResult);
+        }
+
+        public Task<SquareDeviceCodeOption> CreateSquareDeviceCodeAsync(
+            string? accessToken,
+            CardTerminalEnvironment environment,
+            string locationId,
+            string name,
+            CancellationToken cancellationToken = default)
+        {
+            if (string.IsNullOrWhiteSpace(accessToken) && string.IsNullOrWhiteSpace(_squareAccessToken))
+            {
+                throw new InvalidOperationException("Enter a Square Access Token first.");
+            }
+
+            LastCreatedDeviceCodeRequest = (locationId, name);
+            SquareDeviceCodesResult = [CreateDeviceCodeResult, .. SquareDeviceCodesResult];
+            return Task.FromResult(CreateDeviceCodeResult);
+        }
+
+        public Task<SquareDeviceCodeOption> GetSquareDeviceCodeAsync(
+            string? accessToken,
+            CardTerminalEnvironment environment,
+            string deviceCodeId,
+            CancellationToken cancellationToken = default)
+        {
+            if (string.IsNullOrWhiteSpace(accessToken) && string.IsNullOrWhiteSpace(_squareAccessToken))
+            {
+                throw new InvalidOperationException("Enter a Square Access Token first.");
+            }
+
+            Assert.Equal("DC-1", deviceCodeId);
+            return Task.FromResult(GetDeviceCodeResult);
         }
 
         public Task SaveSquareAsync(

@@ -194,9 +194,11 @@
     </Style>
 
     <Style x:Key="PosNumberButtonStyle" TargetType="Button" BasedOn="{StaticResource PosSecondaryButtonStyle}">
-        <Setter Property="MinHeight" Value="54" />
-        <Setter Property="Margin" Value="4" />
-        <Setter Property="FontSize" Value="22" />
+        <Setter Property="MinHeight" Value="44" />
+        <Setter Property="Margin" Value="3" />
+        <Setter Property="Padding" Value="8,4" />
+        <Setter Property="FontSize" Value="28" />
+        <Setter Property="FontWeight" Value="Black" />
         <Setter Property="Background" Value="White" />
     </Style>
 
@@ -208,8 +210,9 @@
 
     <Style x:Key="PosPaymentMethodButtonStyle" TargetType="Button" BasedOn="{StaticResource PosSecondaryButtonStyle}">
         <Setter Property="HorizontalContentAlignment" Value="Left" />
-        <Setter Property="MinHeight" Value="52" />
-        <Setter Property="Margin" Value="0,0,0,10" />
+        <Setter Property="MinHeight" Value="68" />
+        <Setter Property="Padding" Value="16,10" />
+        <Setter Property="Margin" Value="0,0,0,12" />
     </Style>
 
     <Style x:Key="PosSearchTextBoxStyle" TargetType="TextBox">

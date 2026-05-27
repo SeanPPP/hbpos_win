@@ -27,9 +27,65 @@ public sealed class CardTerminalSetupServiceTests
         Assert.Equal(1, store.ForceRefreshCount);
     }
 
+    [Fact]
+    public async Task CreateSquareDeviceCodeAsync_refreshes_token_once_after_auth_failure()
+    {
+        var store = new FakeCardTerminalSettingsStore();
+        var squareClient = new FakeSquareTerminalSetupClient
+        {
+            FailFirstRequestWithAuthError = true
+        };
+        var service = new CardTerminalSetupService(store, squareClient, new FakeLinklyTerminalClient());
+
+        var result = await service.CreateSquareDeviceCodeAsync(null, CardTerminalEnvironment.Production, "LOC-1", "Counter 2");
+
+        Assert.Equal("PAIR123", result.Code);
+        Assert.True(
+            squareClient.UsedTokenSequence(LocalToken, RemoteToken),
+            "setup service should retry device code creation with refreshed token after Square auth failure");
+        Assert.Equal(1, store.ForceRefreshCount);
+    }
+
+    [Fact]
+    public async Task Device_code_operations_are_blocked_in_sandbox()
+    {
+        var service = new CardTerminalSetupService(
+            new FakeCardTerminalSettingsStore(),
+            new FakeSquareTerminalSetupClient(),
+            new FakeLinklyTerminalClient());
+
+        var exception = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            service.ListSquareDeviceCodesAsync(null, CardTerminalEnvironment.Sandbox, "LOC-1"));
+
+        Assert.Equal("Square Device Codes are only supported in Production.", exception.Message);
+    }
+
+    [Fact]
+    public async Task SaveSquareAsync_normalizes_devices_api_device_id_before_saving()
+    {
+        var store = new FakeCardTerminalSettingsStore();
+        var service = new CardTerminalSetupService(
+            store,
+            new FakeSquareTerminalSetupClient(),
+            new FakeLinklyTerminalClient());
+        var configuration = CardTerminalConfiguration.Default with
+        {
+            Processor = CardProcessorKind.Square,
+            SquareLocationId = "LOC-1",
+            SquareDeviceId = "device:533CS145C3000413"
+        };
+
+        await service.SaveSquareAsync(configuration, squareAccessToken: null);
+
+        Assert.NotNull(store.SavedConfiguration);
+        Assert.Equal("533CS145C3000413", store.SavedConfiguration!.SquareDeviceId);
+    }
+
     private sealed class FakeCardTerminalSettingsStore : ICardTerminalSettingsStore
     {
         public int ForceRefreshCount { get; private set; }
+
+        public CardTerminalConfiguration? SavedConfiguration { get; private set; }
 
         public Task<CardTerminalConfiguration> LoadAsync(CancellationToken cancellationToken = default)
         {
@@ -45,6 +101,7 @@ public sealed class CardTerminalSetupServiceTests
             string? squareAccessToken,
             CancellationToken cancellationToken = default)
         {
+            SavedConfiguration = configuration;
             return Task.CompletedTask;
         }
 
@@ -123,6 +180,48 @@ public sealed class CardTerminalSetupServiceTests
             string accessToken,
             CardTerminalEnvironment environment,
             string locationId,
+            CancellationToken cancellationToken = default)
+        {
+            throw new NotSupportedException();
+        }
+
+        public Task<IReadOnlyList<SquareDeviceCodeOption>> ListDeviceCodesAsync(
+            string accessToken,
+            CardTerminalEnvironment environment,
+            string locationId,
+            CancellationToken cancellationToken = default)
+        {
+            throw new NotSupportedException();
+        }
+
+        public Task<SquareDeviceCodeOption> CreateDeviceCodeAsync(
+            string accessToken,
+            CardTerminalEnvironment environment,
+            string locationId,
+            string name,
+            CancellationToken cancellationToken = default)
+        {
+            Tokens.Add(accessToken);
+            if (FailFirstRequestWithAuthError && Tokens.Count == 1)
+            {
+                throw new SquareApiException("Square create device code request failed with status 401 (Unauthorized).", HttpStatusCode.Unauthorized);
+            }
+
+            return Task.FromResult(new SquareDeviceCodeOption(
+                "DC-1",
+                name,
+                "PAIR123",
+                "UNPAIRED",
+                locationId,
+                null,
+                DateTimeOffset.UtcNow.AddMinutes(5),
+                DateTimeOffset.UtcNow));
+        }
+
+        public Task<SquareDeviceCodeOption> GetDeviceCodeAsync(
+            string accessToken,
+            CardTerminalEnvironment environment,
+            string deviceCodeId,
             CancellationToken cancellationToken = default)
         {
             throw new NotSupportedException();

@@ -5,6 +5,8 @@ namespace Hbpos.Client.Wpf.Services;
 
 public sealed class CashCheckoutService
 {
+    private readonly CashRoundingPolicy _cashRoundingPolicy = new();
+
     public CashCheckoutResult CreateCashOrder(PosCartService cart, PosSessionState session, decimal tenderedAmount)
     {
         var result = CreatePaymentOrder(
@@ -47,29 +49,45 @@ public sealed class CashCheckoutService
             throw new InvalidOperationException("At least one payment tender is required.");
         }
 
-        var paymentTotal = decimal.Round(tenders.Sum(tender => tender.Amount), 2, MidpointRounding.AwayFromZero);
-        if (paymentTotal < cart.ActualAmount)
+        if (tenders.Any(tender => tender.Amount <= 0m))
         {
-            throw new InvalidOperationException("Payment amount cannot be less than amount due.");
+            throw new InvalidOperationException("Payment tender amounts must be greater than zero.");
         }
 
-        var nonCashTotal = tenders
+        var normalizedTenders = tenders
+            .Select(NormalizeTender)
+            .ToList();
+        var paymentTotal = RoundCurrency(normalizedTenders.Sum(tender => tender.Amount));
+        var nonCashTotal = RoundCurrency(normalizedTenders
             .Where(tender => tender.Method != PaymentMethodKind.Cash)
-            .Sum(tender => tender.Amount);
+            .Sum(tender => tender.Amount));
         if (nonCashTotal > cart.ActualAmount)
         {
             throw new InvalidOperationException("Non-cash payments cannot exceed amount due.");
         }
 
-        var changeAmount = decimal.Round(paymentTotal - cart.ActualAmount, 2, MidpointRounding.AwayFromZero);
-        if (changeAmount > cashTenderedAmount)
+        var cashTenderedTotal = RoundCurrency(normalizedTenders
+            .Where(tender => tender.Method == PaymentMethodKind.Cash)
+            .Sum(tender => tender.Amount));
+        var hasCashTender = cashTenderedTotal > 0m;
+        var roundedCashDue = hasCashTender
+            ? _cashRoundingPolicy.CalculateRoundedCashDue(cart.ActualAmount, nonCashTotal)
+            : 0m;
+        var requiredPaymentTotal = hasCashTender
+            ? RoundCurrency(nonCashTotal + roundedCashDue)
+            : cart.ActualAmount;
+        if (paymentTotal < requiredPaymentTotal)
         {
-            throw new InvalidOperationException("Only cash payments can exceed amount due.");
+            throw new InvalidOperationException("Payment amount cannot be less than amount due.");
         }
 
-        if (tenders.Any(tender => tender.Amount <= 0m))
+        var normalizedCashTenderedAmount = hasCashTender
+            ? cashTenderedTotal
+            : _cashRoundingPolicy.NormalizeCashTender(cashTenderedAmount);
+        var changeAmount = RoundCurrency(paymentTotal - requiredPaymentTotal);
+        if (changeAmount > normalizedCashTenderedAmount)
         {
-            throw new InvalidOperationException("Payment tender amounts must be greater than zero.");
+            throw new InvalidOperationException("Only cash payments can exceed amount due.");
         }
 
         var lines = cart.Lines
@@ -98,11 +116,11 @@ public sealed class CashCheckoutService
             cart.DiscountAmount,
             cart.ActualAmount,
             lines,
-            AllocatePayments(cart.ActualAmount, tenders));
+            AllocatePayments(cart.ActualAmount, BuildOrderTendersForAllocation(cart.ActualAmount, normalizedTenders)));
 
         return new PaymentCheckoutResult(
             order,
-            cashTenderedAmount,
+            normalizedCashTenderedAmount,
             changeAmount);
     }
 
@@ -136,5 +154,44 @@ public sealed class CashCheckoutService
         }
 
         return payments;
+    }
+
+    private PaymentTender NormalizeTender(PaymentTender tender)
+    {
+        var normalizedAmount = tender.Method == PaymentMethodKind.Cash
+            ? _cashRoundingPolicy.NormalizeCashTender(tender.Amount)
+            : RoundCurrency(tender.Amount);
+        return tender with { Amount = normalizedAmount };
+    }
+
+    private static IReadOnlyList<PaymentTender> BuildOrderTendersForAllocation(
+        decimal actualAmount,
+        IReadOnlyList<PaymentTender> normalizedTenders)
+    {
+        var tenderTotal = RoundCurrency(normalizedTenders.Sum(tender => tender.Amount));
+        var shortfall = RoundCurrency(actualAmount - tenderTotal);
+        if (shortfall <= 0m)
+        {
+            return normalizedTenders;
+        }
+
+        var allocationTenders = normalizedTenders.ToList();
+        var cashTenderIndex = allocationTenders.FindLastIndex(tender => tender.Method == PaymentMethodKind.Cash);
+        if (cashTenderIndex < 0)
+        {
+            return normalizedTenders;
+        }
+
+        var cashTender = allocationTenders[cashTenderIndex];
+        allocationTenders[cashTenderIndex] = cashTender with
+        {
+            Amount = RoundCurrency(cashTender.Amount + shortfall)
+        };
+        return allocationTenders;
+    }
+
+    private static decimal RoundCurrency(decimal amount)
+    {
+        return decimal.Round(amount, 2, MidpointRounding.AwayFromZero);
     }
 }
