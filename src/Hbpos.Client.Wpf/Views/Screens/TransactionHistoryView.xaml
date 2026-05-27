@@ -34,30 +34,29 @@
 
             <Border Grid.Row="0" Background="{StaticResource PosScreenBackgroundBrush}" Padding="24,20">
                 <StackPanel>
-                    <DockPanel Margin="0,0,0,16">
-                        <Button DockPanel.Dock="Left"
+                    <Grid>
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="Auto" />
+                            <ColumnDefinition Width="1.05*" />
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="*" />
+                        </Grid.ColumnDefinitions>
+
+                        <Button Grid.Column="0"
                                 Command="{Binding ReturnToPosCommand}"
-                                MinWidth="132"
-                                Height="44"
+                                Height="38"
+                                MinWidth="0"
+                                Padding="10,0"
                                 Margin="0,0,12,0"
+                                VerticalAlignment="Bottom"
                                 Style="{StaticResource PosSecondaryButtonStyle}">
                             <StackPanel Orientation="Horizontal">
                                 <materialDesign:PackIcon Kind="ArrowLeft" Width="16" Height="16" Margin="0,0,6,0" />
                                 <TextBlock Text="{loc:Loc shell.backToPos}" />
                             </StackPanel>
                         </Button>
-                    </DockPanel>
 
-                    <Grid>
-                        <Grid.ColumnDefinitions>
-                            <ColumnDefinition Width="1.05*" />
-                            <ColumnDefinition Width="*" />
-                            <ColumnDefinition Width="*" />
-                            <ColumnDefinition Width="1.4*" />
-                            <ColumnDefinition Width="Auto" />
-                        </Grid.ColumnDefinitions>
-
-                        <StackPanel Grid.Column="0" Margin="0,0,12,0">
+                        <StackPanel Grid.Column="1" Margin="0,0,12,0">
                             <TextBlock Text="{loc:Loc Source}" Style="{StaticResource HistoryFilterLabel}" />
                             <Border Height="52"
                                     Padding="14,0"
@@ -79,7 +78,7 @@
                             </Border>
                         </StackPanel>
 
-                        <StackPanel Grid.Column="1" Margin="0,0,12,0">
+                        <StackPanel Grid.Column="2" Margin="0,0,12,0">
                             <TextBlock Text="{loc:Loc history.dateRangeLabel}" Style="{StaticResource HistoryFilterLabel}" />
                             <Grid>
                                 <Grid.ColumnDefinitions>
@@ -97,7 +96,7 @@
                             </Grid>
                         </StackPanel>
 
-                        <StackPanel Grid.Column="2" Margin="0,0,12,0">
+                        <StackPanel Grid.Column="3">
                             <TextBlock Text="{loc:Loc Terminal}" Style="{StaticResource HistoryFilterLabel}" />
                             <ComboBox ItemsSource="{Binding TerminalOptions}"
                                       SelectedItem="{Binding SelectedTerminalOption, Mode=TwoWay}"
@@ -105,8 +104,15 @@
                                       Height="52"
                                       FontSize="16" />
                         </StackPanel>
+                    </Grid>
 
-                        <StackPanel Grid.Column="3" Margin="0,0,12,0">
+                    <Grid Margin="0,12,0,0">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+
+                        <StackPanel Grid.Column="0" Margin="0,0,12,0">
                             <TextBlock Text="{loc:Loc history.searchLabel}" Style="{StaticResource HistoryFilterLabel}" />
                             <TextBox Text="{Binding SearchText, UpdateSourceTrigger=PropertyChanged}"
                                      materialDesign:HintAssist.Hint="{Binding SearchHintText}"
@@ -115,7 +121,7 @@
                                      Style="{StaticResource PosSearchTextBoxStyle}" />
                         </StackPanel>
 
-                        <Button Grid.Column="4"
+                        <Button Grid.Column="1"
                                 Command="{Binding LoadCommand}"
                                 MinWidth="116"
                                 Height="52"
