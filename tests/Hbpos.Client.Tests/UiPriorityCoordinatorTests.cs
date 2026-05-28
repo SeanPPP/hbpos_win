@@ -7,17 +7,18 @@ public sealed class UiPriorityCoordinatorTests
     [Fact]
     public async Task WaitForUiIdleAsync_WaitsUntilRecentInputBecomesIdle()
     {
+        var idleDelay = TimeSpan.FromMilliseconds(500);
         var coordinator = new UiPriorityCoordinator(
-            idleDelay: TimeSpan.FromMilliseconds(80),
+            idleDelay: idleDelay,
             pollDelay: TimeSpan.FromMilliseconds(5));
 
         coordinator.NotifyUserInput();
 
         var waitTask = coordinator.WaitForUiIdleAsync();
-        await Task.Delay(20);
+        await Task.Delay(TimeSpan.FromMilliseconds(50));
 
         Assert.False(waitTask.IsCompleted);
-        await waitTask.WaitAsync(TimeSpan.FromSeconds(1));
+        await waitTask.WaitAsync(idleDelay + TimeSpan.FromSeconds(1));
         Assert.False(coordinator.IsUiActive);
     }
 

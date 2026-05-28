@@ -30,7 +30,7 @@ public sealed class OrdersController(
             return BadRequest(ApiResult<OrderSyncResponse>.Fail("ORDER_LINES_REQUIRED", "订单明细不能为空"));
         }
 
-        if (request.Payments.Count == 0)
+        if (request.ActualAmount != 0m && request.Payments.Count == 0)
         {
             return BadRequest(ApiResult<OrderSyncResponse>.Fail("ORDER_PAYMENTS_REQUIRED", "订单付款不能为空"));
         }

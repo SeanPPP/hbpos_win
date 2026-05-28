@@ -167,7 +167,11 @@ public sealed class SqlSugarOrderHistoryRepository(HbposSqlSugarContext dbContex
                 Count(line.Quantity),
                 Amount(line.Price),
                 Amount(line.DiscountAmount),
-                Amount(line.ActualAmount))).ToList(),
+                Amount(line.ActualAmount),
+                OrderLineKind.Sale,
+                null,
+                null,
+                null)).ToList(),
             payments.Select(payment => new OrderHistoryPaymentDto(
                 ParseGuid(payment.PaymentGuid),
                 (PaymentMethodKind)payment.PaymentMethod,
@@ -200,12 +204,13 @@ public sealed class SqlSugarOrderHistoryRepository(HbposSqlSugarContext dbContex
 
     private static string InferCardProcessor(string? paymentReference)
     {
-        if (paymentReference?.StartsWith("ANZ:", StringComparison.OrdinalIgnoreCase) == true)
+        var displayReference = CardRefundReference.GetDisplayReference(paymentReference);
+        if (displayReference?.StartsWith("ANZ:", StringComparison.OrdinalIgnoreCase) == true)
         {
             return "ANZ";
         }
 
-        return paymentReference?.StartsWith("SQ:", StringComparison.OrdinalIgnoreCase) == true
+        return displayReference?.StartsWith("SQ", StringComparison.OrdinalIgnoreCase) == true
             ? "Square"
             : "Card";
     }

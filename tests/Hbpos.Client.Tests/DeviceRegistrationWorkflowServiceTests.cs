@@ -30,6 +30,23 @@ public sealed class DeviceRegistrationWorkflowServiceTests
     }
 
     [Fact]
+    public async Task LoadStoresAsync_WithRejectedCachedDevice_DoesNotMapToPendingStatus()
+    {
+        var api = new FakeDeviceApiClient
+        {
+            Stores = [new StoreSelectionItem("1003", "Zillmere", true)]
+        };
+        var service = new DeviceRegistrationWorkflowService(api, new FakeLocalDeviceRepository(), new FakeFingerprintService("HW-001"));
+        var cached = new LocalDeviceCache("POS-OLD", "1002", "Lutwyche", "HW-001", 1, false, "Device hardware is already registered to another store.", DateTimeOffset.UtcNow);
+
+        var result = await service.LoadStoresAsync(cached, isReregisterMode: false);
+
+        Assert.False(result.HasPendingRegistration);
+        Assert.Equal("POS-OLD", result.DeviceCode);
+        Assert.Equal("1003", result.SelectedStore?.StoreCode);
+    }
+
+    [Fact]
     public async Task RegisterAsync_SavesResponseAndReturnsPendingResult()
     {
         var api = new FakeDeviceApiClient
@@ -49,6 +66,30 @@ public sealed class DeviceRegistrationWorkflowServiceTests
         Assert.True(result.HasPendingRegistration);
         Assert.Equal("Pending approval", result.StatusMessage);
         Assert.False(result.ShouldRaiseActivated);
+    }
+
+    [Fact]
+    public async Task RegisterAsync_WhenResponseIsRejected_DoesNotMapToPendingRegistration()
+    {
+        var api = new FakeDeviceApiClient
+        {
+            RegisterResponse = new DeviceRegisterResponse(
+                "POS-OLD",
+                "1002",
+                "Lutwyche",
+                1,
+                false,
+                "Device hardware is already registered to another store.")
+        };
+        var repository = new FakeLocalDeviceRepository();
+        var service = new DeviceRegistrationWorkflowService(api, repository, new FakeFingerprintService("HW-001"));
+
+        var result = await service.RegisterAsync(new StoreSelectionItem("1003", "Zillmere", true), "HW-001");
+
+        Assert.False(result.HasPendingRegistration);
+        Assert.False(result.ShouldRaiseActivated);
+        Assert.Equal("Device hardware is already registered to another store.", result.StatusMessage);
+        Assert.Null(repository.LastRegisterResponse);
     }
 
     [Fact]

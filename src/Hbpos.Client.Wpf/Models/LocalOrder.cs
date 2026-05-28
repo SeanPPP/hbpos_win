@@ -27,7 +27,11 @@ public sealed record LocalOrderLine(
     decimal UnitPrice,
     decimal DiscountAmount,
     decimal ActualAmount,
-    PriceSourceKind PriceSource);
+    PriceSourceKind PriceSource,
+    OrderLineKind Kind = OrderLineKind.Sale,
+    string? ReturnSourceKey = null,
+    Guid? OriginalOrderGuid = null,
+    Guid? OriginalOrderDetailGuid = null);
 
 public sealed record LocalOrderHistoryQuery(
     DateTimeOffset? SoldFrom = null,
@@ -40,14 +44,16 @@ public sealed record LocalPayment(
     PaymentMethodKind Method,
     decimal Amount,
     string? Reference,
-    IReadOnlyList<CardTransactionDto>? CardTransactions = null);
+    IReadOnlyList<CardTransactionDto>? CardTransactions = null,
+    string? IdempotencyKey = null);
 
 public sealed record PaymentTender(
     PaymentMethodKind Method,
     decimal Amount,
     string? Reference = null,
     string? DisplayLabel = null,
-    IReadOnlyList<CardTransactionDto>? CardTransactions = null)
+    IReadOnlyList<CardTransactionDto>? CardTransactions = null,
+    string? IdempotencyKey = null)
 {
     public string? DisplayReference => PaymentReferenceDisplay.Format(Method, Reference);
 }

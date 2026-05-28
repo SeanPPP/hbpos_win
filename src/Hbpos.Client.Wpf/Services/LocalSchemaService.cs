@@ -23,6 +23,7 @@ public sealed class LocalSchemaService(LocalSqliteStore store) : ILocalSchemaSer
         await EnsureDeviceCacheColumnsAsync(connection, cancellationToken);
         await EnsureLocalOrderLineColumnsAsync(connection, cancellationToken);
         await EnsureSuspendedOrderLineColumnsAsync(connection, cancellationToken);
+        await EnsureSuspendedOrderReturnPaymentCapacityColumnsAsync(connection, cancellationToken);
 
         foreach (var sql in IndexStatements)
         {
@@ -144,6 +145,26 @@ public sealed class LocalSchemaService(LocalSqliteStore store) : ILocalSchemaSer
         {
             await ExecuteAsync(connection, "ALTER TABLE LocalOrderLines ADD COLUMN ItemNumber TEXT NULL;", cancellationToken);
         }
+
+        if (!columns.Contains("Kind"))
+        {
+            await ExecuteAsync(connection, "ALTER TABLE LocalOrderLines ADD COLUMN Kind INTEGER NOT NULL DEFAULT 1;", cancellationToken);
+        }
+
+        if (!columns.Contains("ReturnSourceKey"))
+        {
+            await ExecuteAsync(connection, "ALTER TABLE LocalOrderLines ADD COLUMN ReturnSourceKey TEXT NULL;", cancellationToken);
+        }
+
+        if (!columns.Contains("OriginalOrderGuid"))
+        {
+            await ExecuteAsync(connection, "ALTER TABLE LocalOrderLines ADD COLUMN OriginalOrderGuid TEXT NULL;", cancellationToken);
+        }
+
+        if (!columns.Contains("OriginalOrderDetailGuid"))
+        {
+            await ExecuteAsync(connection, "ALTER TABLE LocalOrderLines ADD COLUMN OriginalOrderDetailGuid TEXT NULL;", cancellationToken);
+        }
     }
 
     private static async Task EnsureSuspendedOrderLineColumnsAsync(
@@ -154,6 +175,42 @@ public sealed class LocalSchemaService(LocalSqliteStore store) : ILocalSchemaSer
         if (!columns.Contains("DiscountPercent"))
         {
             await ExecuteAsync(connection, "ALTER TABLE SuspendedOrderLines ADD COLUMN DiscountPercent TEXT NULL;", cancellationToken);
+        }
+
+        if (!columns.Contains("Kind"))
+        {
+            await ExecuteAsync(connection, "ALTER TABLE SuspendedOrderLines ADD COLUMN Kind INTEGER NOT NULL DEFAULT 0;", cancellationToken);
+        }
+
+        if (!columns.Contains("ReturnSourceKey"))
+        {
+            await ExecuteAsync(connection, "ALTER TABLE SuspendedOrderLines ADD COLUMN ReturnSourceKey TEXT NOT NULL DEFAULT '';", cancellationToken);
+        }
+
+        if (!columns.Contains("OriginalOrderGuid"))
+        {
+            await ExecuteAsync(connection, "ALTER TABLE SuspendedOrderLines ADD COLUMN OriginalOrderGuid TEXT NULL;", cancellationToken);
+        }
+
+        if (!columns.Contains("OriginalOrderDetailGuid"))
+        {
+            await ExecuteAsync(connection, "ALTER TABLE SuspendedOrderLines ADD COLUMN OriginalOrderDetailGuid TEXT NULL;", cancellationToken);
+        }
+
+        if (!columns.Contains("ReturnReason"))
+        {
+            await ExecuteAsync(connection, "ALTER TABLE SuspendedOrderLines ADD COLUMN ReturnReason TEXT NULL;", cancellationToken);
+        }
+    }
+
+    private static async Task EnsureSuspendedOrderReturnPaymentCapacityColumnsAsync(
+        SqliteConnection connection,
+        CancellationToken cancellationToken)
+    {
+        var columns = await ReadColumnNamesAsync(connection, "SuspendedOrderReturnPaymentCapacities", cancellationToken);
+        if (!columns.Contains("OriginalOrderGuid"))
+        {
+            await ExecuteAsync(connection, "ALTER TABLE SuspendedOrderReturnPaymentCapacities ADD COLUMN OriginalOrderGuid TEXT NULL;", cancellationToken);
         }
     }
 
@@ -259,7 +316,11 @@ public sealed class LocalSchemaService(LocalSqliteStore store) : ILocalSchemaSer
             UnitPrice TEXT NOT NULL,
             DiscountAmount TEXT NOT NULL,
             ActualAmount TEXT NOT NULL,
-            PriceSource INTEGER NOT NULL
+            PriceSource INTEGER NOT NULL,
+            Kind INTEGER NOT NULL DEFAULT 1,
+            ReturnSourceKey TEXT NULL,
+            OriginalOrderGuid TEXT NULL,
+            OriginalOrderDetailGuid TEXT NULL
         );
         """,
         """
@@ -361,7 +422,25 @@ public sealed class LocalSchemaService(LocalSqliteStore store) : ILocalSchemaSer
             DiscountPercent TEXT NULL,
             ActualAmount TEXT NOT NULL,
             PriceSource INTEGER NOT NULL,
-            PriceSourceLabel TEXT NOT NULL
+            PriceSourceLabel TEXT NOT NULL,
+            Kind INTEGER NOT NULL DEFAULT 0,
+            ReturnSourceKey TEXT NOT NULL DEFAULT '',
+            OriginalOrderGuid TEXT NULL,
+            OriginalOrderDetailGuid TEXT NULL,
+            ReturnReason TEXT NULL
+        );
+        """,
+        """
+        CREATE TABLE IF NOT EXISTS SuspendedOrderReturnPaymentCapacities (
+            Id INTEGER PRIMARY KEY AUTOINCREMENT,
+            SuspendedOrderGuid TEXT NOT NULL,
+            Method INTEGER NOT NULL,
+            OriginalAmount TEXT NOT NULL,
+            RefundedAmount TEXT NOT NULL,
+            RemainingAmount TEXT NOT NULL,
+            Reference TEXT NULL,
+            CardTransactionsJson TEXT NULL,
+            OriginalOrderGuid TEXT NULL
         );
         """
     ];
@@ -399,6 +478,10 @@ public sealed class LocalSchemaService(LocalSqliteStore store) : ILocalSchemaSer
         """
         CREATE INDEX IF NOT EXISTS IX_SuspendedOrderLines_Order_ItemNumber_LookupCode
         ON SuspendedOrderLines (SuspendedOrderGuid, ItemNumber, LookupCode);
+        """,
+        """
+        CREATE INDEX IF NOT EXISTS IX_SuspendedOrderReturnPaymentCapacities_Order
+        ON SuspendedOrderReturnPaymentCapacities (SuspendedOrderGuid);
         """
     ];
 }

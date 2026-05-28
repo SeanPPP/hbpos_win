@@ -1,6 +1,7 @@
 using System.Net;
 using System.Net.Http.Headers;
 using System.Text;
+using System.Text.Json;
 using Hbpos.Client.Wpf.Models;
 using Hbpos.Client.Wpf.Services;
 using Hbpos.Contracts.Orders;
@@ -62,6 +63,110 @@ public sealed class ConfiguredCardTerminalClientTests
         Assert.Equal("ANZ:TXN-1", result.Reference);
         Assert.Equal(10m, linkly.LastAmount);
         Assert.Equal("TXN-1", Assert.Single(result.CardTransactions!).TxnRef);
+    }
+
+    [Fact]
+    public async Task RefundAsync_delegates_linkly_refund_to_adapter()
+    {
+        var settings = CardTerminalSettings.FromEnvironment() with { Processor = CardProcessorKind.Linkly };
+        var linkly = new StubLinklyTerminalClient(new PaymentAuthorizationResult(true, "ANZ:REFUND-1", AuthorizedAmount: 6m));
+        var client = new ConfiguredCardTerminalClient(
+            new StaticCardTerminalSettingsProvider(settings),
+            new HttpClient(new StubHttpMessageHandler((_, _) =>
+                Task.FromException<HttpResponseMessage>(new InvalidOperationException("HTTP should not be called.")))),
+            linkly);
+
+        var result = await client.RefundAsync(6m, CreateSession(), "ANZ:ORIGINAL-1");
+
+        Assert.True(result.Approved);
+        Assert.Equal("ANZ:REFUND-1", result.Reference);
+        Assert.Equal(6m, linkly.LastRefundAmount);
+        Assert.Equal("ANZ:ORIGINAL-1", linkly.LastOriginalReference);
+    }
+
+    [Fact]
+    public async Task RefundAsync_posts_square_refund_request()
+    {
+        HttpRequestMessage? capturedRequest = null;
+        var handler = new StubHttpMessageHandler((request, _) =>
+        {
+            capturedRequest = CloneRequestWithBody(request);
+            return JsonResponse(
+                """
+                {
+                  "refund": {
+                    "id": "refund-1",
+                    "status": "PENDING"
+                  }
+                }
+                """);
+        });
+        var client = new ConfiguredCardTerminalClient(
+            new StaticCardTerminalSettingsProvider(CreateSquareSettings()),
+            new HttpClient(handler));
+
+        var result = await client.RefundAsync(12.34m, CreateSession(), "SQ:payment-1");
+
+        Assert.True(result.Approved);
+        Assert.Equal("SQRF:refund-1", result.Reference);
+        Assert.NotNull(capturedRequest);
+        Assert.Equal("https://connect.squareup.com/v2/refunds", capturedRequest!.RequestUri!.AbsoluteUri);
+        var body = await capturedRequest.Content!.ReadAsStringAsync();
+        Assert.Contains("\"payment_id\":\"payment-1\"", body, StringComparison.Ordinal);
+        Assert.Contains("\"amount\":1234", body, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task RefundAsync_reuses_square_refund_idempotency_key_after_network_failure()
+    {
+        var capturedRequests = new List<HttpRequestMessage>();
+        var callCount = 0;
+        var handler = new StubHttpMessageHandler((request, _) =>
+        {
+            capturedRequests.Add(CloneRequestWithBody(request));
+            callCount++;
+            if (callCount == 1)
+            {
+                throw new HttpRequestException("Network dropped after Square accepted the refund.");
+            }
+
+            return JsonResponse(
+                """
+                {
+                  "refund": {
+                    "id": "refund-retry-1",
+                    "status": "PENDING"
+                  }
+                }
+                """);
+        });
+        var client = new ConfiguredCardTerminalClient(
+            new StaticCardTerminalSettingsProvider(CreateSquareSettings()),
+            new HttpClient(handler));
+
+        var first = await client.RefundAsync(12.34m, CreateSession(), "SQ:payment-1");
+        var second = await client.RefundAsync(12.34m, CreateSession(), "SQ:payment-1");
+
+        Assert.False(first.Approved);
+        Assert.True(second.Approved);
+        Assert.Equal(2, capturedRequests.Count);
+        var firstKey = ReadJsonString(await capturedRequests[0].Content!.ReadAsStringAsync(), "idempotency_key");
+        var secondKey = ReadJsonString(await capturedRequests[1].Content!.ReadAsStringAsync(), "idempotency_key");
+        Assert.Equal(firstKey, secondKey);
+    }
+
+    [Fact]
+    public async Task RefundAsync_rejects_missing_square_payment_reference()
+    {
+        var client = new ConfiguredCardTerminalClient(
+            new StaticCardTerminalSettingsProvider(CreateSquareSettings()),
+            new HttpClient(new StubHttpMessageHandler((_, _) =>
+                Task.FromException<HttpResponseMessage>(new InvalidOperationException("HTTP should not be called.")))));
+
+        var result = await client.RefundAsync(5m, CreateSession(), null);
+
+        Assert.False(result.Approved);
+        Assert.Equal("Square refund requires an original Square payment reference.", result.Message);
     }
 
     [Fact]
@@ -729,6 +834,13 @@ public sealed class ConfiguredCardTerminalClientTests
             string.Equals(request.Headers.Authorization.Parameter, expectedToken, StringComparison.Ordinal);
     }
 
+    private static string ReadJsonString(string json, string propertyName)
+    {
+        using var document = JsonDocument.Parse(json);
+        return document.RootElement.GetProperty(propertyName).GetString()
+            ?? throw new InvalidOperationException($"Missing JSON property '{propertyName}'.");
+    }
+
     private static void AssertContainsLogLine(IEnumerable<string> lines, string expectedMessageFragment)
     {
         Assert.Contains(
@@ -766,6 +878,10 @@ public sealed class ConfiguredCardTerminalClientTests
     {
         public decimal LastAmount { get; private set; }
 
+        public decimal LastRefundAmount { get; private set; }
+
+        public string? LastOriginalReference { get; private set; }
+
         public Task<LinklyConnectionTestResult> TestConnectionAsync(
             string host,
             int port,
@@ -792,7 +908,9 @@ public sealed class ConfiguredCardTerminalClientTests
             string? originalReference,
             CancellationToken cancellationToken = default)
         {
-            throw new NotSupportedException();
+            LastRefundAmount = amount;
+            LastOriginalReference = originalReference;
+            return Task.FromResult(result);
         }
 
         public Task<PaymentAuthorizationResult> VoidAsync(

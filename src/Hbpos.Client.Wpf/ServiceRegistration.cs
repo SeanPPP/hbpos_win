@@ -76,6 +76,12 @@ public static class ServiceRegistration
             client.Timeout = TimeSpan.FromSeconds(5);
         })
         .AddHttpMessageHandler<DeviceAuthorizationMessageHandler>();
+        services.AddHttpClient<ILinklyCloudCredentialApiClient, LinklyCloudCredentialApiClient>(client =>
+        {
+            client.BaseAddress = GetApiBaseAddress();
+            client.Timeout = TimeSpan.FromSeconds(5);
+        })
+        .AddHttpMessageHandler<DeviceAuthorizationMessageHandler>();
         services.AddSingleton<IDeviceFingerprintService, DeviceFingerprintService>();
         services.AddSingleton<IUiPriorityCoordinator, UiPriorityCoordinator>();
         services.AddSingleton<ILocalCatalogSyncService, LocalCatalogSyncService>();
@@ -102,13 +108,27 @@ public static class ServiceRegistration
         services.AddSingleton<ICardTerminalSettingsProvider>(sp => sp.GetRequiredService<ICardTerminalSettingsStore>());
         services.AddSingleton<ISquareTokenResolver>(sp => sp.GetRequiredService<ICardTerminalSettingsStore>());
         services.AddSingleton<ISquareAccessTokenProvider>(sp => sp.GetRequiredService<ICardTerminalSettingsStore>());
+        services.AddSingleton<ILinklyCloudSecretStore>(sp => sp.GetRequiredService<ICardTerminalSettingsStore>());
         services.AddSingleton<ILinklyEftClientFactory, LinklyEftClientFactory>();
-        services.AddSingleton<ILinklyTerminalClient, LinklyTerminalClient>();
+        services.AddSingleton<LinklyTerminalClient>();
+        services.AddHttpClient<ILinklyCloudApiClient, LinklyCloudApiClient>(client =>
+        {
+            client.Timeout = TimeSpan.FromSeconds(120);
+        });
+        services.AddSingleton<ILinklyCloudTerminalClient, LinklyCloudTerminalClient>();
+        services.AddSingleton<ILinklyTerminalClient, ConfiguredLinklyTerminalClient>();
         services.AddHttpClient<ISquareTerminalSetupClient, SquareTerminalSetupClient>(client =>
         {
             client.Timeout = TimeSpan.FromSeconds(15);
         });
-        services.AddSingleton<ICardTerminalSetupService, CardTerminalSetupService>();
+        services.AddSingleton<ICardTerminalSetupService>(sp => new CardTerminalSetupService(
+            sp.GetRequiredService<ICardTerminalSettingsStore>(),
+            sp.GetRequiredService<ISquareTerminalSetupClient>(),
+            sp.GetRequiredService<ILinklyTerminalClient>(),
+            sp.GetRequiredService<ILinklyCloudCredentialApiClient>(),
+            sp.GetRequiredService<ILinklyCloudApiClient>(),
+            sp.GetRequiredService<ILinklyCloudTerminalClient>(),
+            sp.GetRequiredService<DeviceAuthorizationState>()));
         services.AddHttpClient<ICardTerminalClient, ConfiguredCardTerminalClient>(client =>
         {
             client.Timeout = TimeSpan.FromSeconds(120);
@@ -170,7 +190,8 @@ public static class ServiceRegistration
             cardTerminalSetupService: sp.GetRequiredService<ICardTerminalSetupService>(),
             receiptPrintService: sp.GetRequiredService<IReceiptPrintService>(),
             receiptPrinterSettingsStore: sp.GetRequiredService<IReceiptPrinterSettingsStore>(),
-            receiptTextFormatter: sp.GetRequiredService<IReceiptTextFormatter>()));
+            receiptTextFormatter: sp.GetRequiredService<IReceiptTextFormatter>(),
+            orderUploadExecutionService: sp.GetRequiredService<IOrderUploadExecutionService>()));
         services.AddSingleton<MainWindow>();
 
         return services;

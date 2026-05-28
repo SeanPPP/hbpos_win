@@ -434,6 +434,68 @@ public sealed class SettingsViewModelTests
     }
 
     [Fact]
+    public async Task LinklyCloud_commands_pair_test_and_save_cloud_mode()
+    {
+        var service = new FakeCardTerminalSetupService
+        {
+            LinklyCloudPairResult = new LinklyConnectionTestResult(true, "paired"),
+            LinklyCloudTestResult = new LinklyConnectionTestResult(true, "cloud connected")
+        };
+        var viewModel = new SettingsViewModel(service)
+        {
+            IsLinklyCloudMode = true,
+            LinklyPairCodeText = "12345"
+        };
+
+        Assert.True(viewModel.PairLinklyCloudCommand.CanExecute(null));
+
+        await viewModel.PairLinklyCloudCommand.ExecuteAsync(null);
+        await viewModel.TestLinklyCommand.ExecuteAsync(null);
+        await viewModel.SaveLinklyCommand.ExecuteAsync(null);
+
+        Assert.True(viewModel.HasSavedLinklyCloudSecret);
+        Assert.Equal("cloud connected", viewModel.LinklyTestStatusMessage);
+        Assert.NotNull(service.SavedConfiguration);
+        Assert.Equal(CardProcessorKind.Linkly, service.SavedConfiguration!.Processor);
+        Assert.Equal(LinklyConnectionMode.Cloud, service.SavedConfiguration.LinklyConnectionMode);
+    }
+
+    [Fact]
+    public async Task LinklyCloud_secret_status_refreshes_when_environment_changes()
+    {
+        var service = new FakeCardTerminalSetupService(CardTerminalConfiguration.Default with
+        {
+            Environment = CardTerminalEnvironment.Production,
+            LinklyConnectionMode = LinklyConnectionMode.Cloud,
+            HasProtectedLinklyCloudSecret = true
+        });
+        service.LinklyCloudSecretStatuses[CardTerminalEnvironment.Production] = true;
+        service.LinklyCloudSecretStatuses[CardTerminalEnvironment.Sandbox] = true;
+        var viewModel = new SettingsViewModel(service);
+
+        await viewModel.LoadAsync();
+        viewModel.IsSandbox = true;
+
+        await WaitUntilAsync(() => viewModel.HasSavedLinklyCloudSecret);
+        Assert.True(viewModel.TestLinklyCommand.CanExecute(null));
+    }
+
+    private static async Task WaitUntilAsync(Func<bool> condition)
+    {
+        for (var attempt = 0; attempt < 20; attempt++)
+        {
+            if (condition())
+            {
+                return;
+            }
+
+            await Task.Delay(10);
+        }
+
+        Assert.True(condition());
+    }
+
+    [Fact]
     public async Task LoadAsync_loads_receipt_printer_settings_and_save_persists_changes()
     {
         var store = new FakeReceiptPrinterSettingsStore
@@ -506,6 +568,7 @@ public sealed class SettingsViewModelTests
         Assert.Equal("\u8BBE\u7F6E", viewModel.ScreenTitleText);
         Assert.Equal("\u5C31\u7EEA\u3002", viewModel.StatusMessage);
         Assert.Equal("\u6570\u636E\u7EF4\u62A4", viewModel.DataMaintenanceTitleText);
+        Assert.Equal("\u66F4\u6362\u5206\u5E97\u6CE8\u518C", viewModel.DeviceRegistrationTitleText);
     }
 
     private sealed class FakeCardTerminalSetupService(
@@ -520,6 +583,12 @@ public sealed class SettingsViewModelTests
         public string? SavedSquareAccessToken { get; private set; }
 
         public LinklyConnectionTestResult LinklyTestResult { get; init; } = new(false, "failed");
+
+        public LinklyConnectionTestResult LinklyCloudPairResult { get; init; } = new(false, "pair failed");
+
+        public LinklyConnectionTestResult LinklyCloudTestResult { get; init; } = new(false, "cloud failed");
+
+        public Dictionary<CardTerminalEnvironment, bool> LinklyCloudSecretStatuses { get; } = [];
 
         public IReadOnlyList<SquareLocationOption> SquareLocationsResult { get; init; } = [new("LOC-1", "Main")];
 
@@ -641,6 +710,50 @@ public sealed class SettingsViewModelTests
         }
 
         public Task SaveLinklyAsync(
+            CardTerminalConfiguration configuration,
+            CancellationToken cancellationToken = default)
+        {
+            SavedConfiguration = configuration;
+            _configuration = configuration;
+            return Task.CompletedTask;
+        }
+
+        public Task<LinklyConnectionTestResult> PairLinklyCloudAsync(
+            CardTerminalEnvironment environment,
+            string pairCode,
+            CancellationToken cancellationToken = default)
+        {
+            if (LinklyCloudPairResult.Succeeded)
+            {
+                LinklyCloudSecretStatuses[environment] = true;
+                _configuration = _configuration with { HasProtectedLinklyCloudSecret = true };
+            }
+
+            return Task.FromResult(LinklyCloudPairResult);
+        }
+
+        public Task<LinklyConnectionTestResult> TestLinklyCloudConnectionAsync(
+            CardTerminalEnvironment environment,
+            CancellationToken cancellationToken = default)
+        {
+            return Task.FromResult(LinklyCloudTestResult);
+        }
+
+        public Task<bool> HasLinklyCloudSecretAsync(
+            CardTerminalEnvironment environment,
+            CancellationToken cancellationToken = default)
+        {
+            if (LinklyCloudSecretStatuses.TryGetValue(environment, out var hasSecret))
+            {
+                return Task.FromResult(hasSecret);
+            }
+
+            return Task.FromResult(
+                _configuration.Environment == environment &&
+                _configuration.HasProtectedLinklyCloudSecret);
+        }
+
+        public Task SaveLinklyCloudAsync(
             CardTerminalConfiguration configuration,
             CancellationToken cancellationToken = default)
         {

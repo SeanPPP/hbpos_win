@@ -17,6 +17,7 @@ public sealed partial class MainViewModel : ObservableObject
 {
     private const string DefaultTestStoreCode = "1002";
     private static readonly TimeSpan StartupCatalogIndexLoadTimeout = TimeSpan.FromSeconds(30);
+    private static readonly TimeSpan InitialCatalogSyncTimeout = TimeSpan.FromSeconds(20);
 
     private readonly LocalSellableItemIndex _priceIndex;
     private readonly PosCartService _cart;
@@ -31,6 +32,7 @@ public sealed partial class MainViewModel : ObservableObject
     private readonly IMainShellStartupService _mainShellStartupService;
     private readonly ILocalOrderRepository _orderRepository;
     private readonly IShellSyncCenterService _shellSyncCenterService;
+    private readonly IOrderUploadExecutionService _orderUploadExecutionService;
     private readonly ILocalizationService _localization;
     private readonly ICustomerDisplayOrchestrator _customerDisplayOrchestrator;
     private readonly IRawScannerService _rawScannerService;
@@ -120,6 +122,9 @@ public sealed partial class MainViewModel : ObservableObject
     private bool _isSyncCenterExpanded;
 
     [ObservableProperty]
+    private bool _isDeviceReregistrationDialogOpen;
+
+    [ObservableProperty]
     private bool _isCustomerDisplayOpen;
 
     [ObservableProperty]
@@ -149,6 +154,9 @@ public sealed partial class MainViewModel : ObservableObject
     [ObservableProperty]
     private bool _isCatalogDownloadProgressFailed;
 
+    [ObservableProperty]
+    private bool _isOrderSyncRetrying;
+
     [ActivatorUtilitiesConstructor]
     public MainViewModel(
         LocalSellableItemIndex priceIndex,
@@ -173,7 +181,8 @@ public sealed partial class MainViewModel : ObservableObject
         IUserFeedbackService? userFeedbackService = null,
         IReceiptPrintService? receiptPrintService = null,
         IReceiptPrinterSettingsStore? receiptPrinterSettingsStore = null,
-        IReceiptTextFormatter? receiptTextFormatter = null)
+        IReceiptTextFormatter? receiptTextFormatter = null,
+        IOrderUploadExecutionService? orderUploadExecutionService = null)
         : this(
             priceIndex,
             cart,
@@ -209,7 +218,8 @@ public sealed partial class MainViewModel : ObservableObject
             userFeedbackService: userFeedbackService ?? NoopUserFeedbackService.Instance,
             receiptPrintService: receiptPrintService ?? NoopReceiptPrintService.Instance,
             receiptPrinterSettingsStore: receiptPrinterSettingsStore,
-            receiptTextFormatter: receiptTextFormatter ?? new ReceiptTextFormatter())
+            receiptTextFormatter: receiptTextFormatter ?? new ReceiptTextFormatter(),
+            orderUploadExecutionService: orderUploadExecutionService)
     {
     }
 
@@ -244,7 +254,8 @@ public sealed partial class MainViewModel : ObservableObject
         ICardTerminalSetupService? cardTerminalSetupService = null,
         IReceiptPrintService? receiptPrintService = null,
         IReceiptPrinterSettingsStore? receiptPrinterSettingsStore = null,
-        IReceiptTextFormatter? receiptTextFormatter = null)
+        IReceiptTextFormatter? receiptTextFormatter = null,
+        IOrderUploadExecutionService? orderUploadExecutionService = null)
     {
         _priceIndex = priceIndex;
         _cart = cart;
@@ -259,6 +270,7 @@ public sealed partial class MainViewModel : ObservableObject
         _mainShellStartupService = mainShellStartupService;
         _orderRepository = orderRepository;
         _shellSyncCenterService = shellSyncCenterService;
+        _orderUploadExecutionService = orderUploadExecutionService ?? NoopOrderUploadExecutionService.Instance;
         _localization = localization;
         _customerDisplayOrchestrator = customerDisplayOrchestrator;
         _rawScannerService = rawScannerService;
@@ -298,6 +310,8 @@ public sealed partial class MainViewModel : ObservableObject
         ShowCustomerDisplayCommand = new RelayCommand(ShowCustomerDisplay);
         ShowSettingsCommand = new AsyncRelayCommand(ShowSettingsAsync);
         ToggleSyncCenterCommand = new AsyncRelayCommand(ToggleSyncCenterAsync);
+        RetrySyncOrderCommand = new AsyncRelayCommand<SyncQueueListItem?>(RetrySyncOrderAsync, CanRetrySyncOrder);
+        RetryAllSyncOrdersCommand = new AsyncRelayCommand(RetryAllSyncOrdersAsync, CanRetryAllSyncOrders);
         ToggleCustomerDisplayWindowCommand = new RelayCommand(ToggleCustomerDisplayWindow);
         CloseCustomerDisplayWindowCommand = new RelayCommand(CloseCustomerDisplayWindow);
         ShowCustomerDisplayNormalCommand = new RelayCommand(ShowCustomerDisplayNormal);
@@ -366,6 +380,10 @@ public sealed partial class MainViewModel : ObservableObject
     public IAsyncRelayCommand ShowSettingsCommand { get; }
 
     public IAsyncRelayCommand ToggleSyncCenterCommand { get; }
+
+    public IAsyncRelayCommand<SyncQueueListItem?> RetrySyncOrderCommand { get; }
+
+    public IAsyncRelayCommand RetryAllSyncOrdersCommand { get; }
 
     public IRelayCommand ToggleCustomerDisplayWindowCommand { get; }
 
@@ -460,6 +478,8 @@ public sealed partial class MainViewModel : ObservableObject
         }
 
         await InitializePosExperienceAsync(startupOptions);
+        IsDeviceReregistrationDialogOpen = false;
+        DeviceRegistration = null;
         _ = ContinuePosStartupAfterShownAsync(startupOptions, Application.Current.MainWindow);
     }
 
@@ -640,6 +660,21 @@ public sealed partial class MainViewModel : ObservableObject
         ApplySessionToScreens();
     }
 
+    partial void OnPendingUploadCountChanged(int value)
+    {
+        RefreshSyncRetryCommandStates();
+    }
+
+    partial void OnFailedUploadCountChanged(int value)
+    {
+        RefreshSyncRetryCommandStates();
+    }
+
+    partial void OnIsOrderSyncRetryingChanged(bool value)
+    {
+        RefreshSyncRetryCommandStates();
+    }
+
     partial void OnCurrentScreenChanged(object? value)
     {
         if (!ReferenceEquals(value, ReceiptReturns))
@@ -745,7 +780,12 @@ public sealed partial class MainViewModel : ObservableObject
 
         if (ReferenceEquals(CurrentScreen, CashPayment))
         {
-            return "shell.page.payment";
+            return CashPayment?.PaymentMode switch
+            {
+                PaymentEntryMode.Refund => "shell.page.refund",
+                PaymentEntryMode.ZeroSettlement => "shell.page.zeroSettlement",
+                _ => "shell.page.payment"
+            };
         }
 
         if (ReferenceEquals(CurrentScreen, SpecialProducts))
@@ -883,6 +923,7 @@ public sealed partial class MainViewModel : ObservableObject
                 _localization);
             CashPayment.PaymentCancelled += (_, _) => ShowPos();
             CashPayment.PaymentCompleted += OnPaymentCompleted;
+            CashPayment.PropertyChanged += OnCashPaymentPropertyChanged;
         }
 
         if (ReferenceEquals(CachedCashPaymentScreen, CashPayment))
@@ -949,15 +990,19 @@ public sealed partial class MainViewModel : ObservableObject
 
     private async Task TryInitialCatalogSyncAsync()
     {
+        using var syncTimeoutCts = new CancellationTokenSource(InitialCatalogSyncTimeout);
         try
         {
-            var cachedItems = await SyncCatalogAndReloadAsync(CancellationToken.None);
+            ConsoleLog.Write("CatalogSync", $"initial sync timeout configured seconds={InitialCatalogSyncTimeout.TotalSeconds:0}");
+            var cachedItems = await SyncCatalogAndReloadAsync(syncTimeoutCts.Token);
             PosTerminal?.LoadMatches(cachedItems);
             PosTerminal?.RefreshCart();
             CashPayment?.RefreshCart();
         }
         catch (OperationCanceledException)
         {
+            ConsoleLog.Write("CatalogSync", $"initial sync canceled or timed out after seconds={InitialCatalogSyncTimeout.TotalSeconds:0}");
+            StatusMessage = "Catalog sync timed out. POS remains available; use Settings > Data Download to retry.";
         }
         catch (Exception ex)
         {
@@ -1100,7 +1145,7 @@ public sealed partial class MainViewModel : ObservableObject
         _deviceRegistrationStoreLoadTask = null;
         ClearCashPaymentCache();
         DeviceRegistration.PrepareReregister(Session.StoreCode);
-        CurrentScreen = DeviceRegistration;
+        IsDeviceReregistrationDialogOpen = true;
         _deviceRegistrationStoreLoadTask = DeviceRegistration.LoadStoresAsync(null);
         await _deviceRegistrationStoreLoadTask;
     }
@@ -1128,14 +1173,21 @@ public sealed partial class MainViewModel : ObservableObject
 
     private void CancelDeviceReregistration()
     {
+        var wasCurrentScreen = ReferenceEquals(CurrentScreen, DeviceRegistration);
         if (PosTerminal is null)
         {
+            IsDeviceReregistrationDialogOpen = false;
+            DeviceRegistration = null;
             return;
         }
 
         DeviceRegistration = null;
+        IsDeviceReregistrationDialogOpen = false;
         _deviceRegistrationStoreLoadTask = null;
-        ShowPos();
+        if (wasCurrentScreen)
+        {
+            ShowPos();
+        }
         StatusMessage = "已取消重新注册设备。";
     }
 
@@ -1215,8 +1267,22 @@ public sealed partial class MainViewModel : ObservableObject
 
     private void ClearCashPaymentCache()
     {
+        if (CashPayment is not null)
+        {
+            CashPayment.PropertyChanged -= OnCashPaymentPropertyChanged;
+        }
+
         CachedCashPaymentScreen = null;
         CashPayment = null;
+    }
+
+    private void OnCashPaymentPropertyChanged(object? sender, System.ComponentModel.PropertyChangedEventArgs e)
+    {
+        if (e.PropertyName == nameof(PaymentViewModel.PaymentMode) &&
+            ReferenceEquals(CurrentScreen, CashPayment))
+        {
+            OnPropertyChanged(nameof(ActivePageTitleText));
+        }
     }
 
     private async void OnPaymentCompleted(object? sender, PaymentCompletedEventArgs e)
@@ -1436,6 +1502,89 @@ public sealed partial class MainViewModel : ObservableObject
         }
 
         IsSyncCenterExpanded = !IsSyncCenterExpanded;
+    }
+
+    private async Task RetrySyncOrderAsync(SyncQueueListItem? item)
+    {
+        if (item is null)
+        {
+            return;
+        }
+
+        await ExecuteOrderSyncRetryAsync(
+            () => _orderUploadExecutionService.ExecuteOneAsync(item.EntityId),
+            "shell.sync.retryingOne");
+    }
+
+    private async Task RetryAllSyncOrdersAsync()
+    {
+        await ExecuteOrderSyncRetryAsync(
+            () => _orderUploadExecutionService.ExecutePendingAsync(),
+            "shell.sync.retryingAll");
+    }
+
+    private async Task ExecuteOrderSyncRetryAsync(
+        Func<Task<OrderUploadExecutionResult>> executeAsync,
+        string retryingStatusKey)
+    {
+        if (IsOrderSyncRetrying)
+        {
+            return;
+        }
+
+        IsOrderSyncRetrying = true;
+        StatusMessage = _localization.T(retryingStatusKey);
+        try
+        {
+            var result = await executeAsync();
+            await RefreshPendingSyncAsync();
+            StatusMessage = string.Format(
+                _localization.CurrentCulture,
+                _localization.T("shell.sync.retryCompleted"),
+                result.UploadedCount,
+                result.FailedCount);
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
+        }
+        catch (Exception ex)
+        {
+            await RefreshPendingSyncAsync();
+            StatusMessage = string.Format(
+                _localization.CurrentCulture,
+                _localization.T("shell.sync.retryFailed"),
+                ex.Message);
+        }
+        finally
+        {
+            IsOrderSyncRetrying = false;
+        }
+    }
+
+    private bool CanRetrySyncOrder(SyncQueueListItem? item)
+    {
+        return !IsOrderSyncRetrying &&
+            item is not null &&
+            item.EntityType.Equals("Order", StringComparison.OrdinalIgnoreCase) &&
+            IsRetryableSyncStatus(item.Status);
+    }
+
+    private bool CanRetryAllSyncOrders()
+    {
+        return !IsOrderSyncRetrying && PendingUploadCount + FailedUploadCount > 0;
+    }
+
+    private static bool IsRetryableSyncStatus(string status)
+    {
+        return status.Equals("Pending", StringComparison.OrdinalIgnoreCase) ||
+            status.Equals("Failed", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private void RefreshSyncRetryCommandStates()
+    {
+        RetrySyncOrderCommand.NotifyCanExecuteChanged();
+        RetryAllSyncOrdersCommand.NotifyCanExecuteChanged();
     }
 
     private void ToggleCustomerDisplayWindow()

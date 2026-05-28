@@ -18,6 +18,7 @@ public sealed class VouchersControllerTests
     {
         Assert.Equal("{voucherCode}", GetHttpGetTemplate(nameof(VouchersController.Get)));
         Assert.Equal("lock", GetHttpPostTemplate(nameof(VouchersController.Lock)));
+        Assert.Equal("refund", GetHttpPostTemplate(nameof(VouchersController.IssueRefund)));
         Assert.NotNull(typeof(VouchersController)
             .GetCustomAttributes(typeof(ApiControllerAttribute), inherit: false)
             .SingleOrDefault());
@@ -77,6 +78,39 @@ public sealed class VouchersControllerTests
         Assert.Equal("REQUESTED_AMOUNT_INVALID", apiResult.ErrorCode);
     }
 
+    [Fact]
+    public async Task IssueRefund_ReturnsWrappedVoucherResponse()
+    {
+        var controller = new VouchersController(new FakeStoreVoucherService());
+        SetAuthenticatedDevice(controller, "S01", "POS-01");
+
+        var result = await controller.IssueRefund(
+            new StoreVoucherIssueRefundRequest("S01", 15m, "C001", IdempotencyKey: "ORDER-1:PAY-1", OrderReference: "ORDER-1", Reason: "Refund"),
+            CancellationToken.None);
+
+        var ok = Assert.IsType<OkObjectResult>(result.Result);
+        var apiResult = Assert.IsType<ApiResult<StoreVoucherIssueRefundResponse>>(ok.Value);
+        Assert.True(apiResult.Success);
+        Assert.NotNull(apiResult.Data);
+        Assert.Equal("RF001", apiResult.Data.VoucherCode);
+    }
+
+    [Fact]
+    public async Task IssueRefund_ReturnsBadRequestWhenIdempotencyKeyMissing()
+    {
+        var controller = new VouchersController(new FakeStoreVoucherService());
+        SetAuthenticatedDevice(controller, "S01", "POS-01");
+
+        var result = await controller.IssueRefund(
+            new StoreVoucherIssueRefundRequest("S01", 15m, "C001", OrderReference: "ORDER-1", Reason: "Refund"),
+            CancellationToken.None);
+
+        var badRequest = Assert.IsType<BadRequestObjectResult>(result.Result);
+        var apiResult = Assert.IsType<ApiResult<StoreVoucherIssueRefundResponse>>(badRequest.Value);
+        Assert.False(apiResult.Success);
+        Assert.Equal("IDEMPOTENCY_KEY_REQUIRED", apiResult.ErrorCode);
+    }
+
     private static string? GetHttpGetTemplate(string methodName)
     {
         return typeof(VouchersController)
@@ -125,6 +159,9 @@ public sealed class VouchersControllerTests
         public StoreVoucherLockResponse LockResponse { get; init; } =
             new("V001", 5m, "token-1", DateTimeOffset.UtcNow.AddMinutes(5));
 
+        public StoreVoucherIssueRefundResponse RefundResponse { get; init; } =
+            new("RF001", 15m, 15m, "1", DateTimeOffset.UtcNow.AddMonths(12));
+
         public Task<StoreVoucherQueryResponse> QueryAsync(
             string storeCode,
             string voucherCode,
@@ -138,6 +175,13 @@ public sealed class VouchersControllerTests
             CancellationToken cancellationToken)
         {
             return Task.FromResult(LockResponse);
+        }
+
+        public Task<StoreVoucherIssueRefundResponse> IssueRefundAsync(
+            StoreVoucherIssueRefundRequest request,
+            CancellationToken cancellationToken)
+        {
+            return Task.FromResult(RefundResponse);
         }
     }
 }

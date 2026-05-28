@@ -24,6 +24,7 @@ public partial class PaymentViewModel : ObservableObject
     private bool _awaitingLateCardResultAfterManualCancel;
     private bool _discardLateCardResultAfterManualCancel;
     private int _paymentEntryVersion;
+    private decimal _workflowRemainingAmount;
 
     [ObservableProperty]
     private PosSessionState _session;
@@ -54,6 +55,9 @@ public partial class PaymentViewModel : ObservableObject
 
     [ObservableProperty]
     private bool _isPaymentInteractionLocked;
+
+    [ObservableProperty]
+    private PaymentEntryMode _paymentMode;
 
     public PaymentViewModel(
         PosCartService cart,
@@ -129,7 +133,7 @@ public partial class PaymentViewModel : ObservableObject
 
     public event EventHandler? PaymentCancelled;
 
-    public string ScreenTitleText => T("payment.title");
+    public string ScreenTitleText => T(GetScreenTitleKey());
 
     public string OrderSummaryText => T("payment.orderSummary");
 
@@ -137,7 +141,7 @@ public partial class PaymentViewModel : ObservableObject
 
     public string AmountTenderedTextLabel => CurrentTenderTextLabel;
 
-    public string RemainingAmountText => T("payment.remaining");
+    public string RemainingAmountText => T(GetRemainingAmountKey());
 
     public string ChangeDueText => T("payment.changeDue");
 
@@ -147,11 +151,17 @@ public partial class PaymentViewModel : ObservableObject
 
     public string AppliedTendersText => T("payment.appliedTenders");
 
-    public string AddTenderText => T("payment.addTender");
+    public string AddTenderText => T(GetAddTenderKey());
 
-    public string ConfirmPaymentText => T("payment.confirm");
+    public string ConfirmPaymentText => T(GetConfirmPaymentKey());
 
-    public string NoTendersText => T("payment.noTenders");
+    public string NoTendersText => T(GetNoTendersKey());
+
+    public string CashMethodText => T(IsRefundMode ? "payment.method.refundCash" : "payment.method.cash");
+
+    public string CardMethodText => T(IsRefundMode ? "payment.method.refundCard" : "payment.method.card");
+
+    public string VoucherMethodText => T(IsRefundMode ? "payment.method.refundVoucher" : "payment.method.voucher");
 
     public string CancelText => T("common.cancel");
 
@@ -165,6 +175,18 @@ public partial class PaymentViewModel : ObservableObject
 
     public decimal ActualAmount => _cart.ActualAmount;
 
+    public bool IsRefundMode => PaymentMode == PaymentEntryMode.Refund;
+
+    public bool IsZeroSettlementMode => PaymentMode == PaymentEntryMode.ZeroSettlement;
+
+    public bool IsPaymentMode => PaymentMode == PaymentEntryMode.Payment;
+
+    public bool IsTenderEntryVisible => !IsZeroSettlementMode;
+
+    public bool IsPaymentMethodSelectionVisible => !IsZeroSettlementMode;
+
+    public bool IsQuickCashVisible => IsPaymentMode && IsCashSelected;
+
     public string AmountTenderedText
     {
         get => TenderAmountText;
@@ -176,6 +198,8 @@ public partial class PaymentViewModel : ObservableObject
     public bool IsCardSelected => SelectedPaymentMethod == PaymentMethodKind.Card;
 
     public bool IsVoucherSelected => SelectedPaymentMethod == PaymentMethodKind.Voucher;
+
+    public bool IsVoucherCodeEntryVisible => IsVoucherSelected && !IsRefundMode;
 
     public bool IsConfirmPaymentVisible => CanConfirmPayment();
 
@@ -200,7 +224,9 @@ public partial class PaymentViewModel : ObservableObject
         OnPropertyChanged(nameof(IsCashSelected));
         OnPropertyChanged(nameof(IsCardSelected));
         OnPropertyChanged(nameof(IsVoucherSelected));
+        OnPropertyChanged(nameof(IsVoucherCodeEntryVisible));
         OnPropertyChanged(nameof(QuickCashAmounts));
+        OnPropertyChanged(nameof(IsQuickCashVisible));
     }
 
     partial void OnIsCardPaymentInProgressChanged(bool value)
@@ -219,6 +245,25 @@ public partial class PaymentViewModel : ObservableObject
         PendingSyncCount = value.PendingSyncCount;
     }
 
+    partial void OnPaymentModeChanged(PaymentEntryMode value)
+    {
+        OnPropertyChanged(nameof(ScreenTitleText));
+        OnPropertyChanged(nameof(RemainingAmountText));
+        OnPropertyChanged(nameof(AddTenderText));
+        OnPropertyChanged(nameof(ConfirmPaymentText));
+        OnPropertyChanged(nameof(NoTendersText));
+        OnPropertyChanged(nameof(CashMethodText));
+        OnPropertyChanged(nameof(CardMethodText));
+        OnPropertyChanged(nameof(VoucherMethodText));
+        OnPropertyChanged(nameof(IsRefundMode));
+        OnPropertyChanged(nameof(IsZeroSettlementMode));
+        OnPropertyChanged(nameof(IsPaymentMode));
+        OnPropertyChanged(nameof(IsTenderEntryVisible));
+        OnPropertyChanged(nameof(IsPaymentMethodSelectionVisible));
+        OnPropertyChanged(nameof(IsQuickCashVisible));
+        OnPropertyChanged(nameof(IsVoucherCodeEntryVisible));
+    }
+
     public void PrepareForEntry(PosSessionState session)
     {
         Session = session;
@@ -235,16 +280,22 @@ public partial class PaymentViewModel : ObservableObject
         PaymentTenders.Clear();
         VoucherCodeText = string.Empty;
         TenderAmountText = string.Empty;
-        _statusKey = "payment.status.ready";
+        _statusKey = GetReadyStatusKey();
         _statusTextOverride = null;
         SelectedPaymentMethod = PaymentMethodKind.Cash;
         RefreshCart();
         SyncTenderAmountToRemaining(force: true);
+        if (!HasBlockingCartIssue())
+        {
+            SetStatus(GetReadyStatusKey());
+        }
+
         OnPropertyChanged(nameof(StatusMessage));
     }
 
     public void RefreshCart()
     {
+        PaymentMode = CalculatePaymentMode();
         CartLines.ReplaceWith(_cart.Lines);
         OnPropertyChanged(nameof(TotalAmount));
         OnPropertyChanged(nameof(DiscountAmount));
@@ -310,7 +361,7 @@ public partial class PaymentViewModel : ObservableObject
             return;
         }
 
-        if (HasTenderForMethod(method))
+        if (HasTenderForMethod(method) && !(IsRefundMode && method == PaymentMethodKind.Card))
         {
             SelectedPaymentMethod = method;
             SetStatus("payment.status.duplicatePaymentMethod");
@@ -324,15 +375,22 @@ public partial class PaymentViewModel : ObservableObject
             return;
         }
 
+        var shouldUseMethodDefaultAmount = IsRefundMode &&
+            method == PaymentMethodKind.Card &&
+            SelectedPaymentMethod != method;
         SelectedPaymentMethod = method;
-        if (method == PaymentMethodKind.Voucher && string.IsNullOrWhiteSpace(VoucherCodeText))
+        if (!IsRefundMode &&
+            method == PaymentMethodKind.Voucher &&
+            string.IsNullOrWhiteSpace(VoucherCodeText))
         {
             SetStatus("payment.status.voucherCodeRequired");
             NotifyPaymentCommandStates();
             return;
         }
 
-        var amountText = ResolveTenderAmountText(method);
+        var amountText = shouldUseMethodDefaultAmount
+            ? ResolveDefaultTenderAmountText(method)
+            : ResolveTenderAmountText(method);
         PaymentTenderAttemptResult result;
         CancellationTokenSource? cardPaymentCts = null;
         var cardPaymentWasManuallyCancelled = false;
@@ -352,13 +410,18 @@ public partial class PaymentViewModel : ObservableObject
                 SetStatus("payment.status.cardProcessing");
             }
 
+            var referenceText = method == PaymentMethodKind.Voucher
+                ? VoucherCodeText
+                : IsRefundMode && method == PaymentMethodKind.Card
+                    ? GetRefundReference(method)
+                    : null;
             result = await _workflowService.AddTenderAsync(
                 method,
                 Session,
                 ActualAmount,
                 PaymentTenders.ToList(),
                 amountText,
-                method == PaymentMethodKind.Voucher ? VoucherCodeText : null,
+                referenceText,
                 method == PaymentMethodKind.Card ? cardPaymentCts?.Token ?? CancellationToken.None : CancellationToken.None);
             if (method == PaymentMethodKind.Card && cardPaymentCts?.IsCancellationRequested == true)
             {
@@ -494,15 +557,15 @@ public partial class PaymentViewModel : ObservableObject
             return;
         }
 
-        if (PaymentTenders.Count == 0)
+        if (!IsZeroSettlementMode && PaymentTenders.Count == 0)
         {
-            SetStatus("payment.status.noTendersAdded");
+            SetStatus(GetNoTendersStatusKey());
             return;
         }
 
-        if (RemainingAmount > 0m)
+        if (!IsSettlementComplete())
         {
-            SetStatus("payment.status.remainingBalance");
+            SetStatus(GetIncompleteSettlementStatusKey());
             return;
         }
 
@@ -580,12 +643,12 @@ public partial class PaymentViewModel : ObservableObject
         if (IsPaymentInteractionLocked ||
             _activeCardPaymentCts is not null ||
             _pendingVoucherUploadOrderGuid is not null ||
-            _cart.IsEmpty || _cart.HasNonIntegerQuantity || _cart.HasReturnLine || _cart.HasZeroPriceLine)
+            _cart.IsEmpty || _cart.HasNonIntegerQuantity || _cart.HasZeroPriceLine || IsZeroSettlementMode)
         {
             return false;
         }
 
-        if (HasTenderForMethod(method))
+        if (HasTenderForMethod(method) && !(IsRefundMode && method == PaymentMethodKind.Card))
         {
             return false;
         }
@@ -596,15 +659,27 @@ public partial class PaymentViewModel : ObservableObject
             return false;
         }
 
-        var remainingAmount = method == PaymentMethodKind.Cash
-            ? Math.Max(0m, RemainingAmount)
-            : GetExternalRemainingAmount();
+        var remainingAmount = IsRefundMode
+            ? GetRefundRemainingAmount(method)
+            : method == PaymentMethodKind.Cash
+                ? GetCashRemainingAmount()
+                : GetExternalRemainingAmount();
         if (remainingAmount <= 0m)
         {
             return false;
         }
 
-        if (method == PaymentMethodKind.Voucher && !allowDefaultAmount && string.IsNullOrWhiteSpace(VoucherCodeText))
+        if (IsRefundMode &&
+            method == PaymentMethodKind.Card &&
+            string.IsNullOrWhiteSpace(GetRefundReference(method)))
+        {
+            return false;
+        }
+
+        if (!IsRefundMode &&
+            method == PaymentMethodKind.Voucher &&
+            !allowDefaultAmount &&
+            string.IsNullOrWhiteSpace(VoucherCodeText))
         {
             return false;
         }
@@ -626,10 +701,9 @@ public partial class PaymentViewModel : ObservableObject
 
         return !_cart.IsEmpty &&
             !_cart.HasNonIntegerQuantity &&
-            !_cart.HasReturnLine &&
             !_cart.HasZeroPriceLine &&
-            PaymentTenders.Count > 0 &&
-            RemainingAmount <= 0m;
+            (IsZeroSettlementMode || PaymentTenders.Count > 0) &&
+            IsSettlementComplete();
     }
 
     private void RefreshCartValidationStatus()
@@ -640,9 +714,9 @@ public partial class PaymentViewModel : ObservableObject
         }
 
         if (_statusTextOverride is null &&
-            _statusKey is "cart.status.quantityMustBeInteger" or "cart.status.zeroPriceItem" or "payment.cash.status.returnCheckoutNotReady")
+            (_statusKey is "cart.status.quantityMustBeInteger" or "cart.status.zeroPriceItem" || IsModeStatusKey(_statusKey)))
         {
-            SetStatus("payment.status.ready");
+            SetStatus(GetReadyStatusKey());
         }
     }
 
@@ -651,12 +725,6 @@ public partial class PaymentViewModel : ObservableObject
         if (_cart.HasNonIntegerQuantity)
         {
             SetStatus("cart.status.quantityMustBeInteger");
-            return true;
-        }
-
-        if (_cart.HasReturnLine)
-        {
-            SetStatus("payment.cash.status.returnCheckoutNotReady");
             return true;
         }
 
@@ -672,10 +740,15 @@ public partial class PaymentViewModel : ObservableObject
     private void RecalculateTenderSummary()
     {
         TotalTendered = _workflowService.CalculateTenderedAmount(PaymentTenders.ToList());
-        RemainingAmount = Math.Max(0m, _workflowService.CalculateRemainingAmount(ActualAmount, PaymentTenders.ToList()));
-        ChangeDue = PaymentTenders.Count == 0 && _workflowService.TryParseTenderedAmount(TenderAmountText, out var tenderedAmount)
-            ? Math.Max(0m, CashRoundingPolicy.CalculateCashChange(ActualAmount, [], tenderedAmount))
-            : _workflowService.CalculateChange(PaymentTenders.ToList(), ActualAmount);
+        _workflowRemainingAmount = _workflowService.CalculateRemainingAmount(ActualAmount, PaymentTenders.ToList());
+        RemainingAmount = Math.Abs(_workflowRemainingAmount);
+        ChangeDue = IsPaymentMode &&
+            PaymentTenders.Count == 0 &&
+            _workflowService.TryParseTenderedAmount(TenderAmountText, out var tenderedAmount)
+                ? Math.Max(0m, CashRoundingPolicy.CalculateCashChange(ActualAmount, [], tenderedAmount))
+                : IsPaymentMode
+                    ? _workflowService.CalculateChange(PaymentTenders.ToList(), ActualAmount)
+                    : 0m;
         OnPropertyChanged(nameof(QuickCashAmounts));
     }
 
@@ -699,8 +772,10 @@ public partial class PaymentViewModel : ObservableObject
         }
 
         var amount = SelectedPaymentMethod == PaymentMethodKind.Cash
-            ? CashRoundingPolicy.GetCashPayableAmount(ActualAmount, PaymentTenders.ToList())
-            : GetExternalRemainingAmount();
+            ? GetCashRemainingAmount()
+            : IsRefundMode
+                ? GetRefundRemainingAmount(SelectedPaymentMethod)
+                : GetExternalRemainingAmount();
         TenderAmountText = amount > 0m ? amount.ToString("0.00") : string.Empty;
     }
 
@@ -721,16 +796,23 @@ public partial class PaymentViewModel : ObservableObject
             return TenderAmountText;
         }
 
+        return ResolveDefaultTenderAmountText(method);
+    }
+
+    private string ResolveDefaultTenderAmountText(PaymentMethodKind method)
+    {
         var amount = method == PaymentMethodKind.Cash
-            ? CashRoundingPolicy.GetCashPayableAmount(ActualAmount, PaymentTenders.ToList())
-            : GetExternalRemainingAmount();
+            ? GetCashRemainingAmount()
+            : IsRefundMode
+                ? GetRefundRemainingAmount(method)
+                : GetExternalRemainingAmount();
         return amount > 0m ? amount.ToString("0.00") : string.Empty;
     }
 
     private decimal GetExternalRemainingAmount()
     {
         var tenderedAmount = PaymentTenders.Sum(tender => tender.Amount);
-        return Math.Max(0m, decimal.Round(ActualAmount - tenderedAmount, 2, MidpointRounding.AwayFromZero));
+        return Math.Abs(decimal.Round(ActualAmount - tenderedAmount, 2, MidpointRounding.AwayFromZero));
     }
 
     private bool HasTenderForMethod(PaymentMethodKind method)
@@ -869,6 +951,223 @@ public partial class PaymentViewModel : ObservableObject
         _discardLateCardResultAfterManualCancel = false;
     }
 
+    private PaymentEntryMode CalculatePaymentMode()
+    {
+        if (ActualAmount < 0m)
+        {
+            return PaymentEntryMode.Refund;
+        }
+
+        if (ActualAmount == 0m)
+        {
+            return PaymentEntryMode.ZeroSettlement;
+        }
+
+        return PaymentEntryMode.Payment;
+    }
+
+    private decimal GetCashRemainingAmount()
+    {
+        return IsRefundMode
+            ? new CashRoundingPolicy().NormalizeCashTender(GetRefundRemainingAmount(PaymentMethodKind.Cash))
+            : CashRoundingPolicy.GetCashPayableAmount(ActualAmount, PaymentTenders.ToList());
+    }
+
+    private decimal GetRefundRemainingAmount(PaymentMethodKind method)
+    {
+        var netRemaining = Math.Abs(decimal.Round(_workflowRemainingAmount, 2, MidpointRounding.AwayFromZero));
+        if (netRemaining <= 0m)
+        {
+            return 0m;
+        }
+
+        if (method != PaymentMethodKind.Card)
+        {
+            return netRemaining;
+        }
+
+        var nextCardCapacity = GetNextCardRefundCapacity();
+        return nextCardCapacity is null
+            ? 0m
+            : Math.Min(netRemaining, nextCardCapacity.Value.RemainingAmount);
+    }
+
+    private string? GetRefundReference(PaymentMethodKind method)
+    {
+        if (!IsRefundMode)
+        {
+            return null;
+        }
+
+        return method == PaymentMethodKind.Card
+            ? GetNextCardRefundCapacity()?.Reference
+            : null;
+    }
+
+    private (string Reference, decimal RemainingAmount)? GetNextCardRefundCapacity()
+    {
+        foreach (var capacity in _cart.ReturnPaymentCapacities.Where(capacity => capacity.Method == PaymentMethodKind.Card))
+        {
+            var reference = NormalizeReference(capacity.Reference);
+            if (reference is null)
+            {
+                continue;
+            }
+
+            var existingTendered = Math.Abs(PaymentTenders
+                .Where(tender => tender.Method == PaymentMethodKind.Card)
+                .Where(tender => string.Equals(GetOriginalCardReference(tender.Reference), reference, StringComparison.OrdinalIgnoreCase))
+                .Sum(tender => tender.Amount));
+            var remainingCapacity = Math.Max(0m, capacity.RemainingAmount - existingTendered);
+            var remainingReturnAmount = GetRemainingReturnAmountForCardCapacity(capacity);
+            var remainingAmount = remainingReturnAmount is decimal orderLimitedAmount
+                ? Math.Min(remainingCapacity, orderLimitedAmount)
+                : remainingCapacity;
+            if (remainingAmount > 0m)
+            {
+                return (reference, remainingAmount);
+            }
+        }
+
+        return null;
+    }
+
+    private decimal? GetRemainingReturnAmountForCardCapacity(OrderReturnPaymentCapacityDto capacity)
+    {
+        if (capacity.OriginalOrderGuid is not Guid originalOrderGuid)
+        {
+            return null;
+        }
+
+        var returnAmount = Math.Abs(decimal.Round(
+            _cart.Lines
+                .Where(line => line.IsReturnLine && line.OriginalOrderGuid == originalOrderGuid)
+                .Sum(line => line.ActualAmount),
+            2,
+            MidpointRounding.AwayFromZero));
+        if (returnAmount <= 0m)
+        {
+            return 0m;
+        }
+
+        var existingCardRefundsForOrder = Math.Abs(decimal.Round(
+            PaymentTenders
+                .Where(tender => tender.Method == PaymentMethodKind.Card)
+                .Where(tender => IsCardRefundForOriginalOrder(tender.Reference, originalOrderGuid))
+                .Sum(tender => tender.Amount),
+            2,
+            MidpointRounding.AwayFromZero));
+        return Math.Max(0m, returnAmount - existingCardRefundsForOrder);
+    }
+
+    private bool IsCardRefundForOriginalOrder(string? reference, Guid originalOrderGuid)
+    {
+        var originalReference = GetOriginalCardReference(reference);
+        if (originalReference is null)
+        {
+            return false;
+        }
+
+        return _cart.ReturnPaymentCapacities.Any(capacity =>
+            capacity.Method == PaymentMethodKind.Card &&
+            capacity.OriginalOrderGuid == originalOrderGuid &&
+            string.Equals(NormalizeReference(capacity.Reference), originalReference, StringComparison.OrdinalIgnoreCase));
+    }
+
+    private static string? GetOriginalCardReference(string? reference)
+    {
+        return CardRefundReference.TryGetOriginalReference(reference, out var originalReference)
+            ? NormalizeReference(originalReference)
+            : NormalizeReference(reference);
+    }
+
+    private static string? NormalizeReference(string? reference)
+    {
+        return string.IsNullOrWhiteSpace(reference) ? null : reference.Trim();
+    }
+
+    private bool IsSettlementComplete()
+    {
+        return PaymentMode switch
+        {
+            PaymentEntryMode.Refund => _workflowRemainingAmount >= 0m,
+            PaymentEntryMode.ZeroSettlement => true,
+            _ => _workflowRemainingAmount <= 0m
+        };
+    }
+
+    private bool HasBlockingCartIssue()
+    {
+        return _cart.HasNonIntegerQuantity || _cart.HasZeroPriceLine;
+    }
+
+    private string GetScreenTitleKey()
+    {
+        return PaymentMode switch
+        {
+            PaymentEntryMode.Refund => "payment.refund.title",
+            PaymentEntryMode.ZeroSettlement => "payment.zeroSettlement.title",
+            _ => "payment.title"
+        };
+    }
+
+    private string GetRemainingAmountKey()
+    {
+        return IsRefundMode ? "payment.refund.remaining" : "payment.remaining";
+    }
+
+    private string GetAddTenderKey()
+    {
+        return IsRefundMode ? "payment.refund.addTender" : "payment.addTender";
+    }
+
+    private string GetConfirmPaymentKey()
+    {
+        return PaymentMode switch
+        {
+            PaymentEntryMode.Refund => "payment.refund.confirm",
+            PaymentEntryMode.ZeroSettlement => "payment.zeroSettlement.confirm",
+            _ => "payment.confirm"
+        };
+    }
+
+    private string GetNoTendersKey()
+    {
+        return PaymentMode switch
+        {
+            PaymentEntryMode.Refund => "payment.refund.noTenders",
+            PaymentEntryMode.ZeroSettlement => "payment.zeroSettlement.noTenders",
+            _ => "payment.noTenders"
+        };
+    }
+
+    private string GetReadyStatusKey()
+    {
+        return PaymentMode switch
+        {
+            PaymentEntryMode.Refund => "payment.refund.status.ready",
+            PaymentEntryMode.ZeroSettlement => "payment.zeroSettlement.status.ready",
+            _ => "payment.status.ready"
+        };
+    }
+
+    private string GetNoTendersStatusKey()
+    {
+        return IsRefundMode ? "payment.refund.status.noTendersAdded" : "payment.status.noTendersAdded";
+    }
+
+    private string GetIncompleteSettlementStatusKey()
+    {
+        return IsRefundMode ? "payment.refund.status.remainingBalance" : "payment.status.remainingBalance";
+    }
+
+    private bool IsModeStatusKey(string statusKey)
+    {
+        return statusKey == "payment.status.ready" ||
+            statusKey == "payment.refund.status.ready" ||
+            statusKey == "payment.zeroSettlement.status.ready";
+    }
+
     private void NotifyPaymentCommandStates()
     {
         NumberInputCommand.NotifyCanExecuteChanged();
@@ -908,9 +1207,19 @@ public partial class PaymentViewModel : ObservableObject
         OnPropertyChanged(nameof(AddTenderText));
         OnPropertyChanged(nameof(ConfirmPaymentText));
         OnPropertyChanged(nameof(NoTendersText));
+        OnPropertyChanged(nameof(CashMethodText));
+        OnPropertyChanged(nameof(CardMethodText));
+        OnPropertyChanged(nameof(VoucherMethodText));
         OnPropertyChanged(nameof(CancelText));
         OnPropertyChanged(nameof(StatusMessage));
     }
 }
 
 public sealed record QuickCashOption(decimal Amount, string Label, string NoteColorKey, string ForegroundColorKey);
+
+public enum PaymentEntryMode
+{
+    Payment,
+    Refund,
+    ZeroSettlement
+}

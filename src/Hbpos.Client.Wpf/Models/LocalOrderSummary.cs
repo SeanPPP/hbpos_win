@@ -52,9 +52,9 @@ public sealed record ReceiptPaymentLine(
     public string MethodLabel => Method switch
     {
         PaymentMethodKind.Cash => "Cash",
-        PaymentMethodKind.Card => Reference?.StartsWith("SQ:", StringComparison.OrdinalIgnoreCase) == true
+        PaymentMethodKind.Card => PaymentReferenceDisplay.Format(Method, Reference)?.StartsWith("SQ", StringComparison.OrdinalIgnoreCase) == true
             ? "Square"
-            : Reference?.StartsWith("ANZ:", StringComparison.OrdinalIgnoreCase) == true
+            : PaymentReferenceDisplay.Format(Method, Reference)?.StartsWith("ANZ:", StringComparison.OrdinalIgnoreCase) == true
                 ? "ANZ Linkly"
                 : "Card",
         PaymentMethodKind.Voucher => "Voucher",
@@ -79,7 +79,9 @@ public static class PaymentReferenceDisplay
                 : reference;
         }
 
-        return reference;
+        return method == PaymentMethodKind.Card
+            ? CardRefundReference.GetDisplayReference(reference)
+            : reference;
     }
 
     public static string? FormatCardSummary(CardTransactionDto transaction)

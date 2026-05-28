@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Net.Http;
 using System.Net.Http.Json;
 using System.Net.Http.Headers;
@@ -20,6 +21,12 @@ public enum CardTerminalEnvironment
     Sandbox
 }
 
+public enum LinklyConnectionMode
+{
+    Local,
+    Cloud
+}
+
 public sealed record CardTerminalConfiguration(
     CardProcessorKind Processor,
     CardTerminalEnvironment Environment,
@@ -28,7 +35,9 @@ public sealed record CardTerminalConfiguration(
     string? SquareLocationId,
     string? SquareDeviceId,
     bool HasProtectedSquareAccessToken,
-    int TerminalTimeoutSeconds)
+    int TerminalTimeoutSeconds,
+    LinklyConnectionMode LinklyConnectionMode = LinklyConnectionMode.Local,
+    bool HasProtectedLinklyCloudSecret = false)
 {
     public static CardTerminalConfiguration Default { get; } = new(
         CardProcessorKind.None,
@@ -38,7 +47,9 @@ public sealed record CardTerminalConfiguration(
         null,
         null,
         false,
-        90);
+        90,
+        LinklyConnectionMode.Local,
+        false);
 }
 
 public sealed record CardTerminalSettings(
@@ -50,9 +61,18 @@ public sealed record CardTerminalSettings(
     string? SquareLocationId,
     string? SquareDeviceId,
     string SquareApiBaseUrl,
-    TimeSpan TerminalTimeout)
+    TimeSpan TerminalTimeout,
+    LinklyConnectionMode LinklyConnectionMode = LinklyConnectionMode.Local,
+    string? LinklyCloudSecret = null,
+    string LinklyCloudAuthBaseUrl = "https://auth.cloud.pceftpos.com/v1/",
+    string LinklyCloudRestBaseUrl = "https://rest.pos.cloud.pceftpos.com/v1/",
+    string LinklyPosName = "HBPOS",
+    string LinklyPosVersion = "1.0.0",
+    string? LinklyPosVendorId = null)
 {
     public const string SquareVersion = "2026-01-22";
+    public const string DefaultLinklyPosName = "HotBargainPOS";
+    public const string DefaultLinklyPosVersion = "2026.5.1";
 
     public static CardTerminalSettings FromEnvironment()
     {
@@ -66,6 +86,8 @@ public sealed record CardTerminalSettings(
 
         var terminalEnvironment = ReadEnvironment();
         var apiBase = System.Environment.GetEnvironmentVariable("HBPOS_SQUARE_API_BASE_URL")?.Trim();
+        var linklyAuthBase = System.Environment.GetEnvironmentVariable("HBPOS_LINKLY_CLOUD_AUTH_BASE_URL")?.Trim();
+        var linklyRestBase = System.Environment.GetEnvironmentVariable("HBPOS_LINKLY_CLOUD_REST_BASE_URL")?.Trim();
 
         return new CardTerminalSettings(
             processor,
@@ -81,7 +103,18 @@ public sealed record CardTerminalSettings(
             TimeSpan.FromSeconds(
                 int.TryParse(System.Environment.GetEnvironmentVariable("HBPOS_CARD_TERMINAL_TIMEOUT_SECONDS"), out var timeoutSeconds) && timeoutSeconds > 0
                     ? timeoutSeconds
-                    : 90));
+                    : 90),
+            ReadLinklyConnectionMode(),
+            null,
+            string.IsNullOrWhiteSpace(linklyAuthBase)
+                ? GetLinklyCloudAuthBaseUrl(terminalEnvironment)
+                : NormalizeBaseUrl(linklyAuthBase),
+            string.IsNullOrWhiteSpace(linklyRestBase)
+                ? GetLinklyCloudRestBaseUrl(terminalEnvironment)
+                : NormalizeBaseUrl(linklyRestBase),
+            ReadText("HBPOS_LINKLY_POS_NAME", DefaultLinklyPosName),
+            ReadText("HBPOS_LINKLY_POS_VERSION", DefaultLinklyPosVersion),
+            NormalizeOptional(System.Environment.GetEnvironmentVariable("HBPOS_LINKLY_POS_VENDOR_ID")));
     }
 
     public static string GetSquareApiBaseUrl(CardTerminalEnvironment environment)
@@ -108,6 +141,20 @@ public sealed record CardTerminalSettings(
         return trimmed + "/";
     }
 
+    public static string GetLinklyCloudAuthBaseUrl(CardTerminalEnvironment environment)
+    {
+        return environment == CardTerminalEnvironment.Sandbox
+            ? "https://auth.sandbox.cloud.pceftpos.com/v1/"
+            : "https://auth.cloud.pceftpos.com/v1/";
+    }
+
+    public static string GetLinklyCloudRestBaseUrl(CardTerminalEnvironment environment)
+    {
+        return environment == CardTerminalEnvironment.Sandbox
+            ? "https://rest.pos.sandbox.cloud.pceftpos.com/v1/"
+            : "https://rest.pos.cloud.pceftpos.com/v1/";
+    }
+
     private static CardTerminalEnvironment ReadEnvironment()
     {
         var environmentText = System.Environment.GetEnvironmentVariable("HBPOS_CARD_TERMINAL_ENVIRONMENT") ??
@@ -120,6 +167,36 @@ public sealed record CardTerminalSettings(
             "SANDBOX" or "TEST" => CardTerminalEnvironment.Sandbox,
             _ => CardTerminalEnvironment.Production
         };
+    }
+
+    private static LinklyConnectionMode ReadLinklyConnectionMode()
+    {
+        var modeText = System.Environment.GetEnvironmentVariable("HBPOS_LINKLY_CONNECTION_MODE") ??
+            System.Environment.GetEnvironmentVariable("HBPOS_LINKLY_MODE") ??
+            string.Empty;
+
+        return modeText.Trim().ToUpperInvariant() switch
+        {
+            "CLOUD" => LinklyConnectionMode.Cloud,
+            _ => LinklyConnectionMode.Local
+        };
+    }
+
+    private static string NormalizeBaseUrl(string baseUrl)
+    {
+        var trimmed = baseUrl.Trim();
+        return trimmed.EndsWith("/", StringComparison.Ordinal) ? trimmed : trimmed + "/";
+    }
+
+    private static string ReadText(string key, string fallback)
+    {
+        var value = System.Environment.GetEnvironmentVariable(key);
+        return string.IsNullOrWhiteSpace(value) ? fallback : value.Trim();
+    }
+
+    private static string? NormalizeOptional(string? value)
+    {
+        return string.IsNullOrWhiteSpace(value) ? null : value.Trim();
     }
 }
 
@@ -147,7 +224,24 @@ public interface ISquareTokenResolver : ISquareAccessTokenProvider
         CancellationToken cancellationToken = default);
 }
 
-public interface ICardTerminalSettingsStore : ICardTerminalSettingsProvider, ISquareTokenResolver
+public interface ILinklyCloudSecretStore
+{
+    Task<string?> GetLinklyCloudSecretAsync(
+        CardTerminalEnvironment environment,
+        CancellationToken cancellationToken = default);
+
+    Task SaveLinklyCloudSecretAsync(
+        CardTerminalEnvironment environment,
+        string secret,
+        CancellationToken cancellationToken = default);
+
+    Task<string> GetOrCreateLinklyCloudPosIdAsync(
+        string storeCode,
+        string deviceCode,
+        CancellationToken cancellationToken = default);
+}
+
+public interface ICardTerminalSettingsStore : ICardTerminalSettingsProvider, ISquareTokenResolver, ILinklyCloudSecretStore
 {
     Task<CardTerminalConfiguration> LoadAsync(CancellationToken cancellationToken = default);
 
@@ -178,6 +272,7 @@ public sealed class ConfiguredCardTerminalClient : ICardTerminalClient
     private readonly HttpClient _httpClient;
     private readonly ILinklyTerminalClient? _linklyTerminalClient;
     private readonly ISquareAccessTokenProvider? _squareAccessTokenProvider;
+    private readonly ConcurrentDictionary<SquareRefundAttemptKey, string> _squareRefundIdempotencyKeys = new();
 
     public ConfiguredCardTerminalClient(
         ICardTerminalSettingsProvider settingsProvider,
@@ -208,6 +303,28 @@ public sealed class ConfiguredCardTerminalClient : ICardTerminalClient
                 ? new PaymentAuthorizationResult(false, null, "ANZ Linkly terminal adapter is unavailable.")
                 : await _linklyTerminalClient.PurchaseAsync(amount, session, settings, cancellationToken),
             CardProcessorKind.Square => await AuthorizeSquareAsync(settings, amount, session, cancellationToken),
+            _ => new PaymentAuthorizationResult(false, null, "Card terminal is not configured.")
+        };
+    }
+
+    public async Task<PaymentAuthorizationResult> RefundAsync(
+        decimal amount,
+        PosSessionState session,
+        string? originalReference,
+        CancellationToken cancellationToken = default)
+    {
+        if (amount <= 0m)
+        {
+            return new PaymentAuthorizationResult(false, null, "Card amount must be greater than zero.");
+        }
+
+        var settings = await _settingsProvider.GetSettingsAsync(cancellationToken);
+        return settings.Processor switch
+        {
+            CardProcessorKind.Linkly => _linklyTerminalClient is null
+                ? new PaymentAuthorizationResult(false, null, "ANZ Linkly terminal adapter is unavailable.")
+                : await _linklyTerminalClient.RefundAsync(amount, session, settings, originalReference, cancellationToken),
+            CardProcessorKind.Square => await RefundSquareAsync(settings, amount, originalReference, cancellationToken),
             _ => new PaymentAuthorizationResult(false, null, "Card terminal is not configured.")
         };
     }
@@ -393,6 +510,102 @@ public sealed class ConfiguredCardTerminalClient : ICardTerminalClient
         catch (JsonException ex)
         {
             LogSquare($"authorize invalid response checkoutId={LogValue(checkoutId)} message={LogValue(ex.Message)}");
+            return new PaymentAuthorizationResult(false, null, "Square terminal returned an invalid response.");
+        }
+    }
+
+    private async Task<PaymentAuthorizationResult> RefundSquareAsync(
+        CardTerminalSettings settings,
+        decimal amount,
+        string? originalReference,
+        CancellationToken cancellationToken)
+    {
+        if (string.IsNullOrWhiteSpace(settings.SquareAccessToken))
+        {
+            return new PaymentAuthorizationResult(false, null, "Square terminal configuration is incomplete.");
+        }
+
+        var paymentId = TryParseSquarePaymentId(originalReference);
+        if (string.IsNullOrWhiteSpace(paymentId))
+        {
+            return new PaymentAuthorizationResult(false, null, "Square refund requires an original Square payment reference.");
+        }
+
+        try
+        {
+            var minorAmount = ToMinorUnits(amount);
+            var refundAttemptKey = new SquareRefundAttemptKey(settings.Environment, paymentId, minorAmount);
+            var request = new
+            {
+                idempotency_key = _squareRefundIdempotencyKeys.GetOrAdd(refundAttemptKey, _ => Guid.NewGuid().ToString("N")),
+                payment_id = paymentId,
+                amount_money = new
+                {
+                    amount = minorAmount,
+                    currency = "AUD"
+                }
+            };
+
+            var sendResult = await SendSquareWithTokenRefreshAsync(
+                settings,
+                HttpMethod.Post,
+                "refunds",
+                request,
+                allowRefresh: true,
+                cancellationToken);
+            using var response = sendResult.Response;
+            var body = await response.Content.ReadAsStringAsync(cancellationToken);
+            if (!response.IsSuccessStatusCode)
+            {
+                _squareRefundIdempotencyKeys.TryRemove(refundAttemptKey, out _);
+                return FailSquareRequest("refund", response.StatusCode, body);
+            }
+
+            using var document = JsonDocument.Parse(body);
+            if (!document.RootElement.TryGetProperty("refund", out var refundElement) ||
+                refundElement.ValueKind != JsonValueKind.Object)
+            {
+                return new PaymentAuthorizationResult(false, null, "Square terminal returned an invalid response.");
+            }
+
+            var refundId = ReadRequiredString(refundElement, "id");
+            var status = ReadRequiredString(refundElement, "status");
+            if (string.Equals(status, "FAILED", StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(status, "REJECTED", StringComparison.OrdinalIgnoreCase))
+            {
+                _squareRefundIdempotencyKeys.TryRemove(refundAttemptKey, out _);
+                return new PaymentAuthorizationResult(false, $"SQRF:{refundId}", $"Square refund status is {status}.");
+            }
+
+            _squareRefundIdempotencyKeys.TryRemove(refundAttemptKey, out _);
+            return new PaymentAuthorizationResult(
+                true,
+                $"SQRF:{refundId}",
+                status,
+                amount,
+                [
+                    new CardTransactionDto(
+                        "Square",
+                        refundId,
+                        null,
+                        null,
+                        null,
+                        null,
+                        null,
+                        null,
+                        status,
+                        null,
+                        DateTimeOffset.UtcNow,
+                        amount,
+                        null)
+                ]);
+        }
+        catch (HttpRequestException)
+        {
+            return new PaymentAuthorizationResult(false, null, "Square terminal communication failed.");
+        }
+        catch (JsonException)
+        {
             return new PaymentAuthorizationResult(false, null, "Square terminal returned an invalid response.");
         }
     }
@@ -654,6 +867,19 @@ public sealed class ConfiguredCardTerminalClient : ICardTerminalClient
                 : null;
     }
 
+    private static string? TryParseSquarePaymentId(string? originalReference)
+    {
+        if (string.IsNullOrWhiteSpace(originalReference))
+        {
+            return null;
+        }
+
+        var trimmed = originalReference.Trim();
+        return trimmed.StartsWith("SQ:", StringComparison.OrdinalIgnoreCase)
+            ? trimmed[3..].Trim()
+            : null;
+    }
+
     private static string ReadRequiredString(JsonElement element, string propertyName)
     {
         var value = ReadOptionalString(element, propertyName);
@@ -710,6 +936,11 @@ public sealed class ConfiguredCardTerminalClient : ICardTerminalClient
         HttpResponseMessage Response,
         CardTerminalSettings Settings,
         bool Refreshed);
+
+    private sealed record SquareRefundAttemptKey(
+        CardTerminalEnvironment Environment,
+        string PaymentId,
+        long MinorAmount);
 
     private sealed record SquareCleanupResult(
         CardTerminalSettings Settings,

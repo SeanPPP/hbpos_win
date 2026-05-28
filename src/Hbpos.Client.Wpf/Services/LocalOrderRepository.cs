@@ -53,8 +53,8 @@ public sealed class LocalOrderRepository(LocalSqliteStore store) : ILocalOrderRe
             command.Transaction = transaction;
             command.CommandText = """
                 INSERT INTO LocalOrderLines
-                (OrderLineGuid, OrderGuid, ProductCode, ReferenceCode, DisplayName, LookupCode, ItemNumber, Quantity, UnitPrice, DiscountAmount, ActualAmount, PriceSource)
-                VALUES ($OrderLineGuid, $OrderGuid, $ProductCode, $ReferenceCode, $DisplayName, $LookupCode, $ItemNumber, $Quantity, $UnitPrice, $DiscountAmount, $ActualAmount, $PriceSource);
+                (OrderLineGuid, OrderGuid, ProductCode, ReferenceCode, DisplayName, LookupCode, ItemNumber, Quantity, UnitPrice, DiscountAmount, ActualAmount, PriceSource, Kind, ReturnSourceKey, OriginalOrderGuid, OriginalOrderDetailGuid)
+                VALUES ($OrderLineGuid, $OrderGuid, $ProductCode, $ReferenceCode, $DisplayName, $LookupCode, $ItemNumber, $Quantity, $UnitPrice, $DiscountAmount, $ActualAmount, $PriceSource, $Kind, $ReturnSourceKey, $OriginalOrderGuid, $OriginalOrderDetailGuid);
                 """;
             command.Parameters.AddWithValue("$OrderLineGuid", line.OrderLineGuid.ToString());
             command.Parameters.AddWithValue("$OrderGuid", order.OrderGuid.ToString());
@@ -68,6 +68,10 @@ public sealed class LocalOrderRepository(LocalSqliteStore store) : ILocalOrderRe
             command.Parameters.AddWithValue("$DiscountAmount", line.DiscountAmount);
             command.Parameters.AddWithValue("$ActualAmount", line.ActualAmount);
             command.Parameters.AddWithValue("$PriceSource", (int)line.PriceSource);
+            command.Parameters.AddWithValue("$Kind", (int)line.Kind);
+            command.Parameters.AddWithValue("$ReturnSourceKey", (object?)line.ReturnSourceKey ?? DBNull.Value);
+            command.Parameters.AddWithValue("$OriginalOrderGuid", line.OriginalOrderGuid?.ToString() ?? (object)DBNull.Value);
+            command.Parameters.AddWithValue("$OriginalOrderDetailGuid", line.OriginalOrderDetailGuid?.ToString() ?? (object)DBNull.Value);
             await command.ExecuteNonQueryAsync(cancellationToken);
         }
 
@@ -271,7 +275,7 @@ public sealed class LocalOrderRepository(LocalSqliteStore store) : ILocalOrderRe
     {
         await using var command = connection.CreateCommand();
         command.CommandText = """
-            SELECT OrderLineGuid, ProductCode, ReferenceCode, DisplayName, LookupCode, ItemNumber, Quantity, UnitPrice, DiscountAmount, ActualAmount, PriceSource
+            SELECT OrderLineGuid, ProductCode, ReferenceCode, DisplayName, LookupCode, ItemNumber, Quantity, UnitPrice, DiscountAmount, ActualAmount, PriceSource, Kind, ReturnSourceKey, OriginalOrderGuid, OriginalOrderDetailGuid
             FROM LocalOrderLines
             WHERE OrderGuid = $OrderGuid
             ORDER BY rowid;
@@ -293,7 +297,11 @@ public sealed class LocalOrderRepository(LocalSqliteStore store) : ILocalOrderRe
                 ReadDecimal(reader, "UnitPrice"),
                 ReadDecimal(reader, "DiscountAmount"),
                 ReadDecimal(reader, "ActualAmount"),
-                (PriceSourceKind)reader.GetInt32(reader.GetOrdinal("PriceSource"))));
+                (PriceSourceKind)reader.GetInt32(reader.GetOrdinal("PriceSource")),
+                (OrderLineKind)reader.GetInt32(reader.GetOrdinal("Kind")),
+                ReadNullableString(reader, "ReturnSourceKey"),
+                ReadNullableGuid(reader, "OriginalOrderGuid"),
+                ReadNullableGuid(reader, "OriginalOrderDetailGuid")));
         }
 
         return lines;
@@ -381,6 +389,12 @@ public sealed class LocalOrderRepository(LocalSqliteStore store) : ILocalOrderRe
     private static Guid ReadGuid(SqliteDataReader reader, string name)
     {
         return Guid.Parse(ReadString(reader, name));
+    }
+
+    private static Guid? ReadNullableGuid(SqliteDataReader reader, string name)
+    {
+        var value = ReadNullableString(reader, name);
+        return string.IsNullOrWhiteSpace(value) ? null : Guid.Parse(value);
     }
 
     private static string ReadString(SqliteDataReader reader, string name)

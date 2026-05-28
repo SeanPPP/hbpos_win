@@ -86,7 +86,7 @@ public sealed class DeviceRegistrationWorkflowService(
                 visibleStores.FirstOrDefault(x => string.Equals(x.StoreCode, cachedDevice.StoreCode, StringComparison.OrdinalIgnoreCase))
                     ?? visibleStores.FirstOrDefault(),
                 cachedDevice.DeviceCode,
-                !cachedDevice.IsAllowed,
+                cachedDevice.DeviceStatus == PendingDeviceStatus,
                 cachedDevice.Message ?? PendingApprovalStatus);
         }
 
@@ -108,12 +108,16 @@ public sealed class DeviceRegistrationWorkflowService(
         var response = await deviceApiClient.RegisterAsync(
             new DeviceRegisterRequest(selectedStore.StoreCode, hardwareId, Environment.MachineName),
             cancellationToken);
-        await deviceRepository.SaveAsync(response, hardwareId, cancellationToken);
+        if (ShouldSaveRegisterResponse(response))
+        {
+            await deviceRepository.SaveAsync(response, hardwareId, cancellationToken);
+        }
 
         return CreateActionResult(
             response.DeviceCode,
             response.StoreCode,
             response.StoreName,
+            response.DeviceStatus,
             response.IsAllowed,
             response.Message,
             response.AuthorizationCode,
@@ -136,6 +140,7 @@ public sealed class DeviceRegistrationWorkflowService(
             response.DeviceCode,
             response.StoreCode,
             response.StoreName,
+            response.DeviceStatus,
             response.IsAllowed,
             response.Message,
             response.AuthorizationCode,
@@ -161,6 +166,7 @@ public sealed class DeviceRegistrationWorkflowService(
             response.DeviceCode,
             response.StoreCode,
             response.StoreName,
+            response.DeviceStatus,
             response.IsAllowed,
             response.Message,
             response.AuthorizationCode,
@@ -174,6 +180,7 @@ public sealed class DeviceRegistrationWorkflowService(
         string deviceCode,
         string storeCode,
         string storeName,
+        int deviceStatus,
         bool isAllowed,
         string? message,
         string? authorizationCode,
@@ -200,7 +207,7 @@ public sealed class DeviceRegistrationWorkflowService(
             storeCode,
             storeName,
             hardwareId,
-            !isAllowed,
+            deviceStatus == PendingDeviceStatus,
             statusMessage,
             authorizationCode,
             shouldRaiseActivated,
@@ -212,6 +219,12 @@ public sealed class DeviceRegistrationWorkflowService(
         return response.DeviceStatus == PendingDeviceStatus
             && !string.IsNullOrWhiteSpace(response.DeviceCode)
             && !string.IsNullOrWhiteSpace(response.StoreCode);
+    }
+
+    private static bool ShouldSaveRegisterResponse(DeviceRegisterResponse response)
+    {
+        return response.DeviceStatus == PendingDeviceStatus
+            || response.IsAllowed && !string.IsNullOrWhiteSpace(response.AuthorizationCode);
     }
 
     private static bool CanShowStore(StoreSelectionItem store, string? excludedStoreCode)

@@ -9,11 +9,12 @@ public sealed class CashCheckoutService
 
     public CashCheckoutResult CreateCashOrder(PosCartService cart, PosSessionState session, decimal tenderedAmount)
     {
+        var signedTenderAmount = cart.ActualAmount < 0m ? -tenderedAmount : tenderedAmount;
         var result = CreatePaymentOrder(
             cart,
             session,
-            [new PaymentTender(PaymentMethodKind.Cash, tenderedAmount)],
-            tenderedAmount);
+            [new PaymentTender(PaymentMethodKind.Cash, signedTenderAmount)],
+            signedTenderAmount);
 
         return new CashCheckoutResult(result.Order, result.TenderedAmount, result.ChangeAmount);
     }
@@ -34,92 +35,113 @@ public sealed class CashCheckoutService
             throw new InvalidOperationException("Cart item quantity must be a positive integer.");
         }
 
-        if (cart.HasReturnLine)
-        {
-            throw new InvalidOperationException("Refund checkout is not implemented yet.");
-        }
-
         if (cart.HasZeroPriceLine)
         {
             throw new InvalidOperationException("Cart contains a zero-price item.");
         }
 
-        if (tenders.Count == 0)
+        var normalizedTenders = tenders
+            .Select(NormalizeTender)
+            .ToList();
+        var actualAmount = RoundCurrency(cart.ActualAmount);
+        var isRefund = actualAmount < 0m;
+        if (actualAmount == 0m)
+        {
+            if (normalizedTenders.Count > 0)
+            {
+                throw new InvalidOperationException("Zero-total orders cannot include payment tenders.");
+            }
+
+            return CreateResult(cart, session, [], tenderedAmount: 0m, changeAmount: 0m);
+        }
+
+        if (normalizedTenders.Count == 0)
         {
             throw new InvalidOperationException("At least one payment tender is required.");
         }
 
-        if (tenders.Any(tender => tender.Amount <= 0m))
+        if (isRefund)
+        {
+            if (normalizedTenders.Any(tender => tender.Amount >= 0m))
+            {
+                throw new InvalidOperationException("Refund tender amounts must be less than zero.");
+            }
+        }
+        else if (normalizedTenders.Any(tender => tender.Amount <= 0m))
         {
             throw new InvalidOperationException("Payment tender amounts must be greater than zero.");
         }
 
-        var normalizedTenders = tenders
-            .Select(NormalizeTender)
-            .ToList();
         var paymentTotal = RoundCurrency(normalizedTenders.Sum(tender => tender.Amount));
         var nonCashTotal = RoundCurrency(normalizedTenders
             .Where(tender => tender.Method != PaymentMethodKind.Cash)
             .Sum(tender => tender.Amount));
-        if (nonCashTotal > cart.ActualAmount)
-        {
-            throw new InvalidOperationException("Non-cash payments cannot exceed amount due.");
-        }
-
         var cashTenderedTotal = RoundCurrency(normalizedTenders
             .Where(tender => tender.Method == PaymentMethodKind.Cash)
             .Sum(tender => tender.Amount));
-        var hasCashTender = cashTenderedTotal > 0m;
-        var roundedCashDue = hasCashTender
-            ? _cashRoundingPolicy.CalculateRoundedCashDue(cart.ActualAmount, nonCashTotal)
-            : 0m;
-        var requiredPaymentTotal = hasCashTender
-            ? RoundCurrency(nonCashTotal + roundedCashDue)
-            : cart.ActualAmount;
-        if (paymentTotal < requiredPaymentTotal)
+        var hasCashTender = isRefund ? cashTenderedTotal < 0m : cashTenderedTotal > 0m;
+
+        decimal requiredPaymentTotal;
+        decimal normalizedCashTenderedAmount;
+        decimal changeAmount;
+
+        if (isRefund)
         {
-            throw new InvalidOperationException("Payment amount cannot be less than amount due.");
+            var refundAmount = Math.Abs(actualAmount);
+            var nonCashRefundTotal = Math.Abs(nonCashTotal);
+            if (nonCashRefundTotal > refundAmount)
+            {
+                throw new InvalidOperationException("Non-cash refunds cannot exceed amount refundable.");
+            }
+
+            var roundedCashRefund = hasCashTender
+                ? _cashRoundingPolicy.CalculateRoundedCashDue(refundAmount, nonCashRefundTotal)
+                : 0m;
+            requiredPaymentTotal = hasCashTender
+                ? -RoundCurrency(nonCashRefundTotal + roundedCashRefund)
+                : actualAmount;
+            if (paymentTotal != requiredPaymentTotal)
+            {
+                throw new InvalidOperationException("Refund amount must equal the amount refundable.");
+            }
+
+            normalizedCashTenderedAmount = hasCashTender
+                ? cashTenderedTotal
+                : -_cashRoundingPolicy.NormalizeCashTender(Math.Abs(cashTenderedAmount));
+            changeAmount = 0m;
+        }
+        else
+        {
+            if (nonCashTotal > actualAmount)
+            {
+                throw new InvalidOperationException("Non-cash payments cannot exceed amount due.");
+            }
+
+            var roundedCashDue = hasCashTender
+                ? _cashRoundingPolicy.CalculateRoundedCashDue(actualAmount, nonCashTotal)
+                : 0m;
+            requiredPaymentTotal = hasCashTender
+                ? RoundCurrency(nonCashTotal + roundedCashDue)
+                : actualAmount;
+            if (paymentTotal < requiredPaymentTotal)
+            {
+                throw new InvalidOperationException("Payment amount cannot be less than amount due.");
+            }
+
+            normalizedCashTenderedAmount = hasCashTender
+                ? cashTenderedTotal
+                : _cashRoundingPolicy.NormalizeCashTender(cashTenderedAmount);
+            changeAmount = RoundCurrency(paymentTotal - requiredPaymentTotal);
+            if (changeAmount > normalizedCashTenderedAmount)
+            {
+                throw new InvalidOperationException("Only cash payments can exceed amount due.");
+            }
         }
 
-        var normalizedCashTenderedAmount = hasCashTender
-            ? cashTenderedTotal
-            : _cashRoundingPolicy.NormalizeCashTender(cashTenderedAmount);
-        var changeAmount = RoundCurrency(paymentTotal - requiredPaymentTotal);
-        if (changeAmount > normalizedCashTenderedAmount)
-        {
-            throw new InvalidOperationException("Only cash payments can exceed amount due.");
-        }
-
-        var lines = cart.Lines
-            .Select(line => new LocalOrderLine(
-                Guid.NewGuid(),
-                line.ProductCode,
-                line.ReferenceCode,
-                line.DisplayName,
-                line.LookupCode,
-                line.ItemNumber,
-                line.Quantity,
-                line.UnitPrice,
-                line.DiscountAmount,
-                line.ActualAmount,
-                line.PriceSource))
-            .ToList();
-
-        var order = new LocalOrder(
-            Guid.NewGuid(),
-            session.StoreCode,
-            session.DeviceCode,
-            session.CashierId,
-            session.CashierName,
-            DateTimeOffset.Now,
-            cart.TotalAmount,
-            cart.DiscountAmount,
-            cart.ActualAmount,
-            lines,
-            AllocatePayments(cart.ActualAmount, BuildOrderTendersForAllocation(cart.ActualAmount, normalizedTenders)));
-
-        return new PaymentCheckoutResult(
-            order,
+        return CreateResult(
+            cart,
+            session,
+            AllocatePayments(actualAmount, BuildOrderTendersForAllocation(actualAmount, normalizedTenders)),
             normalizedCashTenderedAmount,
             changeAmount);
     }
@@ -133,13 +155,17 @@ public sealed class CashCheckoutService
 
         foreach (var tender in tenders)
         {
-            if (remainingAmount <= 0m)
+            if ((actualAmount > 0m && remainingAmount <= 0m) ||
+                (actualAmount < 0m && remainingAmount >= 0m))
             {
                 break;
             }
 
-            var appliedAmount = Math.Min(remainingAmount, tender.Amount);
-            if (appliedAmount <= 0m)
+            var appliedAmount = actualAmount < 0m
+                ? Math.Max(remainingAmount, tender.Amount)
+                : Math.Min(remainingAmount, tender.Amount);
+            if ((actualAmount > 0m && appliedAmount <= 0m) ||
+                (actualAmount < 0m && appliedAmount >= 0m))
             {
                 continue;
             }
@@ -149,7 +175,8 @@ public sealed class CashCheckoutService
                 tender.Method,
                 decimal.Round(appliedAmount, 2, MidpointRounding.AwayFromZero),
                 tender.Reference,
-                tender.CardTransactions));
+                tender.CardTransactions,
+                tender.IdempotencyKey));
             remainingAmount = decimal.Round(remainingAmount - appliedAmount, 2, MidpointRounding.AwayFromZero);
         }
 
@@ -168,6 +195,11 @@ public sealed class CashCheckoutService
         decimal actualAmount,
         IReadOnlyList<PaymentTender> normalizedTenders)
     {
+        if (actualAmount < 0m)
+        {
+            return normalizedTenders;
+        }
+
         var tenderTotal = RoundCurrency(normalizedTenders.Sum(tender => tender.Amount));
         var shortfall = RoundCurrency(actualAmount - tenderTotal);
         if (shortfall <= 0m)
@@ -188,6 +220,48 @@ public sealed class CashCheckoutService
             Amount = RoundCurrency(cashTender.Amount + shortfall)
         };
         return allocationTenders;
+    }
+
+    private PaymentCheckoutResult CreateResult(
+        PosCartService cart,
+        PosSessionState session,
+        IReadOnlyList<LocalPayment> payments,
+        decimal tenderedAmount,
+        decimal changeAmount)
+    {
+        var lines = cart.Lines
+            .Select(line => new LocalOrderLine(
+                Guid.NewGuid(),
+                line.ProductCode,
+                line.ReferenceCode,
+                line.DisplayName,
+                line.LookupCode,
+                line.ItemNumber,
+                line.Quantity,
+                line.UnitPrice,
+                line.DiscountAmount,
+                line.ActualAmount,
+                line.PriceSource,
+                line.IsReturnLine ? OrderLineKind.Return : OrderLineKind.Sale,
+                string.IsNullOrWhiteSpace(line.ReturnSourceKey) ? null : line.ReturnSourceKey,
+                line.OriginalOrderGuid,
+                line.OriginalOrderLineGuid))
+            .ToList();
+
+        var order = new LocalOrder(
+            Guid.NewGuid(),
+            session.StoreCode,
+            session.DeviceCode,
+            session.CashierId,
+            session.CashierName,
+            DateTimeOffset.Now,
+            cart.TotalAmount,
+            cart.DiscountAmount,
+            cart.ActualAmount,
+            lines,
+            payments);
+
+        return new PaymentCheckoutResult(order, tenderedAmount, changeAmount);
     }
 
     private static decimal RoundCurrency(decimal amount)

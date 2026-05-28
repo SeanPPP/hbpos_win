@@ -63,6 +63,35 @@ public sealed class ReceiptReturnsWorkflowServiceTests
     }
 
     [Fact]
+    public async Task LookupOrderAsync_LocalCardPaymentCapacitiesCarryOriginalOrderGuid()
+    {
+        var orderGuid = Guid.NewGuid();
+        var order = new LocalOrder(
+            orderGuid,
+            "S001",
+            "POS-01",
+            "C01",
+            "Alice",
+            DateTimeOffset.UtcNow,
+            10m,
+            0m,
+            10m,
+            [
+                new LocalOrderLine(Guid.NewGuid(), "SKU-001", "REF-001", "Milk", "690001", "ITEM-001", 1m, 10m, 0m, 10m, PriceSourceKind.StoreRetailPrice)
+            ],
+            [new LocalPayment(Guid.NewGuid(), PaymentMethodKind.Card, 10m, "SQ:local-payment-1")]);
+        var service = CreateService(localRepository: new FakeLocalOrderRepository([order]));
+
+        var result = await service.LookupOrderAsync(CreateOnlineSession(), orderGuid.ToString("D"));
+
+        Assert.NotNull(result.Order);
+        var capacity = Assert.Single(result.Order.PaymentCapacities);
+        Assert.Equal(PaymentMethodKind.Card, capacity.Method);
+        Assert.Equal("SQ:local-payment-1", capacity.Reference);
+        Assert.Equal(orderGuid, capacity.OriginalOrderGuid);
+    }
+
+    [Fact]
     public void LookupNoReceiptProduct_ReturnsCurrentLocalCatalogItem()
     {
         var priceIndex = new LocalSellableItemIndex();

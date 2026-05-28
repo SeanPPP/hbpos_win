@@ -1,3 +1,4 @@
+using System.Text;
 using Hbpos.Contracts.Catalog;
 
 namespace Hbpos.Contracts.Orders;
@@ -7,6 +8,12 @@ public enum PaymentMethodKind
     Cash = 1,
     Card = 2,
     Voucher = 3
+}
+
+public enum OrderLineKind
+{
+    Sale = 1,
+    Return = 2
 }
 
 public sealed record OrderSyncRequest(
@@ -33,7 +40,11 @@ public sealed record OrderLineSyncDto(
     decimal DiscountAmount,
     decimal ActualAmount,
     PriceSourceKind PriceSource,
-    string? ItemNumber = null);
+    string? ItemNumber = null,
+    OrderLineKind Kind = OrderLineKind.Sale,
+    string? ReturnSourceKey = null,
+    Guid? OriginalOrderGuid = null,
+    Guid? OriginalOrderDetailGuid = null);
 
 public sealed record PaymentSyncDto(
     Guid PaymentGuid,
@@ -57,6 +68,84 @@ public sealed record CardTransactionDto(
     DateTimeOffset? BankDateTime,
     decimal Amount,
     string? ReceiptText);
+
+public static class CardRefundReference
+{
+    private const string Prefix = "CARD_REFUND";
+    private const string RefundPart = "refund=";
+    private const string OriginalPart = "original=";
+
+    public static string Format(string? refundReference, string originalReference)
+    {
+        if (string.IsNullOrWhiteSpace(originalReference))
+        {
+            throw new ArgumentException("Original card reference is required.", nameof(originalReference));
+        }
+
+        var refund = string.IsNullOrWhiteSpace(refundReference) ? string.Empty : refundReference.Trim();
+        return $"{Prefix}|{RefundPart}{Encode(refund)}|{OriginalPart}{Encode(originalReference.Trim())}";
+    }
+
+    public static string? GetDisplayReference(string? reference)
+    {
+        return TryGetRefundReference(reference, out var refundReference) && !string.IsNullOrWhiteSpace(refundReference)
+            ? refundReference
+            : reference;
+    }
+
+    public static bool TryGetOriginalReference(string? reference, out string? originalReference)
+    {
+        originalReference = ReadPart(reference, OriginalPart);
+        return !string.IsNullOrWhiteSpace(originalReference);
+    }
+
+    public static bool TryGetRefundReference(string? reference, out string? refundReference)
+    {
+        refundReference = ReadPart(reference, RefundPart);
+        return refundReference is not null;
+    }
+
+    private static string? ReadPart(string? reference, string partName)
+    {
+        if (string.IsNullOrWhiteSpace(reference))
+        {
+            return null;
+        }
+
+        var trimmed = reference.Trim();
+        if (!trimmed.StartsWith($"{Prefix}|", StringComparison.OrdinalIgnoreCase))
+        {
+            return null;
+        }
+
+        foreach (var part in trimmed.Split('|', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+        {
+            if (part.StartsWith(partName, StringComparison.OrdinalIgnoreCase))
+            {
+                return Decode(part[partName.Length..]);
+            }
+        }
+
+        return null;
+    }
+
+    private static string Encode(string value)
+    {
+        return Convert.ToBase64String(Encoding.UTF8.GetBytes(value));
+    }
+
+    private static string? Decode(string value)
+    {
+        try
+        {
+            return Encoding.UTF8.GetString(Convert.FromBase64String(value));
+        }
+        catch (FormatException)
+        {
+            return null;
+        }
+    }
+}
 
 public sealed record OrderSyncResponse(
     Guid OrderGuid,
@@ -110,7 +199,11 @@ public sealed record OrderHistoryLineDto(
     decimal Quantity,
     decimal UnitPrice,
     decimal DiscountAmount,
-    decimal ActualAmount);
+    decimal ActualAmount,
+    OrderLineKind Kind = OrderLineKind.Sale,
+    string? ReturnSourceKey = null,
+    Guid? OriginalOrderGuid = null,
+    Guid? OriginalOrderDetailGuid = null);
 
 public sealed record OrderHistoryPaymentDto(
     Guid PaymentGuid,
@@ -121,7 +214,24 @@ public sealed record OrderHistoryPaymentDto(
 
 public sealed record OrderReturnContextDto(
     OrderHistoryDetailsDto Order,
-    IReadOnlyList<OrderReturnRecordDto> ReturnRecords);
+    IReadOnlyList<OrderReturnRecordDto> ReturnRecords,
+    IReadOnlyList<OrderReturnLineCapacityDto>? LineCapacities = null,
+    IReadOnlyList<OrderReturnPaymentCapacityDto>? PaymentCapacities = null);
+
+public sealed record OrderReturnLineCapacityDto(
+    Guid OriginalOrderLineGuid,
+    decimal OriginalAmount,
+    decimal ReturnedAmount,
+    decimal RemainingAmount);
+
+public sealed record OrderReturnPaymentCapacityDto(
+    PaymentMethodKind Method,
+    decimal OriginalAmount,
+    decimal RefundedAmount,
+    decimal RemainingAmount,
+    string? Reference,
+    IReadOnlyList<CardTransactionDto>? CardTransactions = null,
+    Guid? OriginalOrderGuid = null);
 
 public sealed record OrderReturnRecordDto(
     Guid ReturnDetailGuid,

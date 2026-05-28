@@ -38,7 +38,8 @@ public sealed class SuspendedOrderService(
         }
 
         var orderGuid = Guid.NewGuid();
-        var lines = cart.CreateSnapshot().Lines
+        var snapshot = cart.CreateSnapshot();
+        var lines = snapshot.Lines
             .Select(line => new SuspendedOrderLine(
                 Guid.NewGuid(),
                 orderGuid,
@@ -53,9 +54,16 @@ public sealed class SuspendedOrderService(
                 line.UnitPrice,
                 line.DiscountAmount,
                 line.DiscountPercent,
-                decimal.Round(line.Quantity * line.UnitPrice - line.DiscountAmount, 2, MidpointRounding.AwayFromZero),
+                CalculateActualAmount(line),
                 line.PriceSource,
-                line.PriceSourceLabel))
+                line.PriceSourceLabel)
+            {
+                Kind = line.Kind,
+                ReturnSourceKey = line.ReturnSourceKey,
+                OriginalOrderGuid = line.OriginalOrderGuid,
+                OriginalOrderDetailGuid = line.OriginalOrderLineGuid,
+                ReturnReason = line.ReturnReason
+            })
             .ToArray();
 
         var order = new SuspendedOrder(
@@ -69,7 +77,10 @@ public sealed class SuspendedOrderService(
             cart.DiscountAmount,
             cart.ActualAmount,
             SuspendedOrderStatus.Pending,
-            lines);
+            lines)
+        {
+            ReturnPaymentCapacities = cart.ReturnPaymentCapacities.ToArray()
+        };
 
         await repository.SaveAsync(order, cancellationToken);
         cart.Clear();
@@ -123,9 +134,21 @@ public sealed class SuspendedOrderService(
                 line.DiscountAmount,
                 line.DiscountPercent,
                 line.PriceSource,
-                line.PriceSourceLabel))
+                line.PriceSourceLabel,
+                line.Kind,
+                line.ReturnSourceKey,
+                line.OriginalOrderGuid,
+                line.OriginalOrderDetailGuid,
+                line.ReturnReason))
             .ToArray()));
+        cart.AddReturnPaymentCapacities(order.ReturnPaymentCapacities);
         await repository.MarkStatusAsync(suspendedOrderGuid, SuspendedOrderStatus.Recalled, cancellationToken);
         return order with { Status = SuspendedOrderStatus.Recalled };
+    }
+
+    private static decimal CalculateActualAmount(PosCartLineSnapshot line)
+    {
+        var actualAmount = decimal.Round(line.Quantity * line.UnitPrice - line.DiscountAmount, 2, MidpointRounding.AwayFromZero);
+        return line.Kind == CartLineKind.Return ? -actualAmount : actualAmount;
     }
 }

@@ -39,6 +39,117 @@ public sealed class MainViewModelScannerTests
     }
 
     [Fact]
+    public async Task Active_page_title_uses_payment_mode_for_payment_screen()
+    {
+        var cart = new PosCartService();
+        var viewModel = new MainViewModel(
+            new LocalSellableItemIndex(),
+            cart,
+            new CashCheckoutService(),
+            new FakeLocalSchemaService(),
+            new FakeSettingsRepository(),
+            new FakeCatalogRepository(),
+            new FakeCatalogSyncService(),
+            new FakeRemoteLookupRefreshService(),
+            new FakeSpecialProductService(),
+            new FakeConnectivityApiClient(),
+            new FakeLocalDeviceRepository { Latest = CreateAllowedDevice("1042") },
+            new FakeDeviceApiClient(),
+            new FakeDeviceFingerprintService(),
+            new DeviceAuthorizationState(),
+            new FakeLocalOrderRepository(),
+            new FakeSyncQueueRepository(),
+            new LocalizationService(),
+            new FakeCustomerDisplayWindowService(),
+            new FakeRawScannerService());
+
+        await viewModel.InitializeAsync(new AppStartupOptions([], false, null, null));
+
+        cart.AddReturnLine(new ReturnCartLineRequest(
+            "1042",
+            "SKU-REFUND-TITLE",
+            null,
+            "Refund Title Tea",
+            "930TITLE1",
+            "ITEM-REFUND-TITLE",
+            null,
+            1m,
+            9.9m,
+            PriceSourceKind.StoreRetailPrice,
+            PriceSourceKind.StoreRetailPrice.ToString(),
+            "RETURN-TITLE-1",
+            Guid.NewGuid(),
+            Guid.NewGuid()));
+
+        viewModel.ShowCashPaymentCommand.Execute(null);
+        Assert.Equal("Refund", viewModel.ActivePageTitleText);
+
+        cart.Clear();
+        cart.AddItem(CreateItem("1042", "SKU-ZERO-TITLE", "930TITLE2"));
+        cart.AddReturnLine(new ReturnCartLineRequest(
+            "1042",
+            "SKU-ZERO-RET",
+            null,
+            "Zero Title Return",
+            "930TITLE3",
+            "ITEM-ZERO-TITLE",
+            null,
+            1m,
+            9.9m,
+            PriceSourceKind.StoreRetailPrice,
+            PriceSourceKind.StoreRetailPrice.ToString(),
+            "RETURN-TITLE-2",
+            Guid.NewGuid(),
+            Guid.NewGuid()));
+
+        viewModel.ShowCashPaymentCommand.Execute(null);
+        Assert.Equal("Zero Settlement", viewModel.ActivePageTitleText);
+
+        await viewModel.ToggleCultureCommand.ExecuteAsync(null);
+
+        cart.Clear();
+        cart.AddReturnLine(new ReturnCartLineRequest(
+            "1042",
+            "SKU-REFUND-TITLE-CN",
+            null,
+            "Refund Title Tea CN",
+            "930TITLE4",
+            "ITEM-REFUND-TITLE-CN",
+            null,
+            1m,
+            9.9m,
+            PriceSourceKind.StoreRetailPrice,
+            PriceSourceKind.StoreRetailPrice.ToString(),
+            "RETURN-TITLE-3",
+            Guid.NewGuid(),
+            Guid.NewGuid()));
+
+        viewModel.ShowCashPaymentCommand.Execute(null);
+        Assert.Equal("\u9000\u6B3E", viewModel.ActivePageTitleText);
+
+        cart.Clear();
+        cart.AddItem(CreateItem("1042", "SKU-ZERO-TITLE-CN", "930TITLE5"));
+        cart.AddReturnLine(new ReturnCartLineRequest(
+            "1042",
+            "SKU-ZERO-RET-CN",
+            null,
+            "Zero Title Return CN",
+            "930TITLE6",
+            "ITEM-ZERO-TITLE-CN",
+            null,
+            1m,
+            9.9m,
+            PriceSourceKind.StoreRetailPrice,
+            PriceSourceKind.StoreRetailPrice.ToString(),
+            "RETURN-TITLE-4",
+            Guid.NewGuid(),
+            Guid.NewGuid()));
+
+        viewModel.ShowCashPaymentCommand.Execute(null);
+        Assert.Equal("\u96F6\u7ED3\u7B97", viewModel.ActivePageTitleText);
+    }
+
+    [Fact]
     public async Task Reset_scanner_binding_command_resets_scanner_and_updates_status()
     {
         var scanner = new FakeRawScannerService();
@@ -927,7 +1038,9 @@ public sealed class MainViewModelScannerTests
 
         Assert.Null(viewModel.CachedCashPaymentScreen);
         Assert.Null(viewModel.CashPayment);
-        Assert.Same(viewModel.DeviceRegistration, viewModel.CurrentScreen);
+        Assert.True(viewModel.IsDeviceReregistrationDialogOpen);
+        Assert.NotNull(viewModel.DeviceRegistration);
+        Assert.Same(viewModel.PosTerminal, viewModel.CurrentScreen);
         Assert.False(viewModel.IsCashPaymentScreenActive);
     }
 
@@ -1293,6 +1406,123 @@ public sealed class MainViewModelScannerTests
     }
 
     [Fact]
+    public async Task RetrySyncOrderCommand_WithFailedOrder_RetriesSingleOrderAndRefreshesSyncCenter()
+    {
+        var orderGuid = Guid.NewGuid();
+        var item = CreateSyncQueueItem(orderGuid, "Failed");
+        var syncQueue = new FakeSyncQueueRepository
+        {
+            Overview = new SyncQueueOverview(0, 1, 0, "network down"),
+            ActiveItems = [item]
+        };
+        var uploadExecution = new FakeOrderUploadExecutionService
+        {
+            ExecuteOneResult = new OrderUploadExecutionResult(1, 1, 0),
+            OnExecuteOne = _ =>
+            {
+                syncQueue.Overview = new SyncQueueOverview(0, 0, 0, null);
+                syncQueue.ActiveItems = [];
+            }
+        };
+        var viewModel = CreateAuthorizedMainViewModel(
+            new FakeCustomerDisplayWindowService(),
+            syncQueueRepository: syncQueue,
+            orderUploadExecutionService: uploadExecution);
+
+        await viewModel.InitializeAsync(new AppStartupOptions([], false, null, null));
+
+        Assert.True(viewModel.RetrySyncOrderCommand.CanExecute(item));
+
+        await viewModel.RetrySyncOrderCommand.ExecuteAsync(item);
+
+        Assert.Equal(orderGuid, uploadExecution.LastExecuteOneOrderGuid);
+        Assert.Equal(0, viewModel.PendingUploadCount);
+        Assert.Equal(0, viewModel.FailedUploadCount);
+        Assert.Empty(viewModel.SyncCenterOrders);
+        Assert.Contains("1", viewModel.StatusMessage, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task RetryAllSyncOrdersCommand_IsDisabledWhenOnlySyncingOrdersExist()
+    {
+        var item = CreateSyncQueueItem(Guid.NewGuid(), "Syncing");
+        var viewModel = CreateAuthorizedMainViewModel(
+            new FakeCustomerDisplayWindowService(),
+            syncQueueRepository: new FakeSyncQueueRepository
+            {
+                Overview = new SyncQueueOverview(0, 0, 1, null),
+                ActiveItems = [item]
+            });
+
+        await viewModel.InitializeAsync(new AppStartupOptions([], false, null, null));
+
+        Assert.False(viewModel.RetryAllSyncOrdersCommand.CanExecute(null));
+        Assert.False(viewModel.RetrySyncOrderCommand.CanExecute(item));
+    }
+
+    [Fact]
+    public async Task RetryAllSyncOrdersCommand_WhenRetryClearsFailures_AllowsDeviceReregistration()
+    {
+        var syncQueue = new FakeSyncQueueRepository
+        {
+            Overview = new SyncQueueOverview(0, 1, 0, "network down"),
+            ActiveItems = [CreateSyncQueueItem(Guid.NewGuid(), "Failed")]
+        };
+        var uploadExecution = new FakeOrderUploadExecutionService
+        {
+            ExecutePendingResult = new OrderUploadExecutionResult(1, 1, 0),
+            OnExecutePending = () =>
+            {
+                syncQueue.Overview = new SyncQueueOverview(0, 0, 0, null);
+                syncQueue.ActiveItems = [];
+            }
+        };
+        var viewModel = CreateAuthorizedMainViewModel(
+            new FakeCustomerDisplayWindowService(),
+            syncQueueRepository: syncQueue,
+            orderUploadExecutionService: uploadExecution);
+
+        await viewModel.InitializeAsync(new AppStartupOptions([], false, null, null));
+        Assert.True(viewModel.RetryAllSyncOrdersCommand.CanExecute(null));
+
+        await viewModel.RetryAllSyncOrdersCommand.ExecuteAsync(null);
+        await viewModel.PosTerminal!.ReregisterDeviceCommand.ExecuteAsync(null);
+
+        Assert.True(viewModel.IsDeviceReregistrationDialogOpen);
+        Assert.NotNull(viewModel.DeviceRegistration);
+        Assert.Equal(1, uploadExecution.ExecutePendingCallCount);
+    }
+
+    [Fact]
+    public async Task RetryAllSyncOrdersCommand_WhenRetryFails_KeepsFailedCountAndError()
+    {
+        var item = CreateSyncQueueItem(Guid.NewGuid(), "Failed", "network down");
+        var syncQueue = new FakeSyncQueueRepository
+        {
+            Overview = new SyncQueueOverview(0, 1, 0, "network down"),
+            ActiveItems = [item]
+        };
+        var uploadExecution = new FakeOrderUploadExecutionService
+        {
+            ExecutePendingResult = new OrderUploadExecutionResult(1, 0, 1)
+        };
+        var viewModel = CreateAuthorizedMainViewModel(
+            new FakeCustomerDisplayWindowService(),
+            syncQueueRepository: syncQueue,
+            orderUploadExecutionService: uploadExecution);
+
+        await viewModel.InitializeAsync(new AppStartupOptions([], false, null, null));
+
+        await viewModel.RetryAllSyncOrdersCommand.ExecuteAsync(null);
+
+        Assert.Equal(1, viewModel.FailedUploadCount);
+        Assert.Equal("network down", viewModel.LastOrderSyncErrorText);
+        Assert.Single(viewModel.SyncCenterOrders);
+        Assert.Contains("0", viewModel.StatusMessage, StringComparison.Ordinal);
+        Assert.Contains("1", viewModel.StatusMessage, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public async Task ReregisterDevice_SubmitSuccess_ClearsAuthorizationAndShowsRegistration()
     {
         var authorizationState = new DeviceAuthorizationState();
@@ -1333,7 +1563,7 @@ public sealed class MainViewModelScannerTests
         await viewModel.DeviceRegistration!.RegisterCommand.ExecuteAsync(null);
 
         Assert.Null(authorizationState.Current);
-        Assert.Same(viewModel.DeviceRegistration, viewModel.CurrentScreen);
+        Assert.True(viewModel.IsDeviceReregistrationDialogOpen);
         Assert.Equal("POS-NEW", viewModel.DeviceRegistration.DeviceCode);
         Assert.Equal("2042", deviceApi.LastReregisterRequest?.TargetStoreCode);
     }
@@ -1385,7 +1615,9 @@ public sealed class MainViewModelScannerTests
 
     private static MainViewModel CreateAuthorizedMainViewModel(
         FakeCustomerDisplayWindowService customerDisplayWindow,
-        IReceiptPrintService? receiptPrintService = null)
+        IReceiptPrintService? receiptPrintService = null,
+        FakeSyncQueueRepository? syncQueueRepository = null,
+        IOrderUploadExecutionService? orderUploadExecutionService = null)
     {
         return new MainViewModel(
             new LocalSellableItemIndex(),
@@ -1403,11 +1635,24 @@ public sealed class MainViewModelScannerTests
             new FakeDeviceFingerprintService(),
             new DeviceAuthorizationState(),
             new FakeLocalOrderRepository(),
-            new FakeSyncQueueRepository(),
+            syncQueueRepository ?? new FakeSyncQueueRepository(),
             new LocalizationService(),
             customerDisplayWindow,
             new FakeRawScannerService(),
-            receiptPrintService: receiptPrintService);
+            receiptPrintService: receiptPrintService,
+            orderUploadExecutionService: orderUploadExecutionService);
+    }
+
+    private static SyncQueueListItem CreateSyncQueueItem(Guid entityId, string status, string? errorMessage = null)
+    {
+        return new SyncQueueListItem(
+            entityId,
+            "Order",
+            status,
+            DateTimeOffset.UtcNow.AddMinutes(-5),
+            DateTimeOffset.UtcNow.AddMinutes(-1),
+            errorMessage,
+            12.30m);
     }
 
     private static LocalOrder CreateReceiptPrintOrder(PaymentMethodKind paymentMethod)
@@ -1943,7 +2188,9 @@ public sealed class MainViewModelScannerTests
 
     private sealed class FakeSyncQueueRepository : ISyncQueueRepository
     {
-        public SyncQueueOverview Overview { get; init; } = new(0, 0, 0, null);
+        public SyncQueueOverview Overview { get; set; } = new(0, 0, 0, null);
+
+        public IReadOnlyList<SyncQueueListItem> ActiveItems { get; set; } = [];
 
         public Task<int> CountPendingAsync(CancellationToken cancellationToken = default)
         {
@@ -1957,7 +2204,36 @@ public sealed class MainViewModelScannerTests
 
         public Task<IReadOnlyList<SyncQueueListItem>> GetActiveItemsAsync(int take = 20, CancellationToken cancellationToken = default)
         {
-            return Task.FromResult<IReadOnlyList<SyncQueueListItem>>([]);
+            return Task.FromResult(ActiveItems);
+        }
+    }
+
+    private sealed class FakeOrderUploadExecutionService : IOrderUploadExecutionService
+    {
+        public OrderUploadExecutionResult ExecuteOneResult { get; init; } = new(1, 1, 0);
+
+        public OrderUploadExecutionResult ExecutePendingResult { get; init; } = new(1, 1, 0);
+
+        public Guid? LastExecuteOneOrderGuid { get; private set; }
+
+        public int ExecutePendingCallCount { get; private set; }
+
+        public Action<Guid>? OnExecuteOne { get; init; }
+
+        public Action? OnExecutePending { get; init; }
+
+        public Task<OrderUploadExecutionResult> ExecuteOneAsync(Guid orderGuid, CancellationToken cancellationToken = default)
+        {
+            LastExecuteOneOrderGuid = orderGuid;
+            OnExecuteOne?.Invoke(orderGuid);
+            return Task.FromResult(ExecuteOneResult);
+        }
+
+        public Task<OrderUploadExecutionResult> ExecutePendingAsync(int batchSize = 20, CancellationToken cancellationToken = default)
+        {
+            ExecutePendingCallCount++;
+            OnExecutePending?.Invoke();
+            return Task.FromResult(ExecutePendingResult);
         }
     }
 

@@ -182,6 +182,10 @@ public sealed class SquareControllerTests
 
                 services.RemoveAll<ISquareTokenSchemaInitializer>();
                 services.AddSingleton(schemaInitializer ?? new NoOpSquareTokenSchemaInitializer());
+
+                services.RemoveAll<ILinklyCloudCredentialSchemaInitializer>();
+                services.AddSingleton<ILinklyCloudCredentialSchemaInitializer>(
+                    new NoOpLinklyCloudCredentialSchemaInitializer());
             });
         }
     }
@@ -199,6 +203,14 @@ public sealed class SquareControllerTests
         public Task InitializeAsync(CancellationToken cancellationToken = default)
         {
             throw exception;
+        }
+    }
+
+    private sealed class NoOpLinklyCloudCredentialSchemaInitializer : ILinklyCloudCredentialSchemaInitializer
+    {
+        public Task InitializeAsync(CancellationToken cancellationToken = default)
+        {
+            return Task.CompletedTask;
         }
     }
 

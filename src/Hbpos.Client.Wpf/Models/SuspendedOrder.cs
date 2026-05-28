@@ -1,4 +1,5 @@
 using Hbpos.Contracts.Catalog;
+using Hbpos.Contracts.Orders;
 
 namespace Hbpos.Client.Wpf.Models;
 
@@ -20,7 +21,10 @@ public sealed record SuspendedOrder(
     decimal DiscountAmount,
     decimal ActualAmount,
     SuspendedOrderStatus Status,
-    IReadOnlyList<SuspendedOrderLine> Lines);
+    IReadOnlyList<SuspendedOrderLine> Lines)
+{
+    public IReadOnlyList<OrderReturnPaymentCapacityDto> ReturnPaymentCapacities { get; init; } = [];
+}
 
 public sealed record SuspendedOrderLine(
     Guid SuspendedOrderLineGuid,
@@ -38,7 +42,18 @@ public sealed record SuspendedOrderLine(
     decimal? DiscountPercent,
     decimal ActualAmount,
     PriceSourceKind PriceSource,
-    string PriceSourceLabel);
+    string PriceSourceLabel)
+{
+    public CartLineKind Kind { get; init; } = CartLineKind.Sale;
+
+    public string ReturnSourceKey { get; init; } = string.Empty;
+
+    public Guid? OriginalOrderGuid { get; init; }
+
+    public Guid? OriginalOrderDetailGuid { get; init; }
+
+    public string? ReturnReason { get; init; }
+}
 
 public sealed record SuspendedOrderSummary(
     Guid SuspendedOrderGuid,

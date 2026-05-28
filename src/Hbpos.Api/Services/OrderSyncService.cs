@@ -54,9 +54,14 @@ public sealed class OrderSyncService(
 
         foreach (var payment in voucherPayments)
         {
-            if (payment.Amount <= 0m)
+            if (payment.Amount < 0m)
             {
-                throw new InvalidOperationException("Voucher payment amount must be greater than zero.");
+                continue;
+            }
+
+            if (payment.Amount == 0m)
+            {
+                throw new InvalidOperationException("Voucher payment amount must not be zero.");
             }
 
             var voucherCode = NormalizeRequired(payment.Reference, "Voucher payment reference is required.");
@@ -130,7 +135,15 @@ public sealed class SqlSugarOrderRepository(HbposSqlSugarContext dbContext) : IO
         CancellationToken cancellationToken)
     {
         var db = dbContext.PosmDb;
-        await db.Ado.BeginTranAsync();
+        if (plan.ReturnRecords.Count > 0)
+        {
+            await SalesReturnRecordPersistence.BeginSerializableTransactionAsync(db);
+        }
+        else
+        {
+            await db.Ado.BeginTranAsync();
+        }
+
         try
         {
             var existing = await db.Queryable<SalesOrder>()
@@ -161,6 +174,16 @@ public sealed class SqlSugarOrderRepository(HbposSqlSugarContext dbContext) : IO
             if (plan.BankTransactions.Count > 0)
             {
                 await db.Insertable(plan.BankTransactions.ToList()).ExecuteCommandAsync(cancellationToken);
+            }
+
+            var returnRecordPreparation = await SalesReturnRecordPersistence.PrepareValidatedInsertAsync(
+                db,
+                plan.ReturnRecords,
+                cancellationToken,
+                plan.Payments);
+            if (returnRecordPreparation.RecordsToInsert.Count > 0)
+            {
+                await db.Insertable(returnRecordPreparation.RecordsToInsert.ToList()).ExecuteCommandAsync(cancellationToken);
             }
 
             await db.Ado.CommitTranAsync();
@@ -236,4 +259,5 @@ public sealed class SqlSugarOrderRepository(HbposSqlSugarContext dbContext) : IO
             throw new InvalidOperationException("Voucher has expired.");
         }
     }
+
 }

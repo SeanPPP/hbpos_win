@@ -8,12 +8,12 @@
   <data name="settings.subtitle.dataMaintenance" xml:space="preserve"><value>Data maintenance</value></data>
   <data name="settings.subtitle.paymentTerminal" xml:space="preserve"><value>Card terminal settings</value></data>
   <data name="settings.subtitle.receiptPrinter" xml:space="preserve"><value>Receipt printer settings</value></data>
-  <data name="settings.subtitle.deviceRegistration" xml:space="preserve"><value>Device registration</value></data>
+  <data name="settings.subtitle.deviceRegistration" xml:space="preserve"><value>Change store registration</value></data>
   <data name="settings.category.title" xml:space="preserve"><value>Categories</value></data>
   <data name="settings.category.dataMaintenance" xml:space="preserve"><value>Data maintenance</value></data>
   <data name="settings.category.paymentTerminal" xml:space="preserve"><value>Payment terminal</value></data>
   <data name="settings.category.receiptPrinter" xml:space="preserve"><value>Receipt printer</value></data>
-  <data name="settings.category.deviceRegistration" xml:space="preserve"><value>Device registration</value></data>
+  <data name="settings.category.deviceRegistration" xml:space="preserve"><value>Change store registration</value></data>
   <data name="settings.section.dataDownload.title" xml:space="preserve"><value>Data Download</value></data>
   <data name="settings.section.dataDownload.description" xml:space="preserve"><value>Sync the current store catalog from the server and refresh the local checkout item index.</value></data>
   <data name="settings.section.dataDownload.action" xml:space="preserve"><value>Data Download</value></data>
@@ -47,10 +47,47 @@
   <data name="settings.square.save" xml:space="preserve"><value>Save Square</value></data>
   <data name="settings.linkly.title" xml:space="preserve"><value>ANZ Linkly</value></data>
   <data name="settings.linkly.description" xml:space="preserve"><value>Connect to the local Linkly EFT-Client, then enable ANZ Linkly for card payments.</value></data>
+  <data name="settings.linkly.cloudMode" xml:space="preserve"><value>Use Linkly Cloud</value></data>
+  <data name="settings.linkly.cloud.secret" xml:space="preserve"><value>Cloud Pairing Secret</value></data>
+  <data name="settings.linkly.cloud.secretStatus.cached" xml:space="preserve"><value>Paired secret is saved securely on this POS.</value></data>
+  <data name="settings.linkly.cloud.secretStatus.missing" xml:space="preserve"><value>No paired secret saved for this POS.</value></data>
+  <data name="settings.linkly.cloud.pairCode" xml:space="preserve"><value>Pair Code</value></data>
+  <data name="settings.linkly.cloud.pair" xml:space="preserve"><value>Pair Cloud</value></data>
   <data name="settings.linkly.host" xml:space="preserve"><value>Host</value></data>
   <data name="settings.linkly.port" xml:space="preserve"><value>Port</value></data>
   <data name="settings.linkly.test" xml:space="preserve"><value>Test Linkly</value></data>
   <data name="settings.linkly.enable" xml:space="preserve"><value>Enable Linkly</value></data>
+  <data name="settings.linkly.sop.title" xml:space="preserve"><value>Terminal setup steps</value></data>
+  <data name="settings.linkly.sop.note" xml:space="preserve"><value>Menu names may vary slightly on ANZ Worldline / Ingenico Move 5000 terminals.</value></data>
+  <data name="settings.linkly.sop.cloud.title" xml:space="preserve"><value>Switch to Linkly Cloud and generate a pairing code</value></data>
+  <data name="settings.linkly.sop.cloud.step1" xml:space="preserve"><value>On the terminal: Func -&gt; 7410 -&gt; Terminal Setup -&gt; Begin -&gt; Cloud Comms.</value></data>
+  <data name="settings.linkly.sop.cloud.step2" xml:space="preserve"><value>For Wi-Fi: choose Setup Wi-Fi, select the store Wi-Fi, enter the password, then tap Next.</value></data>
+  <data name="settings.linkly.sop.cloud.step3" xml:space="preserve"><value>For Ethernet: plug in the network cable, skip Wi-Fi setup, and wait for the terminal network test.</value></data>
+  <data name="settings.linkly.sop.cloud.step4" xml:space="preserve"><value>When Cloud setup completed appears, press OK.</value></data>
+  <data name="settings.linkly.sop.cloud.step5" xml:space="preserve"><value>Press Cancel to return to the main screen.</value></data>
+  <data name="settings.linkly.sop.cloud.step6" xml:space="preserve"><value>When the terminal prompts for a Pairing Code, press Enter.</value></data>
+  <data name="settings.linkly.sop.cloud.step7" xml:space="preserve"><value>Enter the 6-digit Pairing Code here and click Pair Cloud before it expires.</value></data>
+  <data name="settings.linkly.sop.cloud.step8" xml:space="preserve"><value>Cloud username and password are loaded from the backend for this store and are not shown on this POS.</value></data>
+  <data name="settings.linkly.sop.repair.title" xml:space="preserve"><value>Generate a new Pairing Code</value></data>
+  <data name="settings.linkly.sop.repair.step1" xml:space="preserve"><value>On the terminal: Func -&gt; 8880 -&gt; OK / Enter.</value></data>
+  <data name="settings.linkly.sop.repair.step2" xml:space="preserve"><value>After the terminal clears the old pairing, press Enter to generate a new 6-digit Pairing Code.</value></data>
+  <data name="settings.linkly.sop.repair.step3" xml:space="preserve"><value>Enter the new Pairing Code here and pair Cloud again.</value></data>
+  <data name="settings.linkly.sop.repair.warning" xml:space="preserve"><value>Warning: Func 8880 removes the existing pairing. Do not use it during trading unless you intend to re-pair.</value></data>
+  <data name="settings.linkly.sop.local.title" xml:space="preserve"><value>Switch back to local Linkly / Windows USB mode</value></data>
+  <data name="settings.linkly.sop.local.step1" xml:space="preserve"><value>On the terminal: press Func.</value></data>
+  <data name="settings.linkly.sop.local.step2" xml:space="preserve"><value>Enter 7410.</value></data>
+  <data name="settings.linkly.sop.local.step3" xml:space="preserve"><value>Open Terminal Setup.</value></data>
+  <data name="settings.linkly.sop.local.step4" xml:space="preserve"><value>Open In-store Comms.</value></data>
+  <data name="settings.linkly.sop.local.step5" xml:space="preserve"><value>Select USB.</value></data>
+  <data name="settings.linkly.sop.local.step6" xml:space="preserve"><value>Select Async DLE 9600.</value></data>
+  <data name="settings.linkly.sop.local.step7" xml:space="preserve"><value>Save the settings and press Cancel to return to the main screen.</value></data>
+  <data name="settings.linkly.sop.local.step8" xml:space="preserve"><value>On the Windows PC, confirm Linkly software is installed and configured with the IP Gateway User ID and Password.</value></data>
+  <data name="settings.linkly.sop.local.step9" xml:space="preserve"><value>In POS settings, clear Use Linkly Cloud.</value></data>
+  <data name="settings.linkly.sop.local.step10" xml:space="preserve"><value>Host is usually 127.0.0.1 and Port is usually 2011.</value></data>
+  <data name="settings.linkly.sop.local.step11" xml:space="preserve"><value>Click Test Linkly. After the test succeeds, click Enable Linkly.</value></data>
+  <data name="settings.linkly.sop.mode.title" xml:space="preserve"><value>How to identify the current mode</value></data>
+  <data name="settings.linkly.sop.mode.cloud" xml:space="preserve"><value>Cloud: the terminal can show a Pairing Code, Func 8880 can re-pair it, and Windows Linkly software is not required for Cloud API transactions.</value></data>
+  <data name="settings.linkly.sop.mode.local" xml:space="preserve"><value>Local USB: In-store Comms is USB / Async DLE 9600, Windows Linkly EFT Client is running, and this POS usually connects to 127.0.0.1:2011.</value></data>
   <data name="settings.receiptPrinter.title" xml:space="preserve"><value>Receipt printer</value></data>
   <data name="settings.receiptPrinter.description" xml:space="preserve"><value>Configure the thermal receipt printer and the store information printed on receipts.</value></data>
   <data name="settings.receiptPrinter.port" xml:space="preserve"><value>Printer Port</value></data>
@@ -62,8 +99,8 @@
   <data name="settings.receiptPrinter.returnPolicy" xml:space="preserve"><value>Return Policy</value></data>
   <data name="settings.receiptPrinter.save" xml:space="preserve"><value>Save Receipt Printer</value></data>
   <data name="settings.receiptPrinter.test" xml:space="preserve"><value>Test Print</value></data>
-  <data name="settings.deviceRegistration.description" xml:space="preserve"><value>Submit a fresh registration request for this checkout device while keeping the current cart and order sync safety checks in place.</value></data>
-  <data name="settings.deviceRegistration.action" xml:space="preserve"><value>Re-register Device</value></data>
+  <data name="settings.deviceRegistration.description" xml:space="preserve"><value>Choose another store and submit an authorized reregistration request for this checkout device. Pending, failed, or syncing orders must be cleared first.</value></data>
+  <data name="settings.deviceRegistration.action" xml:space="preserve"><value>Change Store Registration</value></data>
   <data name="settings.status.ready" xml:space="preserve"><value>Ready.</value></data>
   <data name="settings.status.loaded" xml:space="preserve"><value>Settings loaded.</value></data>
   <data name="settings.status.noSquareLocations" xml:space="preserve"><value>No Square locations returned.</value></data>
@@ -83,6 +120,8 @@
   <data name="settings.status.squareSaved" xml:space="preserve"><value>Square terminal settings saved. The next payment will use {0}.</value></data>
   <data name="settings.status.linklyTestSuccess" xml:space="preserve"><value>Linkly EFT-Client connection succeeded.</value></data>
   <data name="settings.status.linklyTestFailed" xml:space="preserve"><value>Linkly EFT-Client connection failed.</value></data>
+  <data name="settings.status.linklyCloudPaired" xml:space="preserve"><value>Linkly Cloud terminal paired.</value></data>
+  <data name="settings.status.linklyCloudPairFailed" xml:space="preserve"><value>Linkly Cloud pairing failed.</value></data>
   <data name="settings.status.testLinklyBeforeSave" xml:space="preserve"><value>Test Linkly connection before enabling ANZ Linkly.</value></data>
   <data name="settings.status.linklySaved" xml:space="preserve"><value>ANZ Linkly terminal settings saved.</value></data>
   <data name="settings.status.receiptPrinterNotConfigured" xml:space="preserve"><value>Receipt printer service is not configured.</value></data>
@@ -94,6 +133,6 @@
   <data name="settings.status.catalogResetting" xml:space="preserve"><value>Resetting catalog data...</value></data>
   <data name="settings.status.catalogResetCompleted" xml:space="preserve"><value>Catalog data reset completed.</value></data>
   <data name="settings.status.reregisterNotConfigured" xml:space="preserve"><value>Device reregistration service is not configured.</value></data>
-  <data name="settings.status.reregisterStarting" xml:space="preserve"><value>Starting device reregistration...</value></data>
+  <data name="settings.status.reregisterStarting" xml:space="preserve"><value>Starting change store registration...</value></data>
   <data name="settings.status.operationCanceled" xml:space="preserve"><value>Operation canceled.</value></data>
 </root>

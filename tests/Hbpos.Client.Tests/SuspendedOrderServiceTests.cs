@@ -1,6 +1,7 @@
 using Hbpos.Client.Wpf.Models;
 using Hbpos.Client.Wpf.Services;
 using Hbpos.Contracts.Catalog;
+using Hbpos.Contracts.Orders;
 using Microsoft.Data.Sqlite;
 
 namespace Hbpos.Client.Tests;
@@ -171,6 +172,88 @@ public sealed class SuspendedOrderServiceTests
         {
             DeleteTempDatabase(databasePath);
         }
+    }
+
+    [Fact]
+    public async Task RecallOrderAsync_restores_return_line_context_and_card_refund_capacity()
+    {
+        var databasePath = CreateTempDatabasePath();
+
+        try
+        {
+            var store = new LocalSqliteStore(databasePath);
+            var schema = new LocalSchemaService(store);
+            var cart = new PosCartService();
+            var repository = new SuspendedOrderRepository(store);
+            var service = new SuspendedOrderService(repository, cart);
+            var session = CreateSession();
+            var originalOrderGuid = Guid.NewGuid();
+            var originalLineGuid = Guid.NewGuid();
+            const string returnSourceKey = "S001:ORIGINAL-ORDER-01:LINE-01";
+            const string returnReason = "Damaged packaging";
+
+            await schema.InitializeAsync();
+            cart.AddReturnLine(new ReturnCartLineRequest(
+                "S001",
+                "SKU-RETURN-01",
+                "REF-RETURN-01",
+                "Returned item",
+                "return-01",
+                "ITEM-RETURN-01",
+                "https://images.example/return-01.jpg",
+                1m,
+                12m,
+                PriceSourceKind.StoreRetailPrice,
+                PriceSourceKind.StoreRetailPrice.ToString(),
+                returnSourceKey,
+                originalOrderGuid,
+                originalLineGuid,
+                ReturnReason: returnReason));
+            cart.AddReturnPaymentCapacities(
+            [
+                new OrderReturnPaymentCapacityDto(
+                    PaymentMethodKind.Card,
+                    OriginalAmount: 12m,
+                    RefundedAmount: 3m,
+                    RemainingAmount: 9m,
+                    Reference: "SQ:original-card-payment",
+                    OriginalOrderGuid: originalOrderGuid)
+            ]);
+
+            var suspended = await service.SuspendCurrentOrderAsync(session);
+            await service.RecallOrderAsync(suspended.SuspendedOrderGuid);
+
+            var recalledLine = Assert.Single(cart.Lines);
+            Assert.Equal(CartLineKind.Return, recalledLine.Kind);
+            Assert.True(recalledLine.IsReturnLine);
+            Assert.Equal(returnSourceKey, recalledLine.ReturnSourceKey);
+            Assert.Equal(originalOrderGuid, recalledLine.OriginalOrderGuid);
+            Assert.Equal(originalLineGuid, recalledLine.OriginalOrderLineGuid);
+            Assert.Equal(returnReason, recalledLine.ReturnReason);
+            Assert.Equal(-12m, cart.ActualAmount);
+
+            var cardCapacity = Assert.Single(cart.ReturnPaymentCapacities);
+            Assert.Equal(PaymentMethodKind.Card, cardCapacity.Method);
+            Assert.Equal(12m, cardCapacity.OriginalAmount);
+            Assert.Equal(3m, cardCapacity.RefundedAmount);
+            Assert.Equal(9m, cardCapacity.RemainingAmount);
+            Assert.Equal("SQ:original-card-payment", cardCapacity.Reference);
+            Assert.Equal(originalOrderGuid, cardCapacity.OriginalOrderGuid);
+        }
+        finally
+        {
+            DeleteTempDatabase(databasePath);
+        }
+    }
+
+    [Fact]
+    public void Return_cart_snapshot_exposes_return_reason_context()
+    {
+        Assert.Contains(
+            typeof(ReturnCartLineRequest).GetConstructors().Single().GetParameters(),
+            parameter => string.Equals(parameter.Name, "ReturnReason", StringComparison.OrdinalIgnoreCase));
+        Assert.NotNull(typeof(CartLine).GetProperty("ReturnReason"));
+        Assert.NotNull(typeof(PosCartLineSnapshot).GetProperty("ReturnReason"));
     }
 
     private static PosSessionState CreateSession()

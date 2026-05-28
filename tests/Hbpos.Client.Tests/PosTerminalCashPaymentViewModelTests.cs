@@ -1620,6 +1620,270 @@ public sealed class PosTerminalCashPaymentViewModelTests
     }
 
     [Fact]
+    public async Task Refund_mode_adds_negative_cash_tender_and_allows_confirmation()
+    {
+        var cart = new PosCartService();
+        cart.AddReturnLine(new ReturnCartLineRequest(
+            "S001",
+            "SKU-REFUND-1",
+            null,
+            "Refund Tea",
+            "930142R",
+            "ITEM-REFUND-1",
+            null,
+            1m,
+            7.82m,
+            PriceSourceKind.StoreRetailPrice,
+            PriceSourceKind.StoreRetailPrice.ToString(),
+            "RETURN-VM-1",
+            Guid.NewGuid(),
+            Guid.NewGuid()));
+        var orders = new InMemoryOrderRepository();
+        var viewModel = new PaymentViewModel(
+            cart,
+            new CashPaymentWorkflowService(
+                new CashCheckoutService(),
+                orders,
+                new InMemorySyncQueueRepository()),
+            Session);
+
+        viewModel.PrepareForEntry(Session);
+
+        Assert.Equal(PaymentEntryMode.Refund, viewModel.PaymentMode);
+        Assert.True(viewModel.IsRefundMode);
+        Assert.Equal("7.80", viewModel.TenderAmountText);
+        Assert.Equal(7.82m, viewModel.RemainingAmount);
+        Assert.True(viewModel.AddTenderCommand.CanExecute(null));
+
+        await viewModel.SelectCashCommand.ExecuteAsync(null);
+
+        var tender = Assert.Single(viewModel.PaymentTenders);
+        Assert.Equal(PaymentMethodKind.Cash, tender.Method);
+        Assert.Equal(-7.80m, tender.Amount);
+        Assert.Equal(0m, viewModel.RemainingAmount);
+        Assert.True(viewModel.ConfirmPaymentCommand.CanExecute(null));
+
+        await viewModel.ConfirmPaymentCommand.ExecuteAsync(null);
+
+        Assert.NotNull(orders.LastOrder);
+        Assert.All(orders.LastOrder!.Payments, payment => Assert.True(payment.Amount < 0m));
+        Assert.Empty(cart.Lines);
+    }
+
+    [Fact]
+    public async Task Refund_mode_adds_negative_voucher_tender_without_source_voucher_code()
+    {
+        var cart = new PosCartService();
+        cart.AddReturnLine(new ReturnCartLineRequest(
+            "S001",
+            "SKU-REFUND-VOUCHER",
+            null,
+            "Refund Voucher Tea",
+            "930142V",
+            "ITEM-REFUND-VOUCHER",
+            null,
+            1m,
+            8.5m,
+            PriceSourceKind.StoreRetailPrice,
+            PriceSourceKind.StoreRetailPrice.ToString(),
+            "RETURN-VM-VOUCHER",
+            Guid.NewGuid(),
+            Guid.NewGuid()));
+        var viewModel = new PaymentViewModel(
+            cart,
+            new CashPaymentWorkflowService(
+                new CashCheckoutService(),
+                new InMemoryOrderRepository(),
+                new InMemorySyncQueueRepository()),
+            Session);
+
+        viewModel.PrepareForEntry(Session);
+
+        Assert.Equal(PaymentEntryMode.Refund, viewModel.PaymentMode);
+        Assert.Equal(string.Empty, viewModel.VoucherCodeText);
+        Assert.True(viewModel.SelectVoucherCommand.CanExecute(null));
+
+        await viewModel.SelectVoucherCommand.ExecuteAsync(null);
+
+        var tender = Assert.Single(viewModel.PaymentTenders);
+        Assert.Equal(PaymentMethodKind.Voucher, tender.Method);
+        Assert.Equal(-8.5m, tender.Amount);
+        Assert.Equal("VOUCHER_REFUND_PENDING", tender.Reference);
+    }
+
+    [Fact]
+    public async Task Refund_mode_card_button_uses_each_original_card_capacity()
+    {
+        var cart = new PosCartService();
+        cart.AddReturnLine(new ReturnCartLineRequest(
+            "S001",
+            "SKU-REFUND-CARD",
+            null,
+            "Refund Card Tea",
+            "930142C",
+            "ITEM-REFUND-CARD",
+            null,
+            1m,
+            12m,
+            PriceSourceKind.StoreRetailPrice,
+            PriceSourceKind.StoreRetailPrice.ToString(),
+            "RETURN-VM-CARD",
+            Guid.NewGuid(),
+            Guid.NewGuid()));
+        cart.AddReturnPaymentCapacities(
+        [
+            new OrderReturnPaymentCapacityDto(PaymentMethodKind.Card, 5m, 0m, 5m, "SQ:card-1"),
+            new OrderReturnPaymentCapacityDto(PaymentMethodKind.Card, 7m, 0m, 7m, "SQ:card-2")
+        ]);
+        var cardTerminal = new ApprovedCardTerminalClient("CARD-REFUND");
+        var viewModel = new PaymentViewModel(
+            cart,
+            new CashPaymentWorkflowService(
+                new CashCheckoutService(),
+                new InMemoryOrderRepository(),
+                new InMemorySyncQueueRepository(),
+                cardTerminalClient: cardTerminal),
+            Session);
+
+        viewModel.PrepareForEntry(Session);
+
+        await viewModel.SelectCardCommand.ExecuteAsync(null);
+
+        var firstTender = Assert.Single(viewModel.PaymentTenders);
+        Assert.Equal(-5m, firstTender.Amount);
+        Assert.True(CardRefundReference.TryGetOriginalReference(firstTender.Reference, out var firstOriginal));
+        Assert.Equal("SQ:card-1", firstOriginal);
+        Assert.Equal(["SQ:card-1"], cardTerminal.RefundOriginalReferences);
+        Assert.True(viewModel.SelectCardCommand.CanExecute(null));
+
+        await viewModel.SelectCardCommand.ExecuteAsync(null);
+
+        Assert.Equal(2, viewModel.PaymentTenders.Count);
+        var secondTender = viewModel.PaymentTenders[1];
+        Assert.Equal(-7m, secondTender.Amount);
+        Assert.True(CardRefundReference.TryGetOriginalReference(secondTender.Reference, out var secondOriginal));
+        Assert.Equal("SQ:card-2", secondOriginal);
+        Assert.Equal(["SQ:card-1", "SQ:card-2"], cardTerminal.RefundOriginalReferences);
+        Assert.Equal(0m, viewModel.RemainingAmount);
+        Assert.False(viewModel.SelectCardCommand.CanExecute(null));
+    }
+
+    [Fact]
+    public async Task Refund_mode_card_button_limits_original_card_to_that_orders_return_amount()
+    {
+        var originalOrderA = Guid.NewGuid();
+        var originalOrderB = Guid.NewGuid();
+        var cart = new PosCartService();
+        cart.AddReturnLine(new ReturnCartLineRequest(
+            "S001",
+            "SKU-REFUND-CARD-A",
+            null,
+            "Refund Card Tea A",
+            "930142CA",
+            "ITEM-REFUND-CARD-A",
+            null,
+            1m,
+            10m,
+            PriceSourceKind.StoreRetailPrice,
+            PriceSourceKind.StoreRetailPrice.ToString(),
+            "RETURN-VM-CARD-A",
+            originalOrderA,
+            Guid.NewGuid()));
+        cart.AddReturnLine(new ReturnCartLineRequest(
+            "S001",
+            "SKU-REFUND-CARD-B",
+            null,
+            "Refund Card Tea B",
+            "930142CB",
+            "ITEM-REFUND-CARD-B",
+            null,
+            1m,
+            90m,
+            PriceSourceKind.StoreRetailPrice,
+            PriceSourceKind.StoreRetailPrice.ToString(),
+            "RETURN-VM-CARD-B",
+            originalOrderB,
+            Guid.NewGuid()));
+        cart.AddReturnPaymentCapacities(
+        [
+            new OrderReturnPaymentCapacityDto(PaymentMethodKind.Card, 100m, 0m, 100m, "SQ:card-a", OriginalOrderGuid: originalOrderA),
+            new OrderReturnPaymentCapacityDto(PaymentMethodKind.Card, 90m, 0m, 90m, "SQ:card-b", OriginalOrderGuid: originalOrderB)
+        ]);
+        var cardTerminal = new ApprovedCardTerminalClient("CARD-REFUND");
+        var viewModel = new PaymentViewModel(
+            cart,
+            new CashPaymentWorkflowService(
+                new CashCheckoutService(),
+                new InMemoryOrderRepository(),
+                new InMemorySyncQueueRepository(),
+                cardTerminalClient: cardTerminal),
+            Session);
+
+        viewModel.PrepareForEntry(Session);
+
+        await viewModel.SelectCardCommand.ExecuteAsync(null);
+
+        var firstTender = Assert.Single(viewModel.PaymentTenders);
+        Assert.Equal(-10m, firstTender.Amount);
+        Assert.True(CardRefundReference.TryGetOriginalReference(firstTender.Reference, out var firstOriginal));
+        Assert.Equal("SQ:card-a", firstOriginal);
+
+        await viewModel.SelectCardCommand.ExecuteAsync(null);
+
+        Assert.Equal(2, viewModel.PaymentTenders.Count);
+        var secondTender = viewModel.PaymentTenders[1];
+        Assert.Equal(-90m, secondTender.Amount);
+        Assert.True(CardRefundReference.TryGetOriginalReference(secondTender.Reference, out var secondOriginal));
+        Assert.Equal("SQ:card-b", secondOriginal);
+        Assert.Equal(["SQ:card-a", "SQ:card-b"], cardTerminal.RefundOriginalReferences);
+    }
+
+    [Fact]
+    public async Task Zero_settlement_mode_completes_without_tenders_and_saves_empty_payments()
+    {
+        var cart = new PosCartService();
+        cart.AddItem(CreateItem("SKU-ZERO-1", "Zero Tea", "930ZERO1", PriceSourceKind.StoreRetailPrice, 5m));
+        cart.AddReturnLine(new ReturnCartLineRequest(
+            "S001",
+            "SKU-ZERO-RET",
+            null,
+            "Zero Return Tea",
+            "930ZERO2",
+            "ITEM-ZERO-RET",
+            null,
+            1m,
+            5m,
+            PriceSourceKind.StoreRetailPrice,
+            PriceSourceKind.StoreRetailPrice.ToString(),
+            "RETURN-ZERO-1",
+            Guid.NewGuid(),
+            Guid.NewGuid()));
+        var orders = new InMemoryOrderRepository();
+        var viewModel = new PaymentViewModel(
+            cart,
+            new CashPaymentWorkflowService(
+                new CashCheckoutService(),
+                orders,
+                new InMemorySyncQueueRepository()),
+            Session);
+
+        viewModel.PrepareForEntry(Session);
+
+        Assert.Equal(PaymentEntryMode.ZeroSettlement, viewModel.PaymentMode);
+        Assert.True(viewModel.IsZeroSettlementMode);
+        Assert.False(viewModel.AddTenderCommand.CanExecute(null));
+        Assert.False(viewModel.SelectCashCommand.CanExecute(null));
+        Assert.True(viewModel.ConfirmPaymentCommand.CanExecute(null));
+        Assert.Empty(viewModel.PaymentTenders);
+
+        await viewModel.ConfirmPaymentCommand.ExecuteAsync(null);
+
+        Assert.NotNull(orders.LastOrder);
+        Assert.Empty(orders.LastOrder!.Payments);
+        Assert.Empty(cart.Lines);
+    }
+
+    [Fact]
     public async Task Cash_payment_confirmation_saves_order_snapshot_and_refreshes_pending_sync()
     {
         var databasePath = Path.Combine(Path.GetTempPath(), $"hbpos-cash-vm-{Guid.NewGuid():N}.db");
@@ -2607,12 +2871,24 @@ public sealed class PosTerminalCashPaymentViewModelTests
 
     private sealed class ApprovedCardTerminalClient(string reference) : ICardTerminalClient
     {
+        public List<string?> RefundOriginalReferences { get; } = [];
+
         public Task<PaymentAuthorizationResult> AuthorizeAsync(
             decimal amount,
             PosSessionState session,
             CancellationToken cancellationToken = default)
         {
             return Task.FromResult(new PaymentAuthorizationResult(true, reference));
+        }
+
+        public Task<PaymentAuthorizationResult> RefundAsync(
+            decimal amount,
+            PosSessionState session,
+            string? originalReference,
+            CancellationToken cancellationToken = default)
+        {
+            RefundOriginalReferences.Add(originalReference);
+            return Task.FromResult(new PaymentAuthorizationResult(true, $"REFUND:{originalReference}", AuthorizedAmount: amount));
         }
     }
 }

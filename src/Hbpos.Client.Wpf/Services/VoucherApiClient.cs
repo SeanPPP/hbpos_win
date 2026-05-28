@@ -17,6 +17,10 @@ public interface IVoucherApiClient : IVoucherTenderClient
     Task<StoreVoucherLockResponse> LockAsync(
         StoreVoucherLockRequest request,
         CancellationToken cancellationToken = default);
+
+    Task<StoreVoucherIssueRefundResponse> IssueRefundVoucherAsync(
+        StoreVoucherIssueRefundRequest request,
+        CancellationToken cancellationToken = default);
 }
 
 public sealed class VoucherApiClient(HttpClient httpClient) : IVoucherApiClient
@@ -37,6 +41,16 @@ public sealed class VoucherApiClient(HttpClient httpClient) : IVoucherApiClient
         CancellationToken cancellationToken = default)
     {
         return PostAsync<StoreVoucherLockRequest, StoreVoucherLockResponse>("api/v1/vouchers/lock", request, cancellationToken);
+    }
+
+    public Task<StoreVoucherIssueRefundResponse> IssueRefundVoucherAsync(
+        StoreVoucherIssueRefundRequest request,
+        CancellationToken cancellationToken = default)
+    {
+        return PostAsync<StoreVoucherIssueRefundRequest, StoreVoucherIssueRefundResponse>(
+            "api/v1/vouchers/refund",
+            request,
+            cancellationToken);
     }
 
     public async Task<PaymentAuthorizationResult> RedeemAsync(
@@ -65,6 +79,45 @@ public sealed class VoucherApiClient(HttpClient httpClient) : IVoucherApiClient
             $"VOUCHER:{locked.VoucherCode}:{locked.ReservationToken}",
             locked.VoucherCode,
             locked.LockedAmount);
+    }
+
+    public async Task<PaymentAuthorizationResult> IssueRefundAsync(
+        decimal amount,
+        PosSessionState session,
+        string orderReference,
+        string idempotencyKey,
+        string? reason = null,
+        CancellationToken cancellationToken = default)
+    {
+        if (amount <= 0m)
+        {
+            return new PaymentAuthorizationResult(false, null, "Voucher refund amount must be greater than zero.");
+        }
+
+        if (string.IsNullOrWhiteSpace(orderReference))
+        {
+            return new PaymentAuthorizationResult(false, null, "Voucher refund order reference is required.");
+        }
+
+        if (string.IsNullOrWhiteSpace(idempotencyKey))
+        {
+            return new PaymentAuthorizationResult(false, null, "Voucher refund idempotency key is required.");
+        }
+
+        var issued = await IssueRefundVoucherAsync(
+            new StoreVoucherIssueRefundRequest(
+                session.StoreCode,
+                amount,
+                session.CashierId,
+                IdempotencyKey: idempotencyKey.Trim(),
+                OrderReference: orderReference.Trim(),
+                Reason: reason),
+            cancellationToken);
+        return new PaymentAuthorizationResult(
+            true,
+            $"VOUCHER_REFUND:{issued.VoucherCode}",
+            issued.VoucherCode,
+            issued.Amount);
     }
 
     private async Task<TResponse> GetAsync<TResponse>(

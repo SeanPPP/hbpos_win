@@ -2,6 +2,7 @@ using Hbpos.Client.Wpf.Models;
 using Hbpos.Client.Wpf.Services;
 using Hbpos.Client.Wpf.ViewModels;
 using Hbpos.Contracts.Catalog;
+using Hbpos.Contracts.Orders;
 
 namespace Hbpos.Client.Tests;
 
@@ -99,7 +100,82 @@ public sealed class PosCoreTests
         Assert.Equal("Milk 1L", line.DisplayName);
         Assert.Equal("ITEM-001", line.ItemNumber);
         Assert.Equal(PriceSourceKind.StoreClearancePrice, result.Order.Lines[0].PriceSource);
+        Assert.Equal(OrderLineKind.Sale, line.Kind);
         Assert.Equal(9.9m, Assert.Single(result.Order.Payments).Amount);
+    }
+
+    [Fact]
+    public void Cash_checkout_allows_zero_total_order_without_payments()
+    {
+        var cart = new PosCartService();
+        var checkout = new CashCheckoutService();
+        cart.AddItem(CreateItem("SKU-ZERO-TOTAL", "Zero Total", "690120", PriceSourceKind.StoreRetailPrice, 5m));
+        cart.AddReturnLine(new ReturnCartLineRequest(
+            "S001",
+            "SKU-RETURN",
+            null,
+            "Returned Zero Total",
+            "690121",
+            "ITEM-RETURN",
+            null,
+            1m,
+            5m,
+            PriceSourceKind.StoreRetailPrice,
+            PriceSourceKind.StoreRetailPrice.ToString(),
+            "RETURN-1",
+            Guid.NewGuid(),
+            Guid.NewGuid()));
+
+        var result = checkout.CreatePaymentOrder(
+            cart,
+            new PosSessionState("HB POS", "S001", "Main Store", "POS-01", "C001", "Alice", true, 0),
+            [],
+            cashTenderedAmount: 0m);
+
+        Assert.Equal(0m, result.Order.ActualAmount);
+        Assert.Empty(result.Order.Payments);
+        Assert.Equal(0m, result.TenderedAmount);
+        Assert.Equal(0m, result.ChangeAmount);
+    }
+
+    [Fact]
+    public void Cash_checkout_preserves_return_metadata_and_negative_cash_payment_for_refund()
+    {
+        var cart = new PosCartService();
+        var checkout = new CashCheckoutService();
+        var originalOrderGuid = Guid.NewGuid();
+        var originalOrderLineGuid = Guid.NewGuid();
+        cart.AddReturnLine(new ReturnCartLineRequest(
+            "S001",
+            "SKU-RET-1",
+            "REF-1",
+            "Returned Tea",
+            "690122",
+            "ITEM-RET-1",
+            null,
+            1m,
+            7.82m,
+            PriceSourceKind.StoreRetailPrice,
+            PriceSourceKind.StoreRetailPrice.ToString(),
+            "RETURN-SOURCE-1",
+            originalOrderGuid,
+            originalOrderLineGuid));
+
+        var result = checkout.CreatePaymentOrder(
+            cart,
+            new PosSessionState("HB POS", "S001", "Main Store", "POS-01", "C001", "Alice", true, 0),
+            [new PaymentTender(PaymentMethodKind.Cash, -7.80m)],
+            cashTenderedAmount: -7.80m);
+
+        var line = Assert.Single(result.Order.Lines);
+        var payment = Assert.Single(result.Order.Payments);
+        Assert.Equal(OrderLineKind.Return, line.Kind);
+        Assert.Equal("RETURN-SOURCE-1", line.ReturnSourceKey);
+        Assert.Equal(originalOrderGuid, line.OriginalOrderGuid);
+        Assert.Equal(originalOrderLineGuid, line.OriginalOrderDetailGuid);
+        Assert.Equal(-7.80m, payment.Amount);
+        Assert.Equal(-7.80m, result.TenderedAmount);
+        Assert.Equal(0m, result.ChangeAmount);
     }
 
     [Fact]
@@ -228,6 +304,8 @@ public sealed class PosCoreTests
             Assert.Equal(2, savedOrder.Lines.Count);
             Assert.Equal("ITEM-101", savedOrder.Lines[0].ItemNumber);
             Assert.Equal(order.ActualAmount, Assert.Single(savedOrder.Payments).Amount);
+            Assert.Equal(OrderLineKind.Return, savedOrder.Lines[1].Kind);
+            Assert.Equal("RETURN-SOURCE-ORDER", savedOrder.Lines[1].ReturnSourceKey);
         }
         finally
         {
@@ -333,7 +411,7 @@ public sealed class PosCoreTests
     }
 
     [Fact]
-    public async Task Local_schema_service_migrates_existing_order_lines_with_item_number_column()
+    public async Task Local_schema_service_migrates_existing_order_lines_with_return_columns()
     {
         var databasePath = Path.Combine(Path.GetTempPath(), $"hbpos-client-migration-{Guid.NewGuid():N}.db");
 
@@ -377,6 +455,10 @@ public sealed class PosCoreTests
             }
 
             Assert.Contains("ItemNumber", columns);
+            Assert.Contains("Kind", columns);
+            Assert.Contains("ReturnSourceKey", columns);
+            Assert.Contains("OriginalOrderGuid", columns);
+            Assert.Contains("OriginalOrderDetailGuid", columns);
         }
         finally
         {
@@ -480,7 +562,22 @@ public sealed class PosCoreTests
         var lines = new[]
         {
             new LocalOrderLine(Guid.NewGuid(), "SKU-101", null, "Organic Gala Apples", firstLookupCode, firstItemNumber, 2m, 2.50m, 0m, 5.00m, PriceSourceKind.StoreRetailPrice),
-            new LocalOrderLine(Guid.NewGuid(), "SKU-102", null, "Whole Grain Bread", "690102", "ITEM-102", 1m, 4.20m, 0.20m, 4.00m, PriceSourceKind.ProductBase)
+            new LocalOrderLine(
+                Guid.NewGuid(),
+                "SKU-102",
+                null,
+                "Whole Grain Bread",
+                "690102",
+                "ITEM-102",
+                1m,
+                4.20m,
+                0.20m,
+                4.00m,
+                PriceSourceKind.ProductBase,
+                OrderLineKind.Return,
+                "RETURN-SOURCE-ORDER",
+                Guid.Parse("11111111-1111-1111-1111-111111111111"),
+                Guid.Parse("22222222-2222-2222-2222-222222222222"))
         };
 
         return new LocalOrder(

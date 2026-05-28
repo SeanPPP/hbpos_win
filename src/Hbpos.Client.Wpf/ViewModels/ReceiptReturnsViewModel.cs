@@ -17,6 +17,7 @@ public sealed partial class ReceiptReturnsViewModel : ObservableObject, IScanner
     private readonly IRawScannerService? _rawScannerService;
     private readonly Action _onBack;
     private readonly Action<CartLine>? _onReturnLineAdded;
+    private ReceiptReturnOrder? _currentOrder;
 
     [ObservableProperty]
     private PosSessionState _session;
@@ -165,11 +166,13 @@ public sealed partial class ReceiptReturnsViewModel : ObservableObject, IScanner
 
         if (result.Order is null)
         {
+            _currentOrder = null;
             OrderSummaryText = DefaultOrderSummaryText;
             OnPendingLinesChanged();
             return;
         }
 
+        _currentOrder = result.Order;
         OrderSummaryText = $"#{result.Order.OrderGuid.ToString("N")[..8].ToUpperInvariant()}  {result.Order.SoldAt.ToLocalTime():yyyy-MM-dd HH:mm}  {result.Order.CashierName}";
         foreach (var line in result.Order.Lines)
         {
@@ -281,7 +284,9 @@ public sealed partial class ReceiptReturnsViewModel : ObservableObject, IScanner
             return;
         }
 
-        var added = _workflowService.AddReturnLinesToCart(PendingLines.Select(line => line.ToPendingReturnLine()));
+        var added = _workflowService.AddReturnLinesToCart(
+            PendingLines.Select(line => line.ToPendingReturnLine()),
+            _currentOrder?.PaymentCapacities);
         var lastAdded = added.LastOrDefault();
         ResetToDefault();
         if (lastAdded is not null)
@@ -302,6 +307,7 @@ public sealed partial class ReceiptReturnsViewModel : ObservableObject, IScanner
     {
         OrderLines.Clear();
         PendingLines.Clear();
+        _currentOrder = null;
         ReturnRecordsMayBeStale = false;
         OrderSummaryText = DefaultOrderSummaryText;
         OnPendingLinesChanged();

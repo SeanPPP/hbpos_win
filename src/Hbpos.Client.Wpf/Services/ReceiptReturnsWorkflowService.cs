@@ -16,7 +16,8 @@ public interface IReceiptReturnsWorkflowService
         string productQuery);
 
     IReadOnlyList<CartLine> AddReturnLinesToCart(
-        IEnumerable<PendingReturnLine> lines);
+        IEnumerable<PendingReturnLine> lines,
+        IReadOnlyList<OrderReturnPaymentCapacityDto>? paymentCapacities = null);
 }
 
 public sealed record ReceiptReturnLookupResult(
@@ -37,7 +38,8 @@ public sealed record ReceiptReturnOrder(
     DateTimeOffset SoldAt,
     decimal ActualAmount,
     IReadOnlyList<ReceiptReturnOrderLine> Lines,
-    IReadOnlyList<OrderReturnRecordDto> ReturnRecords);
+    IReadOnlyList<OrderReturnRecordDto> ReturnRecords,
+    IReadOnlyList<OrderReturnPaymentCapacityDto> PaymentCapacities);
 
 public sealed record ReceiptReturnOrderLine(
     Guid OrderLineGuid,
@@ -145,7 +147,8 @@ public sealed class ReceiptReturnsWorkflowService(
     }
 
     public IReadOnlyList<CartLine> AddReturnLinesToCart(
-        IEnumerable<PendingReturnLine> lines)
+        IEnumerable<PendingReturnLine> lines,
+        IReadOnlyList<OrderReturnPaymentCapacityDto>? paymentCapacities = null)
     {
         var added = new List<CartLine>();
         foreach (var pending in lines)
@@ -167,6 +170,7 @@ public sealed class ReceiptReturnsWorkflowService(
                 pending.OriginalOrderLineGuid)));
         }
 
+        cart.AddReturnPaymentCapacities(paymentCapacities ?? []);
         return added;
     }
 
@@ -254,7 +258,8 @@ public sealed class ReceiptReturnsWorkflowService(
                 line.UnitPrice,
                 line.ActualAmount,
                 returnedByLine.TryGetValue(line.OrderLineGuid, out var returnedQuantity) ? returnedQuantity : 0m)).ToList(),
-            context.ReturnRecords);
+            context.ReturnRecords,
+            context.PaymentCapacities ?? []);
     }
 
     private static ReceiptReturnOrder MapLocal(LocalOrder order)
@@ -277,7 +282,38 @@ public sealed class ReceiptReturnsWorkflowService(
                 line.UnitPrice,
                 line.ActualAmount,
                 ReturnedQuantity: 0m)).ToList(),
-            []);
+            [],
+            BuildLocalPaymentCapacities(order));
+    }
+
+    private static IReadOnlyList<OrderReturnPaymentCapacityDto> BuildLocalPaymentCapacities(LocalOrder order)
+    {
+        return order.Payments
+            .Where(payment => payment.Amount > 0m)
+            .GroupBy(payment => new
+            {
+                payment.Method,
+                Reference = payment.Method == PaymentMethodKind.Card
+                    ? NormalizeReference(payment.Reference)
+                    : null
+            })
+            .Select(group => new OrderReturnPaymentCapacityDto(
+                group.Key.Method,
+                group.Sum(payment => payment.Amount),
+                0m,
+                group.Sum(payment => payment.Amount),
+                group.Key.Reference,
+                group
+                    .Where(payment => payment.Method == PaymentMethodKind.Card)
+                    .SelectMany(payment => payment.CardTransactions ?? [])
+                    .ToList(),
+                order.OrderGuid))
+            .ToList();
+    }
+
+    private static string? NormalizeReference(string? reference)
+    {
+        return string.IsNullOrWhiteSpace(reference) ? null : reference.Trim();
     }
 
     private static string NormalizeQuery(string value)

@@ -36,6 +36,23 @@ public sealed class CardTerminalSettingsTests
     }
 
     [Fact]
+    public void FromEnvironment_reads_linkly_cloud_identity_defaults_and_vendor_id()
+    {
+        using var variables = new EnvironmentVariableScope(new Dictionary<string, string?>
+        {
+            ["HBPOS_LINKLY_POS_NAME"] = null,
+            ["HBPOS_LINKLY_POS_VERSION"] = null,
+            ["HBPOS_LINKLY_POS_VENDOR_ID"] = "a256b7ec-709d-4c7d-8ffe-57cc7ca1fd22"
+        });
+
+        var settings = CardTerminalSettings.FromEnvironment();
+
+        Assert.Equal("HotBargainPOS", settings.LinklyPosName);
+        Assert.Equal("2026.5.1", settings.LinklyPosVersion);
+        Assert.Equal("a256b7ec-709d-4c7d-8ffe-57cc7ca1fd22", settings.LinklyPosVendorId);
+    }
+
+    [Fact]
     public void FromEnvironment_does_not_read_square_token_from_environment()
     {
         using var variables = new EnvironmentVariableScope(new Dictionary<string, string?>
@@ -200,6 +217,40 @@ public sealed class CardTerminalSettingsTests
     }
 
     [Fact]
+    public async Task SaveLinklyCloudSecretAsync_protects_secret_before_persisting()
+    {
+        const string secret = "opaque-linkly-cloud-secret";
+        var repository = new InMemorySettingsRepository();
+        var protector = new FakeAuthorizationProtector();
+        var store = new CardTerminalSettingsStore(repository, protector);
+
+        await store.SaveLinklyCloudSecretAsync(CardTerminalEnvironment.Production, secret);
+
+        AssertSecretEquals(secret, protector.LastProtectedValue, "Linkly Cloud secret should be passed to the protector");
+        Assert.Equal(Protect(secret), repository.GetStoredValue("CardTerminal:LinklyCloudSecretProtected:Production"));
+        Assert.True(
+            !string.Equals(secret, repository.GetStoredValue("CardTerminal:LinklyCloudSecretProtected:Production"), StringComparison.Ordinal),
+            "stored Linkly Cloud secret should not be plaintext");
+        AssertSecretEquals(secret, await store.GetLinklyCloudSecretAsync(CardTerminalEnvironment.Production), "protected Linkly Cloud secret should be readable");
+    }
+
+    [Fact]
+    public async Task GetOrCreateLinklyCloudPosIdAsync_reuses_uuid_v4_for_same_store_and_device()
+    {
+        var repository = new InMemorySettingsRepository();
+        var store = new CardTerminalSettingsStore(repository, new FakeAuthorizationProtector());
+
+        var first = await store.GetOrCreateLinklyCloudPosIdAsync("S01", "TERM-1");
+        var second = await store.GetOrCreateLinklyCloudPosIdAsync("S01", "TERM-1");
+        var third = await store.GetOrCreateLinklyCloudPosIdAsync("S01", "TERM-2");
+
+        Assert.Equal(first, second);
+        Assert.NotEqual(first, third);
+        AssertUuidV4(first);
+        AssertUuidV4(third);
+    }
+
+    [Fact]
     public async Task GetSettingsAsync_prefers_local_configuration_over_environment_variables()
     {
         using var variables = new EnvironmentVariableScope(new Dictionary<string, string?>
@@ -253,6 +304,28 @@ public sealed class CardTerminalSettingsTests
         Assert.Equal("https://connect.squareupsandbox.com/v2/", settings.SquareApiBaseUrl);
     }
 
+    [Fact]
+    public async Task GetSettingsAsync_uses_linkly_cloud_base_url_environment_overrides()
+    {
+        using var variables = new EnvironmentVariableScope(new Dictionary<string, string?>
+        {
+            ["HBPOS_LINKLY_CLOUD_AUTH_BASE_URL"] = "https://auth.example.test/v1",
+            ["HBPOS_LINKLY_CLOUD_REST_BASE_URL"] = "https://rest.example.test/v1/"
+        });
+        var repository = new InMemorySettingsRepository(new Dictionary<string, string?>
+        {
+            ["CardTerminal:Processor"] = nameof(CardProcessorKind.Linkly),
+            ["CardTerminal:Environment"] = nameof(CardTerminalEnvironment.Sandbox),
+            ["CardTerminal:LinklyConnectionMode"] = nameof(LinklyConnectionMode.Cloud)
+        });
+        var store = new CardTerminalSettingsStore(repository, new FakeAuthorizationProtector());
+
+        var settings = await store.GetSettingsAsync();
+
+        Assert.Equal("https://auth.example.test/v1/", settings.LinklyCloudAuthBaseUrl);
+        Assert.Equal("https://rest.example.test/v1/", settings.LinklyCloudRestBaseUrl);
+    }
+
     private sealed class EnvironmentVariableScope : IDisposable
     {
         private readonly Dictionary<string, string?> _originalValues = new(StringComparer.OrdinalIgnoreCase);
@@ -297,6 +370,12 @@ public sealed class CardTerminalSettingsTests
         Assert.True(
             string.Equals(Protect(expectedPlaintext), actualProtected, StringComparison.Ordinal),
             "stored Square token should match the protected token value");
+    }
+
+    private static void AssertUuidV4(string value)
+    {
+        Assert.True(Guid.TryParse(value, out var guid), "posId should be a UUID.");
+        Assert.Equal(4, (guid.ToByteArray()[7] >> 4) & 0x0F);
     }
 
     private sealed class InMemorySettingsRepository : ILocalAppSettingsRepository

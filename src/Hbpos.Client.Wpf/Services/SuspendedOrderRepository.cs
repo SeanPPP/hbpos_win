@@ -1,6 +1,8 @@
 using System.Globalization;
+using System.Text.Json;
 using Hbpos.Client.Wpf.Models;
 using Hbpos.Contracts.Catalog;
+using Hbpos.Contracts.Orders;
 using Microsoft.Data.Sqlite;
 
 namespace Hbpos.Client.Wpf.Services;
@@ -58,8 +60,8 @@ public sealed class SuspendedOrderRepository(LocalSqliteStore store) : ISuspende
             command.Transaction = transaction;
             command.CommandText = """
                 INSERT INTO SuspendedOrderLines
-                (SuspendedOrderLineGuid, SuspendedOrderGuid, StoreCode, ProductCode, ReferenceCode, DisplayName, LookupCode, ItemNumber, ProductImage, Quantity, UnitPrice, DiscountAmount, DiscountPercent, ActualAmount, PriceSource, PriceSourceLabel)
-                VALUES ($SuspendedOrderLineGuid, $SuspendedOrderGuid, $StoreCode, $ProductCode, $ReferenceCode, $DisplayName, $LookupCode, $ItemNumber, $ProductImage, $Quantity, $UnitPrice, $DiscountAmount, $DiscountPercent, $ActualAmount, $PriceSource, $PriceSourceLabel);
+                (SuspendedOrderLineGuid, SuspendedOrderGuid, StoreCode, ProductCode, ReferenceCode, DisplayName, LookupCode, ItemNumber, ProductImage, Quantity, UnitPrice, DiscountAmount, DiscountPercent, ActualAmount, PriceSource, PriceSourceLabel, Kind, ReturnSourceKey, OriginalOrderGuid, OriginalOrderDetailGuid, ReturnReason)
+                VALUES ($SuspendedOrderLineGuid, $SuspendedOrderGuid, $StoreCode, $ProductCode, $ReferenceCode, $DisplayName, $LookupCode, $ItemNumber, $ProductImage, $Quantity, $UnitPrice, $DiscountAmount, $DiscountPercent, $ActualAmount, $PriceSource, $PriceSourceLabel, $Kind, $ReturnSourceKey, $OriginalOrderGuid, $OriginalOrderDetailGuid, $ReturnReason);
                 """;
             command.Parameters.AddWithValue("$SuspendedOrderLineGuid", line.SuspendedOrderLineGuid.ToString());
             command.Parameters.AddWithValue("$SuspendedOrderGuid", line.SuspendedOrderGuid.ToString());
@@ -77,6 +79,31 @@ public sealed class SuspendedOrderRepository(LocalSqliteStore store) : ISuspende
             command.Parameters.AddWithValue("$ActualAmount", line.ActualAmount);
             command.Parameters.AddWithValue("$PriceSource", (int)line.PriceSource);
             command.Parameters.AddWithValue("$PriceSourceLabel", line.PriceSourceLabel);
+            command.Parameters.AddWithValue("$Kind", (int)line.Kind);
+            command.Parameters.AddWithValue("$ReturnSourceKey", line.ReturnSourceKey);
+            command.Parameters.AddWithValue("$OriginalOrderGuid", line.OriginalOrderGuid?.ToString() ?? (object)DBNull.Value);
+            command.Parameters.AddWithValue("$OriginalOrderDetailGuid", line.OriginalOrderDetailGuid?.ToString() ?? (object)DBNull.Value);
+            command.Parameters.AddWithValue("$ReturnReason", (object?)line.ReturnReason ?? DBNull.Value);
+            await command.ExecuteNonQueryAsync(cancellationToken);
+        }
+
+        foreach (var capacity in order.ReturnPaymentCapacities)
+        {
+            await using var command = connection.CreateCommand();
+            command.Transaction = transaction;
+            command.CommandText = """
+                INSERT INTO SuspendedOrderReturnPaymentCapacities
+                (SuspendedOrderGuid, Method, OriginalAmount, RefundedAmount, RemainingAmount, Reference, CardTransactionsJson, OriginalOrderGuid)
+                VALUES ($SuspendedOrderGuid, $Method, $OriginalAmount, $RefundedAmount, $RemainingAmount, $Reference, $CardTransactionsJson, $OriginalOrderGuid);
+                """;
+            command.Parameters.AddWithValue("$SuspendedOrderGuid", order.SuspendedOrderGuid.ToString());
+            command.Parameters.AddWithValue("$Method", (int)capacity.Method);
+            command.Parameters.AddWithValue("$OriginalAmount", capacity.OriginalAmount);
+            command.Parameters.AddWithValue("$RefundedAmount", capacity.RefundedAmount);
+            command.Parameters.AddWithValue("$RemainingAmount", capacity.RemainingAmount);
+            command.Parameters.AddWithValue("$Reference", (object?)capacity.Reference ?? DBNull.Value);
+            command.Parameters.AddWithValue("$CardTransactionsJson", SerializeCardTransactions(capacity.CardTransactions) ?? (object)DBNull.Value);
+            command.Parameters.AddWithValue("$OriginalOrderGuid", capacity.OriginalOrderGuid?.ToString() ?? (object)DBNull.Value);
             await command.ExecuteNonQueryAsync(cancellationToken);
         }
 
@@ -168,7 +195,8 @@ public sealed class SuspendedOrderRepository(LocalSqliteStore store) : ISuspende
         }
 
         var lines = await ReadLinesAsync(connection, suspendedOrderGuid, cancellationToken);
-        return header with { Lines = lines };
+        var returnPaymentCapacities = await ReadReturnPaymentCapacitiesAsync(connection, suspendedOrderGuid, cancellationToken);
+        return header with { Lines = lines, ReturnPaymentCapacities = returnPaymentCapacities };
     }
 
     public async Task MarkStatusAsync(
@@ -228,7 +256,7 @@ public sealed class SuspendedOrderRepository(LocalSqliteStore store) : ISuspende
     {
         await using var command = connection.CreateCommand();
         command.CommandText = """
-            SELECT SuspendedOrderLineGuid, SuspendedOrderGuid, StoreCode, ProductCode, ReferenceCode, DisplayName, LookupCode, ItemNumber, ProductImage, Quantity, UnitPrice, DiscountAmount, DiscountPercent, ActualAmount, PriceSource, PriceSourceLabel
+            SELECT SuspendedOrderLineGuid, SuspendedOrderGuid, StoreCode, ProductCode, ReferenceCode, DisplayName, LookupCode, ItemNumber, ProductImage, Quantity, UnitPrice, DiscountAmount, DiscountPercent, ActualAmount, PriceSource, PriceSourceLabel, Kind, ReturnSourceKey, OriginalOrderGuid, OriginalOrderDetailGuid, ReturnReason
             FROM SuspendedOrderLines
             WHERE SuspendedOrderGuid = $SuspendedOrderGuid
             ORDER BY rowid;
@@ -255,10 +283,48 @@ public sealed class SuspendedOrderRepository(LocalSqliteStore store) : ISuspende
                 ReadNullableDecimal(reader, "DiscountPercent"),
                 ReadDecimal(reader, "ActualAmount"),
                 (PriceSourceKind)reader.GetInt32(reader.GetOrdinal("PriceSource")),
-                ReadString(reader, "PriceSourceLabel")));
+                ReadString(reader, "PriceSourceLabel"))
+            {
+                Kind = (CartLineKind)reader.GetInt32(reader.GetOrdinal("Kind")),
+                ReturnSourceKey = ReadNullableString(reader, "ReturnSourceKey") ?? string.Empty,
+                OriginalOrderGuid = ReadNullableGuid(reader, "OriginalOrderGuid"),
+                OriginalOrderDetailGuid = ReadNullableGuid(reader, "OriginalOrderDetailGuid"),
+                ReturnReason = ReadNullableString(reader, "ReturnReason")
+            });
         }
 
         return lines;
+    }
+
+    private static async Task<IReadOnlyList<OrderReturnPaymentCapacityDto>> ReadReturnPaymentCapacitiesAsync(
+        SqliteConnection connection,
+        Guid suspendedOrderGuid,
+        CancellationToken cancellationToken)
+    {
+        await using var command = connection.CreateCommand();
+        command.CommandText = """
+            SELECT Method, OriginalAmount, RefundedAmount, RemainingAmount, Reference, CardTransactionsJson, OriginalOrderGuid
+            FROM SuspendedOrderReturnPaymentCapacities
+            WHERE SuspendedOrderGuid = $SuspendedOrderGuid
+            ORDER BY Id;
+            """;
+        command.Parameters.AddWithValue("$SuspendedOrderGuid", suspendedOrderGuid.ToString());
+
+        var capacities = new List<OrderReturnPaymentCapacityDto>();
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+        while (await reader.ReadAsync(cancellationToken))
+        {
+            capacities.Add(new OrderReturnPaymentCapacityDto(
+                (PaymentMethodKind)reader.GetInt32(reader.GetOrdinal("Method")),
+                ReadDecimal(reader, "OriginalAmount"),
+                ReadDecimal(reader, "RefundedAmount"),
+                ReadDecimal(reader, "RemainingAmount"),
+                ReadNullableString(reader, "Reference"),
+                DeserializeCardTransactions(ReadNullableString(reader, "CardTransactionsJson")),
+                ReadNullableGuid(reader, "OriginalOrderGuid")));
+        }
+
+        return capacities;
     }
 
     private static Guid ReadGuid(SqliteDataReader reader, string name)
@@ -275,6 +341,12 @@ public sealed class SuspendedOrderRepository(LocalSqliteStore store) : ISuspende
     {
         var ordinal = reader.GetOrdinal(name);
         return reader.IsDBNull(ordinal) ? null : reader.GetString(ordinal);
+    }
+
+    private static Guid? ReadNullableGuid(SqliteDataReader reader, string name)
+    {
+        var value = ReadNullableString(reader, name);
+        return string.IsNullOrWhiteSpace(value) ? null : Guid.Parse(value);
     }
 
     private static decimal ReadDecimal(SqliteDataReader reader, string name)
@@ -305,5 +377,19 @@ public sealed class SuspendedOrderRepository(LocalSqliteStore store) : ISuspende
     private static DateTimeOffset ReadDateTimeOffset(SqliteDataReader reader, string name)
     {
         return DateTimeOffset.Parse(ReadString(reader, name), CultureInfo.InvariantCulture);
+    }
+
+    private static string? SerializeCardTransactions(IReadOnlyList<CardTransactionDto>? cardTransactions)
+    {
+        return cardTransactions is { Count: > 0 }
+            ? JsonSerializer.Serialize(cardTransactions)
+            : null;
+    }
+
+    private static IReadOnlyList<CardTransactionDto>? DeserializeCardTransactions(string? cardTransactionsJson)
+    {
+        return string.IsNullOrWhiteSpace(cardTransactionsJson)
+            ? null
+            : JsonSerializer.Deserialize<List<CardTransactionDto>>(cardTransactionsJson);
     }
 }

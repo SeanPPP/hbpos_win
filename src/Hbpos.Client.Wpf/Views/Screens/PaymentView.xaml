@@ -223,9 +223,13 @@
                     <Style TargetType="StackPanel">
                         <Setter Property="Visibility" Value="Collapsed" />
                         <Style.Triggers>
-                            <DataTrigger Binding="{Binding IsCashSelected}" Value="True">
+                            <MultiDataTrigger>
+                                <MultiDataTrigger.Conditions>
+                                    <Condition Binding="{Binding IsCashSelected}" Value="True" />
+                                    <Condition Binding="{Binding IsQuickCashVisible}" Value="True" />
+                                </MultiDataTrigger.Conditions>
                                 <Setter Property="Visibility" Value="Visible" />
-                            </DataTrigger>
+                            </MultiDataTrigger>
                         </Style.Triggers>
                     </Style>
                 </StackPanel.Style>
@@ -262,9 +266,30 @@
                 </ItemsControl>
             </StackPanel>
 
-            <TextBlock Grid.Row="2" Text="{loc:Loc shell.numpad}" Margin="16,8,16,6" FontSize="9" FontWeight="Black" Foreground="{StaticResource PosMutedForegroundBrush}" />
+            <TextBlock Grid.Row="2" Text="{loc:Loc shell.numpad}" Margin="16,8,16,6" FontSize="9" FontWeight="Black" Foreground="{StaticResource PosMutedForegroundBrush}">
+                <TextBlock.Style>
+                    <Style TargetType="TextBlock">
+                        <Setter Property="Visibility" Value="Visible" />
+                        <Style.Triggers>
+                            <DataTrigger Binding="{Binding IsTenderEntryVisible}" Value="False">
+                                <Setter Property="Visibility" Value="Collapsed" />
+                            </DataTrigger>
+                        </Style.Triggers>
+                    </Style>
+                </TextBlock.Style>
+            </TextBlock>
 
             <UniformGrid Grid.Row="3" Columns="3" Margin="16,0,16,16">
+                <UniformGrid.Style>
+                    <Style TargetType="UniformGrid">
+                        <Setter Property="Visibility" Value="Visible" />
+                        <Style.Triggers>
+                            <DataTrigger Binding="{Binding IsTenderEntryVisible}" Value="False">
+                                <Setter Property="Visibility" Value="Collapsed" />
+                            </DataTrigger>
+                        </Style.Triggers>
+                    </Style>
+                </UniformGrid.Style>
                 <Button Content="1" Command="{Binding NumberInputCommand}" CommandParameter="1" Style="{StaticResource PosNumberButtonStyle}" />
                 <Button Content="2" Command="{Binding NumberInputCommand}" CommandParameter="2" Style="{StaticResource PosNumberButtonStyle}" />
                 <Button Content="3" Command="{Binding NumberInputCommand}" CommandParameter="3" Style="{StaticResource PosNumberButtonStyle}" />
@@ -292,7 +317,17 @@
                         <TextBlock Text="{Binding CancelText}" FontWeight="Bold" />
                     </StackPanel>
                 </Button>
-                <Button Grid.Column="1" Command="{Binding AddTenderCommand}" Height="50" Style="{StaticResource PosSecondaryButtonStyle}" Margin="8,0,8,0">
+                <Button Grid.Column="1" Command="{Binding AddTenderCommand}" Height="50" Margin="8,0,8,0">
+                    <Button.Style>
+                        <Style TargetType="Button" BasedOn="{StaticResource PosSecondaryButtonStyle}">
+                            <Setter Property="Visibility" Value="Visible" />
+                            <Style.Triggers>
+                                <DataTrigger Binding="{Binding IsTenderEntryVisible}" Value="False">
+                                    <Setter Property="Visibility" Value="Collapsed" />
+                                </DataTrigger>
+                            </Style.Triggers>
+                        </Style>
+                    </Button.Style>
                     <StackPanel Orientation="Horizontal">
                         <materialDesign:PackIcon Kind="PlusCircle" Width="20" Height="20" Margin="0,0,8,0" />
                         <TextBlock Text="{Binding AddTenderText}" FontWeight="Black" />
@@ -315,15 +350,36 @@
                 <RowDefinition Height="Auto" />
             </Grid.RowDefinitions>
 
-            <TextBlock Grid.Row="0" Text="{Binding PaymentMethodText}" Margin="24,24,24,8" FontSize="11" FontWeight="Black" Foreground="{StaticResource PosMutedForegroundBrush}" />
+            <TextBlock Grid.Row="0" Text="{Binding PaymentMethodText}" Margin="24,24,24,8" FontSize="11" FontWeight="Black" Foreground="{StaticResource PosMutedForegroundBrush}">
+                <TextBlock.Style>
+                    <Style TargetType="TextBlock">
+                        <Setter Property="Visibility" Value="Visible" />
+                        <Style.Triggers>
+                            <DataTrigger Binding="{Binding IsPaymentMethodSelectionVisible}" Value="False">
+                                <Setter Property="Visibility" Value="Collapsed" />
+                            </DataTrigger>
+                        </Style.Triggers>
+                    </Style>
+                </TextBlock.Style>
+            </TextBlock>
 
             <StackPanel Grid.Row="1" Margin="24,0,24,8">
+                <StackPanel.Style>
+                    <Style TargetType="StackPanel">
+                        <Setter Property="Visibility" Value="Visible" />
+                        <Style.Triggers>
+                            <DataTrigger Binding="{Binding IsPaymentMethodSelectionVisible}" Value="False">
+                                <Setter Property="Visibility" Value="Collapsed" />
+                            </DataTrigger>
+                        </Style.Triggers>
+                    </Style>
+                </StackPanel.Style>
                 <Button Command="{Binding SelectCashCommand}" Style="{StaticResource CashMethodButtonStyle}">
                     <StackPanel Orientation="Horizontal">
                         <Border Width="32" Height="32" Margin="0,0,12,0" Background="#33FFFFFF" CornerRadius="8">
                             <materialDesign:PackIcon Kind="Cash" Width="18" Height="18" HorizontalAlignment="Center" VerticalAlignment="Center" Foreground="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}" />
                         </Border>
-                        <TextBlock Text="{loc:Loc payment.method.cash}" VerticalAlignment="Center" FontWeight="Bold" Foreground="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}" />
+                        <TextBlock Text="{Binding CashMethodText}" VerticalAlignment="Center" FontWeight="Bold" Foreground="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}" />
                     </StackPanel>
                 </Button>
                 <Button Command="{Binding SelectCardCommand}" Style="{StaticResource CardMethodButtonStyle}">
@@ -331,7 +387,7 @@
                         <Border Width="32" Height="32" Margin="0,0,12,0" Background="#FFE2E2E6" CornerRadius="8">
                             <materialDesign:PackIcon Kind="CreditCard" Width="18" Height="18" Foreground="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}" HorizontalAlignment="Center" VerticalAlignment="Center" />
                         </Border>
-                        <TextBlock Text="{loc:Loc payment.method.card}" VerticalAlignment="Center" FontWeight="Bold" Foreground="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}" />
+                        <TextBlock Text="{Binding CardMethodText}" VerticalAlignment="Center" FontWeight="Bold" Foreground="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}" />
                     </StackPanel>
                 </Button>
                 <Button Command="{Binding SelectVoucherCommand}" Style="{StaticResource VoucherMethodButtonStyle}">
@@ -339,7 +395,7 @@
                         <Border Width="32" Height="32" Margin="0,0,12,0" Background="#FFE2E2E6" CornerRadius="8">
                             <materialDesign:PackIcon Kind="TicketPercent" Width="18" Height="18" Foreground="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}" HorizontalAlignment="Center" VerticalAlignment="Center" />
                         </Border>
-                        <TextBlock Text="{loc:Loc payment.method.voucher}" VerticalAlignment="Center" FontWeight="Bold" Foreground="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}" />
+                        <TextBlock Text="{Binding VoucherMethodText}" VerticalAlignment="Center" FontWeight="Bold" Foreground="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}" />
                     </StackPanel>
                 </Button>
                 <TextBox Text="{Binding VoucherCodeText, UpdateSourceTrigger=PropertyChanged}"
@@ -350,7 +406,7 @@
                         <Style TargetType="TextBox" BasedOn="{StaticResource PosSearchTextBoxStyle}">
                             <Setter Property="Visibility" Value="Collapsed" />
                             <Style.Triggers>
-                                <DataTrigger Binding="{Binding IsVoucherSelected}" Value="True">
+                                <DataTrigger Binding="{Binding IsVoucherCodeEntryVisible}" Value="True">
                                     <Setter Property="Visibility" Value="Visible" />
                                 </DataTrigger>
                             </Style.Triggers>

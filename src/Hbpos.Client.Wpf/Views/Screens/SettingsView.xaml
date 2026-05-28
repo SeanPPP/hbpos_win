@@ -489,15 +489,217 @@
                                     </StackPanel>
                                 </DockPanel>
 
-                                <TextBlock Text="{loc:Loc settings.linkly.host}" Style="{StaticResource SettingsLabelStyle}" />
-                                <TextBox Text="{Binding LinklyHostText, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
-                                         Style="{StaticResource SettingsFieldTextBoxStyle}"
-                                         Margin="0,0,0,14" />
+                                <CheckBox IsChecked="{Binding IsLinklyCloudMode, Mode=TwoWay}"
+                                          Margin="0,0,0,16">
+                                    <TextBlock Text="{loc:Loc settings.linkly.cloudMode}" FontWeight="Bold" />
+                                </CheckBox>
 
-                                <TextBlock Text="{loc:Loc settings.linkly.port}" Style="{StaticResource SettingsLabelStyle}" />
-                                <TextBox Text="{Binding LinklyPortText, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
-                                         Style="{StaticResource SettingsFieldTextBoxStyle}"
-                                         Margin="0,0,0,18" />
+                                <Expander Margin="0,0,0,16"
+                                          Background="#FFFFFBF2"
+                                          BorderBrush="#FFFFD89A"
+                                          BorderThickness="1"
+                                          Padding="10,8"
+                                          IsExpanded="False">
+                                    <Expander.Header>
+                                        <TextBlock Text="{loc:Loc settings.linkly.sop.title}"
+                                                   FontSize="12"
+                                                   FontWeight="Black"
+                                                   Foreground="#FF8F4E00" />
+                                    </Expander.Header>
+                                    <StackPanel Margin="0,8,0,0">
+                                        <TextBlock Text="{loc:Loc settings.linkly.sop.note}"
+                                                   FontSize="11"
+                                                   Foreground="{StaticResource PosMutedForegroundBrush}"
+                                                   TextWrapping="Wrap"
+                                                   Margin="0,0,0,10" />
+
+                                        <TextBlock Text="{loc:Loc settings.linkly.sop.cloud.title}"
+                                                   Style="{StaticResource SettingsLabelStyle}" />
+                                        <TextBlock Text="{loc:Loc settings.linkly.sop.cloud.step1}"
+                                                   FontFamily="Consolas"
+                                                   FontSize="11"
+                                                   Foreground="{StaticResource PosTextBrush}"
+                                                   TextWrapping="Wrap"
+                                                   Margin="0,0,0,4" />
+                                        <TextBlock Text="{loc:Loc settings.linkly.sop.cloud.step2}"
+                                                   FontSize="11"
+                                                   Foreground="{StaticResource PosMutedForegroundBrush}"
+                                                   TextWrapping="Wrap"
+                                                   Margin="0,0,0,4" />
+                                        <TextBlock Text="{loc:Loc settings.linkly.sop.cloud.step3}"
+                                                   FontSize="11"
+                                                   Foreground="{StaticResource PosMutedForegroundBrush}"
+                                                   TextWrapping="Wrap"
+                                                   Margin="0,0,0,4" />
+                                        <TextBlock Text="{loc:Loc settings.linkly.sop.cloud.step4}"
+                                                   FontSize="11"
+                                                   Foreground="{StaticResource PosMutedForegroundBrush}"
+                                                   TextWrapping="Wrap"
+                                                   Margin="0,0,0,4" />
+                                        <TextBlock Text="{loc:Loc settings.linkly.sop.cloud.step5}"
+                                                   FontSize="11"
+                                                   Foreground="{StaticResource PosMutedForegroundBrush}"
+                                                   TextWrapping="Wrap"
+                                                   Margin="0,0,0,4" />
+                                        <TextBlock Text="{loc:Loc settings.linkly.sop.cloud.step6}"
+                                                   FontSize="11"
+                                                   Foreground="{StaticResource PosMutedForegroundBrush}"
+                                                   TextWrapping="Wrap"
+                                                   Margin="0,0,0,4" />
+                                        <TextBlock Text="{loc:Loc settings.linkly.sop.cloud.step7}"
+                                                   FontSize="11"
+                                                   Foreground="{StaticResource PosMutedForegroundBrush}"
+                                                   TextWrapping="Wrap"
+                                                   Margin="0,0,0,4" />
+                                        <TextBlock Text="{loc:Loc settings.linkly.sop.cloud.step8}"
+                                                   FontSize="11"
+                                                   Foreground="{StaticResource PosMutedForegroundBrush}"
+                                                   TextWrapping="Wrap"
+                                                   Margin="0,0,0,10" />
+
+                                        <TextBlock Text="{loc:Loc settings.linkly.sop.repair.title}"
+                                                   Style="{StaticResource SettingsLabelStyle}" />
+                                        <TextBlock Text="{loc:Loc settings.linkly.sop.repair.step1}"
+                                                   FontFamily="Consolas"
+                                                   FontSize="11"
+                                                   Foreground="{StaticResource PosTextBrush}"
+                                                   TextWrapping="Wrap"
+                                                   Margin="0,0,0,4" />
+                                        <TextBlock Text="{loc:Loc settings.linkly.sop.repair.step2}"
+                                                   FontSize="11"
+                                                   Foreground="{StaticResource PosMutedForegroundBrush}"
+                                                   TextWrapping="Wrap"
+                                                   Margin="0,0,0,4" />
+                                        <TextBlock Text="{loc:Loc settings.linkly.sop.repair.step3}"
+                                                   FontSize="11"
+                                                   Foreground="{StaticResource PosMutedForegroundBrush}"
+                                                   TextWrapping="Wrap"
+                                                   Margin="0,0,0,4" />
+                                        <TextBlock Text="{loc:Loc settings.linkly.sop.repair.warning}"
+                                                   FontSize="11"
+                                                   FontWeight="Bold"
+                                                   Foreground="{StaticResource PosDangerBrush}"
+                                                   TextWrapping="Wrap"
+                                                   Margin="0,0,0,10" />
+
+                                        <TextBlock Text="{loc:Loc settings.linkly.sop.local.title}"
+                                                   Style="{StaticResource SettingsLabelStyle}" />
+                                        <TextBlock Text="{loc:Loc settings.linkly.sop.local.step1}"
+                                                   FontFamily="Consolas"
+                                                   FontSize="11"
+                                                   Foreground="{StaticResource PosTextBrush}"
+                                                   TextWrapping="Wrap"
+                                                   Margin="0,0,0,4" />
+                                        <TextBlock Text="{loc:Loc settings.linkly.sop.local.step2}"
+                                                   FontFamily="Consolas"
+                                                   FontSize="11"
+                                                   Foreground="{StaticResource PosTextBrush}"
+                                                   TextWrapping="Wrap"
+                                                   Margin="0,0,0,4" />
+                                        <TextBlock Text="{loc:Loc settings.linkly.sop.local.step3}"
+                                                   FontSize="11"
+                                                   Foreground="{StaticResource PosMutedForegroundBrush}"
+                                                   TextWrapping="Wrap"
+                                                   Margin="0,0,0,4" />
+                                        <TextBlock Text="{loc:Loc settings.linkly.sop.local.step4}"
+                                                   FontSize="11"
+                                                   Foreground="{StaticResource PosMutedForegroundBrush}"
+                                                   TextWrapping="Wrap"
+                                                   Margin="0,0,0,4" />
+                                        <TextBlock Text="{loc:Loc settings.linkly.sop.local.step5}"
+                                                   FontSize="11"
+                                                   Foreground="{StaticResource PosMutedForegroundBrush}"
+                                                   TextWrapping="Wrap"
+                                                   Margin="0,0,0,4" />
+                                        <TextBlock Text="{loc:Loc settings.linkly.sop.local.step6}"
+                                                   FontSize="11"
+                                                   Foreground="{StaticResource PosMutedForegroundBrush}"
+                                                   TextWrapping="Wrap"
+                                                   Margin="0,0,0,4" />
+                                        <TextBlock Text="{loc:Loc settings.linkly.sop.local.step7}"
+                                                   FontSize="11"
+                                                   Foreground="{StaticResource PosMutedForegroundBrush}"
+                                                   TextWrapping="Wrap"
+                                                   Margin="0,0,0,4" />
+                                        <TextBlock Text="{loc:Loc settings.linkly.sop.local.step8}"
+                                                   FontSize="11"
+                                                   Foreground="{StaticResource PosMutedForegroundBrush}"
+                                                   TextWrapping="Wrap"
+                                                   Margin="0,0,0,4" />
+                                        <TextBlock Text="{loc:Loc settings.linkly.sop.local.step9}"
+                                                   FontSize="11"
+                                                   Foreground="{StaticResource PosMutedForegroundBrush}"
+                                                   TextWrapping="Wrap"
+                                                   Margin="0,0,0,4" />
+                                        <TextBlock Text="{loc:Loc settings.linkly.sop.local.step10}"
+                                                   FontSize="11"
+                                                   Foreground="{StaticResource PosMutedForegroundBrush}"
+                                                   TextWrapping="Wrap"
+                                                   Margin="0,0,0,4" />
+                                        <TextBlock Text="{loc:Loc settings.linkly.sop.local.step11}"
+                                                   FontSize="11"
+                                                   Foreground="{StaticResource PosMutedForegroundBrush}"
+                                                   TextWrapping="Wrap"
+                                                   Margin="0,0,0,10" />
+
+                                        <TextBlock Text="{loc:Loc settings.linkly.sop.mode.title}"
+                                                   Style="{StaticResource SettingsLabelStyle}" />
+                                        <TextBlock Text="{loc:Loc settings.linkly.sop.mode.cloud}"
+                                                   FontSize="11"
+                                                   Foreground="{StaticResource PosMutedForegroundBrush}"
+                                                   TextWrapping="Wrap"
+                                                   Margin="0,0,0,4" />
+                                        <TextBlock Text="{loc:Loc settings.linkly.sop.mode.local}"
+                                                   FontSize="11"
+                                                   Foreground="{StaticResource PosMutedForegroundBrush}"
+                                                   TextWrapping="Wrap" />
+                                    </StackPanel>
+                                </Expander>
+
+                                <StackPanel Visibility="{Binding IsLinklyLocalMode, Converter={StaticResource BoolToVis}}">
+                                    <TextBlock Text="{loc:Loc settings.linkly.host}" Style="{StaticResource SettingsLabelStyle}" />
+                                    <TextBox Text="{Binding LinklyHostText, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                             Style="{StaticResource SettingsFieldTextBoxStyle}"
+                                             Margin="0,0,0,14" />
+
+                                    <TextBlock Text="{loc:Loc settings.linkly.port}" Style="{StaticResource SettingsLabelStyle}" />
+                                    <TextBox Text="{Binding LinklyPortText, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                             Style="{StaticResource SettingsFieldTextBoxStyle}"
+                                             Margin="0,0,0,18" />
+                                </StackPanel>
+
+                                <StackPanel Visibility="{Binding IsLinklyCloudMode, Converter={StaticResource BoolToVis}}">
+                                    <TextBlock Text="{loc:Loc settings.linkly.cloud.secret}" Style="{StaticResource SettingsLabelStyle}" />
+                                    <Border MinHeight="42"
+                                            Background="#FFF6F8FB"
+                                            BorderBrush="{StaticResource PosBorderBrush}"
+                                            BorderThickness="1"
+                                            CornerRadius="6"
+                                            Padding="12,8"
+                                            Margin="0,0,0,14">
+                                        <TextBlock Text="{Binding LinklyCloudSecretStatusText}"
+                                                   FontSize="12"
+                                                   Foreground="{StaticResource PosMutedForegroundBrush}"
+                                                   TextWrapping="Wrap" />
+                                    </Border>
+
+                                    <TextBlock Text="{loc:Loc settings.linkly.cloud.pairCode}" Style="{StaticResource SettingsLabelStyle}" />
+                                    <TextBox Text="{Binding LinklyPairCodeText, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                             Style="{StaticResource SettingsFieldTextBoxStyle}"
+                                             Margin="0,0,0,12" />
+
+                                    <Button Command="{Binding PairLinklyCloudCommand}"
+                                            Style="{StaticResource PosSecondaryButtonStyle}"
+                                            Height="42"
+                                            MinWidth="138"
+                                            HorizontalAlignment="Left"
+                                            Margin="0,0,0,18">
+                                        <StackPanel Orientation="Horizontal">
+                                            <materialDesign:PackIcon Kind="LinkVariant" Width="18" Height="18" Margin="0,0,8,0" />
+                                            <TextBlock Text="{loc:Loc settings.linkly.cloud.pair}" />
+                                        </StackPanel>
+                                    </Button>
+                                </StackPanel>
 
                                 <StackPanel Orientation="Horizontal">
                                     <Button Command="{Binding TestLinklyCommand}"

@@ -2,6 +2,7 @@ using Hbpos.Client.Wpf.Models;
 using Hbpos.Client.Wpf.Services;
 using Hbpos.Client.Wpf.ViewModels;
 using Hbpos.Contracts.Catalog;
+using Hbpos.Contracts.Orders;
 
 namespace Hbpos.Client.Tests;
 
@@ -91,6 +92,7 @@ public sealed class ReceiptReturnsViewModelTests
                         10m,
                         0m)
                 ],
+                [],
                 []),
             false,
             true,
@@ -123,7 +125,9 @@ public sealed class ReceiptReturnsViewModelTests
             return new ReceiptReturnProductLookupResult(null, "");
         }
 
-        public IReadOnlyList<CartLine> AddReturnLinesToCart(IEnumerable<PendingReturnLine> lines)
+        public IReadOnlyList<CartLine> AddReturnLinesToCart(
+            IEnumerable<PendingReturnLine> lines,
+            IReadOnlyList<OrderReturnPaymentCapacityDto>? paymentCapacities = null)
         {
             AddedLines.AddRange(lines);
             return [];

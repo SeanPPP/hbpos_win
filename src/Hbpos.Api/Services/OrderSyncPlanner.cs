@@ -14,7 +14,13 @@ public sealed class OrderSyncPlanner : IOrderSyncPlanner
     {
         var now = DateTime.UtcNow;
         var orderGuid = request.OrderGuid.ToString("D");
-        var itemCount = request.Lines.Sum(x => (int)x.Quantity);
+        var saleLines = request.Lines
+            .Where(line => line.Kind == OrderLineKind.Sale)
+            .ToList();
+        var returnLines = request.Lines
+            .Where(line => line.Kind == OrderLineKind.Return)
+            .ToList();
+        var itemCount = saleLines.Sum(x => (int)x.Quantity);
 
         var order = new SalesOrder
         {
@@ -36,7 +42,7 @@ public sealed class OrderSyncPlanner : IOrderSyncPlanner
             UpdatedTime = now
         };
 
-        var lines = request.Lines.Select(line => new SalesOrderDetail
+        var lines = saleLines.Select(line => new SalesOrderDetail
         {
             OrderDetailGuid = line.OrderLineGuid.ToString("D"),
             OrderGuid = orderGuid,
@@ -92,11 +98,30 @@ public sealed class OrderSyncPlanner : IOrderSyncPlanner
                 ResponseCode = transaction.ResponseCode,
                 ResponseText = transaction.ResponseText,
                 Stan = transaction.Stan,
-                Amount = transaction.Amount,
+                Amount = payment.Amount < 0m
+                    ? -Math.Abs(transaction.Amount)
+                    : Math.Abs(transaction.Amount),
                 ReceiptText = Limit(transaction.ReceiptText, 1000)
             })).ToList();
 
-        return new OrderSyncPlan(order, lines, payments, bankTransactions);
+        var returnRecords = returnLines.Select(line => new SalesReturnRecord
+        {
+            ReturnDetailGuid = line.OrderLineGuid.ToString("D"),
+            ReturnOrderGuid = orderGuid,
+            OriginalOrderGuid = line.OriginalOrderGuid?.ToString("D") ?? string.Empty,
+            OriginalOrderDetailGuid = line.OriginalOrderDetailGuid?.ToString("D") ?? string.Empty,
+            ProductCode = line.ProductCode,
+            ReferenceGUID = line.ReferenceCode ?? string.Empty,
+            ReturnQuantity = Math.Abs(line.Quantity),
+            ReturnAmount = Math.Abs(line.ActualAmount),
+            StaffCode = request.CashierId,
+            CreatedBy = request.CashierId,
+            CreatedTime = now,
+            UpdatedBy = request.CashierId,
+            UpdatedTime = now
+        }).ToList();
+
+        return new OrderSyncPlan(order, lines, payments, bankTransactions, returnRecords);
     }
 
     private static string? Limit(string? value, int maxLength)
@@ -114,4 +139,5 @@ public sealed record OrderSyncPlan(
     SalesOrder Order,
     IReadOnlyList<SalesOrderDetail> Lines,
     IReadOnlyList<PaymentDetail> Payments,
-    IReadOnlyList<BankTransaction> BankTransactions);
+    IReadOnlyList<BankTransaction> BankTransactions,
+    IReadOnlyList<SalesReturnRecord> ReturnRecords);

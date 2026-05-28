@@ -8,6 +8,7 @@ public static class ServiceRegistration
     public static IServiceCollection AddHbposApiServices(this IServiceCollection services)
     {
         services.AddScoped<HbposSqlSugarContext>();
+        services.AddScoped<IDeviceRegistrationRepository, SqlSugarDeviceRegistrationRepository>();
         services.AddScoped<IDeviceService, DeviceService>();
         services.AddScoped<IDeviceAuthorizationService, DeviceAuthorizationService>();
         services.AddScoped<ICashierService, CashierService>();
@@ -20,6 +21,10 @@ public static class ServiceRegistration
         services.AddScoped<IOrderReturnService, OrderReturnService>();
         services.AddScoped<IStoreVoucherRepository, SqlSugarStoreVoucherRepository>();
         services.AddScoped<IStoreVoucherService, StoreVoucherService>();
+        services.AddScoped<ILinklyCloudCredentialRepository, SqlSugarLinklyCloudCredentialRepository>();
+        services.AddScoped<ILinklyCloudCredentialService, LinklyCloudCredentialService>();
+        services.AddScoped<ILinklyCloudCredentialSchemaSqlExecutor, SqlSugarLinklyCloudCredentialSchemaSqlExecutor>();
+        services.AddScoped<ILinklyCloudCredentialSchemaInitializer, SqlSugarLinklyCloudCredentialSchemaInitializer>();
         services.AddScoped<ISquareTokenRepository, SqlSugarSquareTokenRepository>();
         services.AddScoped<ISquareTokenService, SquareTokenService>();
         services.AddScoped<ISquareTokenSchemaSqlExecutor, SqlSugarSquareTokenSchemaSqlExecutor>();

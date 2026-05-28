@@ -4,6 +4,7 @@ using Hbpos.Contracts.Common;
 using Hbpos.Contracts.Devices;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.Extensions.DependencyInjection;
 
 namespace Hbpos.Api.Tests;
 
@@ -91,6 +92,17 @@ public sealed class DevicesControllerTests
             new DateTime(2026, 5, 22, 10, 11, 0));
 
         Assert.Equal("POS_1009_1011", deviceCode);
+    }
+
+    [Fact]
+    public void AddHbposApiServices_RegistersDeviceRegistrationRepository()
+    {
+        var services = new ServiceCollection();
+
+        services.AddHbposApiServices();
+
+        var descriptor = Assert.Single(services, x => x.ServiceType == typeof(IDeviceRegistrationRepository));
+        Assert.Equal(typeof(SqlSugarDeviceRegistrationRepository), descriptor.ImplementationType);
     }
 
     private static string? GetHttpPostTemplate(string methodName)

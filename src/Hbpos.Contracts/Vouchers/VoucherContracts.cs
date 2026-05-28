@@ -27,3 +27,18 @@ public sealed record StoreVoucherLockResponse(
     decimal LockedAmount,
     string ReservationToken,
     DateTimeOffset ExpiresAt);
+
+public sealed record StoreVoucherIssueRefundRequest(
+    string StoreCode,
+    decimal Amount,
+    string CashierId,
+    string? IdempotencyKey = null,
+    string? OrderReference = null,
+    string? Reason = null);
+
+public sealed record StoreVoucherIssueRefundResponse(
+    string VoucherCode,
+    decimal Amount,
+    decimal RemainingAmount,
+    string Status,
+    DateTimeOffset ExpiredAt);

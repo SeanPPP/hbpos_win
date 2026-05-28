@@ -15,6 +15,8 @@ public interface IOrderUploadService
 
 public interface IOrderUploadExecutionService
 {
+    Task<OrderUploadExecutionResult> ExecuteOneAsync(Guid orderGuid, CancellationToken cancellationToken = default);
+
     Task<OrderUploadExecutionResult> ExecutePendingAsync(int batchSize = 20, CancellationToken cancellationToken = default);
 }
 
@@ -68,7 +70,11 @@ public sealed class OrderUploadService(
                 line.DiscountAmount,
                 line.ActualAmount,
                 line.PriceSource,
-                line.ItemNumber)).ToList(),
+                line.ItemNumber,
+                line.Kind,
+                line.ReturnSourceKey,
+                line.OriginalOrderGuid,
+                line.OriginalOrderDetailGuid)).ToList(),
             order.Payments.Select(ToPaymentSyncDto).ToList());
     }
 
@@ -99,6 +105,8 @@ public sealed class OrderUploadService(
         var parts = (reference ?? string.Empty).Split(':', StringSplitOptions.TrimEntries);
         return parts.Length >= 3 && parts[0].Equals("VOUCHER", StringComparison.OrdinalIgnoreCase)
             ? (parts[1], parts[2])
+            : parts.Length >= 2 && parts[0].Equals("VOUCHER_REFUND", StringComparison.OrdinalIgnoreCase)
+                ? (parts[1], string.Empty)
             : (reference ?? string.Empty, string.Empty);
     }
 }
@@ -107,6 +115,23 @@ public sealed class OrderUploadExecutionService(
     IOrderUploadService uploadService,
     ILocalOrderUploadRepository uploadRepository) : IOrderUploadExecutionService
 {
+    public async Task<OrderUploadExecutionResult> ExecuteOneAsync(Guid orderGuid, CancellationToken cancellationToken = default)
+    {
+        try
+        {
+            await uploadService.UploadOrderAsync(orderGuid, cancellationToken);
+            return new OrderUploadExecutionResult(1, 1, 0);
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
+        }
+        catch
+        {
+            return new OrderUploadExecutionResult(1, 0, 1);
+        }
+    }
+
     public async Task<OrderUploadExecutionResult> ExecutePendingAsync(int batchSize = 20, CancellationToken cancellationToken = default)
     {
         var orderGuids = await uploadRepository.GetPendingOrderGuidsAsync(batchSize, cancellationToken);
@@ -132,6 +157,25 @@ public sealed class OrderUploadExecutionService(
         }
 
         return new OrderUploadExecutionResult(orderGuids.Count, uploadedCount, failedCount);
+    }
+}
+
+public sealed class NoopOrderUploadExecutionService : IOrderUploadExecutionService
+{
+    public static NoopOrderUploadExecutionService Instance { get; } = new();
+
+    private NoopOrderUploadExecutionService()
+    {
+    }
+
+    public Task<OrderUploadExecutionResult> ExecuteOneAsync(Guid orderGuid, CancellationToken cancellationToken = default)
+    {
+        return Task.FromResult(new OrderUploadExecutionResult(0, 0, 0));
+    }
+
+    public Task<OrderUploadExecutionResult> ExecutePendingAsync(int batchSize = 20, CancellationToken cancellationToken = default)
+    {
+        return Task.FromResult(new OrderUploadExecutionResult(0, 0, 0));
     }
 }
 

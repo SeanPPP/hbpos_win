@@ -334,6 +334,288 @@ public sealed class CashPaymentWorkflowServiceTests
         Assert.Empty(cart.Lines);
     }
 
+    [Fact]
+    public async Task Payment_workflow_adds_negative_cash_tender_for_refund()
+    {
+        var workflow = CreateWorkflow();
+        var session = new PosSessionState("HB POS", "S001", "Main Store", "POS-01", "C001", "Alice", true, 0);
+
+        var tender = await workflow.AddTenderAsync(
+            PaymentMethodKind.Cash,
+            session,
+            actualAmount: -7.82m,
+            currentTenders: [],
+            amountText: "7.82");
+
+        Assert.True(tender.Succeeded);
+        Assert.NotNull(tender.Tender);
+        Assert.Equal(-7.80m, tender.Tender.Amount);
+    }
+
+    [Fact]
+    public async Task Payment_workflow_adds_negative_card_tender_for_refund()
+    {
+        var workflow = new CashPaymentWorkflowService(
+            new CashCheckoutService(),
+            new RecordingOrderRepository(),
+            new StubSyncQueueRepository(pendingCount: 1),
+            cardTerminalClient: new ApprovedCardTerminalClient("CARD-REFUND"));
+        var session = new PosSessionState("HB POS", "S001", "Main Store", "POS-01", "C001", "Alice", true, 0);
+
+        var tender = await workflow.AddTenderAsync(
+            PaymentMethodKind.Card,
+            session,
+            actualAmount: -10m,
+            currentTenders: [],
+            amountText: "4",
+            referenceText: "SQ:payment-1");
+
+        Assert.True(tender.Succeeded);
+        Assert.NotNull(tender.Tender);
+        Assert.Equal(-4m, tender.Tender.Amount);
+        Assert.True(CardRefundReference.TryGetOriginalReference(tender.Tender.Reference, out var originalReference));
+        Assert.Equal("SQ:payment-1", originalReference);
+        Assert.Equal("REFUND:SQ:payment-1", CardRefundReference.GetDisplayReference(tender.Tender.Reference));
+    }
+
+    [Fact]
+    public async Task Payment_workflow_rejects_card_refund_without_original_reference()
+    {
+        var workflow = new CashPaymentWorkflowService(
+            new CashCheckoutService(),
+            new RecordingOrderRepository(),
+            new StubSyncQueueRepository(pendingCount: 1),
+            cardTerminalClient: new ApprovedCardTerminalClient("CARD-REFUND"));
+        var session = new PosSessionState("HB POS", "S001", "Main Store", "POS-01", "C001", "Alice", true, 0);
+
+        var tender = await workflow.AddTenderAsync(
+            PaymentMethodKind.Card,
+            session,
+            actualAmount: -10m,
+            currentTenders: [],
+            amountText: "4");
+
+        Assert.False(tender.Succeeded);
+        Assert.Equal("payment.status.cardDeclined", tender.StatusKey);
+    }
+
+    [Fact]
+    public async Task Payment_workflow_adds_negative_voucher_tender_for_refund()
+    {
+        var vouchers = new ApprovedVoucherTenderClient("VOUCHER_REFUND:RF123");
+        var workflow = new CashPaymentWorkflowService(
+            new CashCheckoutService(),
+            new RecordingOrderRepository(),
+            new StubSyncQueueRepository(pendingCount: 1),
+            voucherTenderClient: vouchers);
+        var session = new PosSessionState("HB POS", "S001", "Main Store", "POS-01", "C001", "Alice", true, 0);
+
+        var tender = await workflow.AddTenderAsync(
+            PaymentMethodKind.Voucher,
+            session,
+            actualAmount: -10m,
+            currentTenders: [],
+            amountText: "6");
+
+        Assert.True(tender.Succeeded);
+        Assert.NotNull(tender.Tender);
+        Assert.Equal(-6m, tender.Tender.Amount);
+        Assert.Equal("VOUCHER_REFUND_PENDING", tender.Tender.Reference);
+        Assert.Equal(0, vouchers.IssueRefundCallCount);
+    }
+
+    [Fact]
+    public void Payment_workflow_calculates_refund_remaining_and_change_without_over_refunding()
+    {
+        var workflow = CreateWorkflow();
+
+        var remainingAfterCash = workflow.CalculateRemainingAmount(
+            -7.82m,
+            [new PaymentTender(PaymentMethodKind.Cash, -7.80m)]);
+        var remainingAfterCard = workflow.CalculateRemainingAmount(
+            -10m,
+            [new PaymentTender(PaymentMethodKind.Card, -4m, "SQ:payment-1")]);
+        var change = workflow.CalculateChange(
+            [new PaymentTender(PaymentMethodKind.Cash, -7.80m)],
+            -7.82m);
+
+        Assert.Equal(0m, remainingAfterCash);
+        Assert.Equal(-6m, remainingAfterCard);
+        Assert.Equal(0m, change);
+    }
+
+    [Fact]
+    public async Task Payment_workflow_completes_refund_order_with_negative_payments()
+    {
+        var cart = new PosCartService();
+        cart.AddReturnLine(new ReturnCartLineRequest(
+            "S001",
+            "SKU-RET",
+            null,
+            "Returned Tea",
+            "930500",
+            "ITEM-RET",
+            null,
+            1m,
+            7.82m,
+            PriceSourceKind.StoreRetailPrice,
+            PriceSourceKind.StoreRetailPrice.ToString(),
+            "RETURN-500",
+            Guid.NewGuid(),
+            Guid.NewGuid()));
+        var orders = new RecordingOrderRepository();
+        var workflow = new CashPaymentWorkflowService(
+            new CashCheckoutService(),
+            orders,
+            new StubSyncQueueRepository(pendingCount: 1));
+        var session = new PosSessionState("HB POS", "S001", "Main Store", "POS-01", "C001", "Alice", true, 0);
+
+        var result = await workflow.CompletePaymentAsync(
+            cart,
+            session,
+            [new PaymentTender(PaymentMethodKind.Cash, -7.80m)],
+            cashTenderedAmount: -7.80m);
+
+        var payment = Assert.Single(result.Order.Payments);
+        Assert.Equal(-7.80m, payment.Amount);
+        Assert.Equal(-7.80m, result.TenderedAmount);
+        Assert.Equal(0m, result.ChangeAmount);
+    }
+
+    [Fact]
+    public async Task Payment_workflow_issues_refund_voucher_after_order_guid_exists()
+    {
+        var cart = new PosCartService();
+        cart.AddReturnLine(new ReturnCartLineRequest(
+            "S001",
+            "SKU-VR",
+            null,
+            "Voucher Refund Tea",
+            "930501",
+            "ITEM-VR",
+            null,
+            1m,
+            6m,
+            PriceSourceKind.StoreRetailPrice,
+            PriceSourceKind.StoreRetailPrice.ToString(),
+            "RETURN-VOUCHER-1",
+            Guid.NewGuid(),
+            Guid.NewGuid()));
+        var orders = new RecordingOrderRepository();
+        var vouchers = new ApprovedVoucherTenderClient("VOUCHER_REFUND:RF123");
+        var workflow = new CashPaymentWorkflowService(
+            new CashCheckoutService(),
+            orders,
+            new StubSyncQueueRepository(pendingCount: 1),
+            voucherTenderClient: vouchers);
+        var session = new PosSessionState("HB POS", "S001", "Main Store", "POS-01", "C001", "Alice", true, 0);
+
+        var result = await workflow.CompletePaymentAsync(
+            cart,
+            session,
+            [new PaymentTender(PaymentMethodKind.Voucher, -6m, "VOUCHER_REFUND_PENDING")],
+            cashTenderedAmount: 0m);
+
+        var saved = Assert.Single(orders.SavedOrders);
+        var payment = Assert.Single(saved.Payments);
+        Assert.Equal(result.Order.OrderGuid.ToString("D"), vouchers.LastOrderReference);
+        Assert.Equal(saved.OrderGuid.ToString("D"), vouchers.LastOrderReference);
+        Assert.False(string.IsNullOrWhiteSpace(vouchers.LastIdempotencyKey));
+        Assert.Equal(-6m, payment.Amount);
+        Assert.Equal("VOUCHER_REFUND:RF123", payment.Reference);
+        Assert.Equal(1, vouchers.IssueRefundCallCount);
+    }
+
+    [Fact]
+    public async Task Payment_workflow_reuses_refund_voucher_idempotency_key_when_save_retries()
+    {
+        var cart = new PosCartService();
+        cart.AddReturnLine(new ReturnCartLineRequest(
+            "S001",
+            "SKU-VR-RETRY",
+            null,
+            "Voucher Refund Retry",
+            "930503",
+            "ITEM-VR-RETRY",
+            null,
+            1m,
+            6m,
+            PriceSourceKind.StoreRetailPrice,
+            PriceSourceKind.StoreRetailPrice.ToString(),
+            "RETURN-VOUCHER-RETRY",
+            Guid.NewGuid(),
+            Guid.NewGuid()));
+        var orders = new FailingOnceOrderRepository();
+        var vouchers = new ApprovedVoucherTenderClient("VOUCHER_REFUND:RF123");
+        var workflow = new CashPaymentWorkflowService(
+            new CashCheckoutService(),
+            orders,
+            new StubSyncQueueRepository(pendingCount: 1),
+            voucherTenderClient: vouchers);
+        var session = new PosSessionState("HB POS", "S001", "Main Store", "POS-01", "C001", "Alice", true, 0);
+        var tender = (await workflow.AddTenderAsync(
+            PaymentMethodKind.Voucher,
+            session,
+            actualAmount: -6m,
+            currentTenders: [],
+            amountText: "6")).Tender!;
+
+        await Assert.ThrowsAsync<InvalidOperationException>(() => workflow.CompletePaymentAsync(
+            cart,
+            session,
+            [tender],
+            cashTenderedAmount: 0m));
+        var firstKey = vouchers.LastIdempotencyKey;
+
+        await workflow.CompletePaymentAsync(
+            cart,
+            session,
+            [tender],
+            cashTenderedAmount: 0m);
+
+        Assert.Equal(firstKey, vouchers.LastIdempotencyKey);
+        Assert.Equal(2, vouchers.IssueRefundCallCount);
+        Assert.Single(orders.SavedOrders);
+    }
+
+    [Fact]
+    public async Task Payment_workflow_does_not_save_voucher_refund_order_when_issue_fails()
+    {
+        var cart = new PosCartService();
+        cart.AddReturnLine(new ReturnCartLineRequest(
+            "S001",
+            "SKU-VR-FAIL",
+            null,
+            "Voucher Refund Fail",
+            "930502",
+            "ITEM-VR-FAIL",
+            null,
+            1m,
+            6m,
+            PriceSourceKind.StoreRetailPrice,
+            PriceSourceKind.StoreRetailPrice.ToString(),
+            "RETURN-VOUCHER-FAIL",
+            Guid.NewGuid(),
+            Guid.NewGuid()));
+        var orders = new RecordingOrderRepository();
+        var vouchers = new ApprovedVoucherTenderClient("VOUCHER_REFUND:RF123", approveRefund: false);
+        var workflow = new CashPaymentWorkflowService(
+            new CashCheckoutService(),
+            orders,
+            new StubSyncQueueRepository(pendingCount: 1),
+            voucherTenderClient: vouchers);
+        var session = new PosSessionState("HB POS", "S001", "Main Store", "POS-01", "C001", "Alice", true, 0);
+
+        await Assert.ThrowsAsync<InvalidOperationException>(() => workflow.CompletePaymentAsync(
+            cart,
+            session,
+            [new PaymentTender(PaymentMethodKind.Voucher, -6m, "VOUCHER_REFUND_PENDING")],
+            cashTenderedAmount: 0m));
+
+        Assert.Empty(orders.SavedOrders);
+        Assert.Equal(1, vouchers.IssueRefundCallCount);
+    }
+
     private static ICashPaymentWorkflowService CreateWorkflow()
     {
         return new CashPaymentWorkflowService(
@@ -388,6 +670,43 @@ public sealed class CashPaymentWorkflowServiceTests
         }
     }
 
+    private sealed class FailingOnceOrderRepository : ILocalOrderRepository
+    {
+        private bool _hasFailed;
+
+        public List<LocalOrder> SavedOrders { get; } = [];
+
+        public Task SavePendingOrderAsync(LocalOrder order, CancellationToken cancellationToken = default)
+        {
+            if (!_hasFailed)
+            {
+                _hasFailed = true;
+                throw new InvalidOperationException("local save failed");
+            }
+
+            SavedOrders.Add(order);
+            return Task.CompletedTask;
+        }
+
+        public Task<IReadOnlyList<LocalOrderSummary>> GetRecentOrdersAsync(int take = 50, CancellationToken cancellationToken = default)
+        {
+            return Task.FromResult<IReadOnlyList<LocalOrderSummary>>([]);
+        }
+
+        public Task<IReadOnlyList<LocalOrderSummary>> GetRecentOrdersAsync(
+            LocalOrderHistoryQuery query,
+            int take = 50,
+            CancellationToken cancellationToken = default)
+        {
+            return GetRecentOrdersAsync(take, cancellationToken);
+        }
+
+        public Task<LocalOrder?> GetOrderAsync(Guid orderGuid, CancellationToken cancellationToken = default)
+        {
+            return Task.FromResult<LocalOrder?>(SavedOrders.LastOrDefault(order => order.OrderGuid == orderGuid));
+        }
+    }
+
     private sealed class StubSyncQueueRepository(int pendingCount) : ISyncQueueRepository
     {
         public Task<int> CountPendingAsync(CancellationToken cancellationToken = default)
@@ -415,10 +734,28 @@ public sealed class CashPaymentWorkflowServiceTests
         {
             return Task.FromResult(new PaymentAuthorizationResult(true, reference));
         }
+
+        public Task<PaymentAuthorizationResult> RefundAsync(
+            decimal amount,
+            PosSessionState session,
+            string? originalReference,
+            CancellationToken cancellationToken = default)
+        {
+            return Task.FromResult(new PaymentAuthorizationResult(true, $"REFUND:{originalReference}", AuthorizedAmount: amount));
+        }
     }
 
-    private sealed class ApprovedVoucherTenderClient(string reference, decimal? authorizedAmount = null) : IVoucherTenderClient
+    private sealed class ApprovedVoucherTenderClient(
+        string reference,
+        decimal? authorizedAmount = null,
+        bool approveRefund = true) : IVoucherTenderClient
     {
+        public int IssueRefundCallCount { get; private set; }
+
+        public string? LastOrderReference { get; private set; }
+
+        public string? LastIdempotencyKey { get; private set; }
+
         public Task<PaymentAuthorizationResult> RedeemAsync(
             decimal amount,
             PosSessionState session,
@@ -427,6 +764,22 @@ public sealed class CashPaymentWorkflowServiceTests
         {
             Assert.Equal("ABC123", voucherCode);
             return Task.FromResult(new PaymentAuthorizationResult(true, reference, AuthorizedAmount: authorizedAmount));
+        }
+
+        public Task<PaymentAuthorizationResult> IssueRefundAsync(
+            decimal amount,
+            PosSessionState session,
+            string orderReference,
+            string idempotencyKey,
+            string? reason = null,
+            CancellationToken cancellationToken = default)
+        {
+            IssueRefundCallCount++;
+            LastOrderReference = orderReference;
+            LastIdempotencyKey = idempotencyKey;
+            return Task.FromResult(approveRefund
+                ? new PaymentAuthorizationResult(true, reference, AuthorizedAmount: authorizedAmount ?? amount)
+                : new PaymentAuthorizationResult(false, null, "issue failed"));
         }
     }
 

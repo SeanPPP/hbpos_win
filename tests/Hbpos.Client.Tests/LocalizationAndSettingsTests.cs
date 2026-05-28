@@ -58,7 +58,56 @@ public sealed class LocalizationAndSettingsTests
 
         Assert.Equal("\u8BBE\u7F6E", localization.T("settings.title"));
         Assert.Equal("\u6570\u636E\u4E0B\u8F7D", localization.T("settings.section.dataDownload.title"));
-        Assert.Equal("\u91CD\u65B0\u6CE8\u518C\u8BBE\u5907", localization.T("settings.deviceRegistration.action"));
+        Assert.Equal("\u66F4\u6362\u5206\u5E97\u91CD\u65B0\u6CE8\u518C", localization.T("settings.deviceRegistration.action"));
+    }
+
+    [Fact]
+    public void Localization_has_linkly_sop_text()
+    {
+        string[] keys =
+        [
+            "settings.linkly.sop.title",
+            "settings.linkly.sop.note",
+            "settings.linkly.sop.cloud.title",
+            "settings.linkly.sop.cloud.step1",
+            "settings.linkly.sop.cloud.step8",
+            "settings.linkly.sop.repair.title",
+            "settings.linkly.sop.repair.step1",
+            "settings.linkly.sop.repair.warning",
+            "settings.linkly.sop.local.title",
+            "settings.linkly.sop.local.step6",
+            "settings.linkly.sop.local.step10",
+            "settings.linkly.sop.mode.title",
+            "settings.linkly.sop.mode.cloud",
+            "settings.linkly.sop.mode.local"
+        ];
+        var localization = new LocalizationService();
+
+        foreach (var key in keys)
+        {
+            var english = localization.T(key);
+            Assert.False(english.StartsWith("[[", StringComparison.Ordinal), key);
+            Assert.DoesNotContain("1111 2227", english, StringComparison.OrdinalIgnoreCase);
+            Assert.DoesNotContain("pp.cloud.pceftpos.com", english, StringComparison.OrdinalIgnoreCase);
+            Assert.DoesNotContain("PCEFTPOS", english, StringComparison.OrdinalIgnoreCase);
+        }
+
+        Assert.Contains("Terminal setup steps", localization.T("settings.linkly.sop.title"), StringComparison.Ordinal);
+        Assert.Contains("Async DLE 9600", localization.T("settings.linkly.sop.local.step6"), StringComparison.Ordinal);
+
+        localization.SetCulture("zh-CN");
+
+        foreach (var key in keys)
+        {
+            var chinese = localization.T(key);
+            Assert.False(chinese.StartsWith("[[", StringComparison.Ordinal), key);
+            Assert.DoesNotContain("1111 2227", chinese, StringComparison.OrdinalIgnoreCase);
+            Assert.DoesNotContain("pp.cloud.pceftpos.com", chinese, StringComparison.OrdinalIgnoreCase);
+            Assert.DoesNotContain("PCEFTPOS", chinese, StringComparison.OrdinalIgnoreCase);
+        }
+
+        Assert.Contains("\u5237\u5361\u673A\u64CD\u4F5C\u6B65\u9AA4", localization.T("settings.linkly.sop.title"), StringComparison.Ordinal);
+        Assert.Contains("Async DLE 9600", localization.T("settings.linkly.sop.local.step6"), StringComparison.Ordinal);
     }
 
     [Fact]

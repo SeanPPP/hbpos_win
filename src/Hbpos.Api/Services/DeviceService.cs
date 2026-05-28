@@ -16,18 +16,118 @@ public interface IDeviceService
         CancellationToken cancellationToken);
 }
 
+public interface IDeviceRegistrationRepository
+{
+    Task<DeviceRegistrationRecord?> FindLatestByHardwareIdAsync(
+        string hardwareId,
+        CancellationToken cancellationToken);
+
+    Task<DeviceRegistrationRecord?> FindByDeviceCodeAsync(
+        string deviceCode,
+        string storeCode,
+        CancellationToken cancellationToken);
+
+    Task<DeviceRegistrationRecord?> FindActiveOrLockedRegistrationAsync(
+        string hardwareId,
+        CancellationToken cancellationToken);
+
+    Task<int> DisablePendingRegistrationAsync(
+        DeviceRegistrationDisableRequest request,
+        CancellationToken cancellationToken);
+
+    Task CreateRegistrationAsync(
+        DeviceRegistrationCreateRequest request,
+        CancellationToken cancellationToken);
+
+    Task ExecuteInTransactionAsync(
+        Func<CancellationToken, Task> action,
+        CancellationToken cancellationToken);
+}
+
 public sealed record DeviceReregisterContext(
     string DeviceCode,
     string StoreCode,
     string HardwareId);
 
-public sealed class DeviceService(HbposSqlSugarContext dbContext) : IDeviceService
+public sealed record DeviceStoreInfo(
+    string StoreCode,
+    string StoreName);
+
+public sealed class DeviceRegistrationRecord
+{
+    public string? DeviceCode { get; set; }
+
+    public string? StoreCode { get; set; }
+
+    public string? HardwareId { get; set; }
+
+    public int DeviceStatus { get; set; }
+
+    public string? AuthorizationCode { get; set; }
+}
+
+public sealed class DeviceRegistrationDisableRequest
+{
+    public string HardwareId { get; init; } = string.Empty;
+
+    public string StoreCode { get; init; } = string.Empty;
+
+    public string DeviceCode { get; init; } = string.Empty;
+
+    public string RemarkSuffix { get; init; } = string.Empty;
+}
+
+public sealed class DeviceRegistrationCreateRequest
+{
+    public string HardwareId { get; init; } = string.Empty;
+
+    public string DeviceCode { get; init; } = string.Empty;
+
+    public string StoreCode { get; init; } = string.Empty;
+
+    public int DeviceStatus { get; init; }
+
+    public string AuthorizationCode { get; init; } = string.Empty;
+
+    public string Remark { get; init; } = string.Empty;
+
+    public DateTime CreatedAt { get; init; }
+
+    public string CreatedBy { get; init; } = string.Empty;
+
+    public string DeviceType { get; init; } = "POS";
+
+    public string DeviceSystem { get; init; } = "Windows";
+}
+
+public sealed class DeviceService : IDeviceService
 {
     private const int PendingStatus = -1;
     private const int DisabledStatus = 0;
     private const int EnabledStatus = 1;
     private const int LockedStatus = 2;
     private const int UnregisteredStatus = 3;
+
+    private readonly HbposSqlSugarContext? dbContext;
+    private readonly IDeviceRegistrationRepository deviceRegistrationRepository;
+    private readonly Func<string, CancellationToken, Task<DeviceStoreInfo?>> loadStoreAsync;
+
+    public DeviceService(
+        HbposSqlSugarContext dbContext,
+        IDeviceRegistrationRepository deviceRegistrationRepository)
+    {
+        this.dbContext = dbContext;
+        this.deviceRegistrationRepository = deviceRegistrationRepository;
+        loadStoreAsync = LoadStoreAsync;
+    }
+
+    public DeviceService(
+        IDeviceRegistrationRepository deviceRegistrationRepository,
+        Func<string, CancellationToken, Task<DeviceStoreInfo?>> loadStoreAsync)
+    {
+        this.deviceRegistrationRepository = deviceRegistrationRepository;
+        this.loadStoreAsync = loadStoreAsync;
+    }
 
     public async Task<DeviceRegisterResponse> RegisterAsync(
         DeviceRegisterRequest request,
@@ -47,25 +147,87 @@ public sealed class DeviceService(HbposSqlSugarContext dbContext) : IDeviceServi
             return CreateRegisterResponse(string.Empty, storeCode, string.Empty, UnregisteredStatus, "hardwareId is required");
         }
 
-        var store = await dbContext.MainDb.Queryable<BlazorApp.Shared.Models.Store>()
-            .FirstAsync(x => x.StoreCode == storeCode && x.IsActive && !x.IsDeleted, cancellationToken);
-
+        var store = await loadStoreAsync(storeCode, cancellationToken);
         if (store is null)
         {
             return CreateRegisterResponse(string.Empty, storeCode, string.Empty, UnregisteredStatus, "Store was not found or inactive.");
         }
 
-        var existing = await FindDeviceByHardwareIdAsync(hardwareId);
+        var existing = await deviceRegistrationRepository.FindLatestByHardwareIdAsync(hardwareId, cancellationToken);
         if (existing is not null)
         {
             if (!string.Equals(existing.StoreCode, storeCode, StringComparison.OrdinalIgnoreCase))
             {
-                return CreateRegisterResponse(
-                    existing.DeviceCode ?? string.Empty,
-                    existing.StoreCode ?? storeCode,
+                if (existing.DeviceStatus != PendingStatus)
+                {
+                    return CreateRegisterResponse(
+                        existing.DeviceCode ?? string.Empty,
+                        existing.StoreCode ?? storeCode,
+                        string.Empty,
+                        existing.DeviceStatus,
+                        "Device hardware is already registered to another store.");
+                }
+
+                var activeOrLockedRegistration = await deviceRegistrationRepository
+                    .FindActiveOrLockedRegistrationAsync(hardwareId, cancellationToken);
+                if (activeOrLockedRegistration is not null)
+                {
+                    return CreateRegisterResponse(
+                        activeOrLockedRegistration.DeviceCode ?? existing.DeviceCode ?? string.Empty,
+                        activeOrLockedRegistration.StoreCode ?? existing.StoreCode ?? storeCode,
+                        string.Empty,
+                        activeOrLockedRegistration.DeviceStatus,
+                        "Device hardware is already registered to another store.");
+                }
+
+                var now = DateTime.Now;
+                var pendingRegistration = CreatePendingRegistration(
+                    hardwareId,
+                    storeCode,
+                    terminalName,
+                    now);
+
+                var disableRequest = new DeviceRegistrationDisableRequest
+                {
+                    HardwareId = hardwareId,
+                    StoreCode = existing.StoreCode ?? string.Empty,
+                    DeviceCode = existing.DeviceCode ?? string.Empty,
+                    RemarkSuffix = $" | Disabled by registration switch to {storeCode} at {now:O}"
+                };
+
+                var switchSubmitted = false;
+                await deviceRegistrationRepository.ExecuteInTransactionAsync(
+                    async token =>
+                    {
+                        var disabledCount = await deviceRegistrationRepository.DisablePendingRegistrationAsync(disableRequest, token);
+                        if (disabledCount != 1)
+                        {
+                            return;
+                        }
+
+                        await deviceRegistrationRepository.CreateRegistrationAsync(pendingRegistration, token);
+                        switchSubmitted = true;
+                    },
+                    cancellationToken);
+
+                if (!switchSubmitted)
+                {
+                    return CreateRegisterResponse(
+                        existing.DeviceCode ?? string.Empty,
+                        existing.StoreCode ?? storeCode,
+                        string.Empty,
+                        DisabledStatus,
+                        "Pending device registration changed. Please reload stores and try again.");
+                }
+
+                return new DeviceRegisterResponse(
+                    pendingRegistration.DeviceCode,
+                    storeCode,
                     store.StoreName,
-                    existing.DeviceStatus,
-                    "Device hardware is already registered to another store.");
+                    PendingStatus,
+                    false,
+                    GetStatusMessage(PendingStatus),
+                    null);
             }
 
             return new DeviceRegisterResponse(
@@ -78,33 +240,16 @@ public sealed class DeviceService(HbposSqlSugarContext dbContext) : IDeviceServi
                 existing.DeviceStatus == EnabledStatus ? existing.AuthorizationCode : null);
         }
 
-        var deviceCode = CreateDeviceCode(storeCode, DateTime.Now);
-        var authorizationCode = Guid.NewGuid().ToString("N");
-        const string sql = """
-            INSERT INTO [POSM_设备注册信息表]
-                ([设备硬件识别码], [系统设备编号], [分店代码], [设备类型], [设备系统], [设备状态], [设备授权码], [备注], [创建时间], [创建人])
-            VALUES
-                (@HardwareId, @DeviceCode, @StoreCode, @DeviceType, @DeviceSystem, @DeviceStatus, @AuthorizationCode, @Remark, @CreatedAt, @CreatedBy);
-            """;
+        var newRegistration = CreatePendingRegistration(
+            hardwareId,
+            storeCode,
+            terminalName,
+            DateTime.Now);
 
-        var parameters = new[]
-        {
-            new SugarParameter("@HardwareId", hardwareId),
-            new SugarParameter("@DeviceCode", deviceCode),
-            new SugarParameter("@StoreCode", storeCode),
-            new SugarParameter("@DeviceType", "POS"),
-            new SugarParameter("@DeviceSystem", "Windows"),
-            new SugarParameter("@DeviceStatus", PendingStatus),
-            new SugarParameter("@AuthorizationCode", authorizationCode),
-            new SugarParameter("@Remark", string.IsNullOrWhiteSpace(terminalName) ? "HBPOS client registration" : $"HBPOS client registration: {terminalName}"),
-            new SugarParameter("@CreatedAt", DateTime.Now),
-            new SugarParameter("@CreatedBy", "HBPOS_CLIENT")
-        };
-
-        await dbContext.PosmDb.Ado.ExecuteCommandAsync(sql, parameters);
+        await deviceRegistrationRepository.CreateRegistrationAsync(newRegistration, cancellationToken);
 
         return new DeviceRegisterResponse(
-            deviceCode,
+            newRegistration.DeviceCode,
             storeCode,
             store.StoreName,
             PendingStatus,
@@ -121,15 +266,13 @@ public sealed class DeviceService(HbposSqlSugarContext dbContext) : IDeviceServi
         var storeCode = Normalize(request.StoreCode);
         var hardwareId = Normalize(request.HardwareId);
 
-        var store = await dbContext.MainDb.Queryable<BlazorApp.Shared.Models.Store>()
-            .FirstAsync(x => x.StoreCode == storeCode && x.IsActive && !x.IsDeleted, cancellationToken);
-
+        var store = await loadStoreAsync(storeCode, cancellationToken);
         if (store is null)
         {
             return CreateVerifyResponse(deviceCode, storeCode, string.Empty, UnregisteredStatus, "Store was not found or inactive.");
         }
 
-        var device = await FindDeviceByDeviceCodeAsync(deviceCode, storeCode);
+        var device = await deviceRegistrationRepository.FindByDeviceCodeAsync(deviceCode, storeCode, cancellationToken);
         if (device is null)
         {
             return CreateVerifyResponse(deviceCode, storeCode, store.StoreName, UnregisteredStatus, "Device is not registered.");
@@ -183,9 +326,7 @@ public sealed class DeviceService(HbposSqlSugarContext dbContext) : IDeviceServi
             return CreateReregisterResponse(currentDeviceCode, currentStoreCode, string.Empty, DisabledStatus, "Please select a different store for device reregistration.");
         }
 
-        var store = await dbContext.MainDb.Queryable<BlazorApp.Shared.Models.Store>()
-            .FirstAsync(x => x.StoreCode == targetStoreCode && x.IsActive && !x.IsDeleted, cancellationToken);
-
+        var store = await loadStoreAsync(targetStoreCode, cancellationToken);
         if (store is null)
         {
             return CreateReregisterResponse(string.Empty, targetStoreCode, string.Empty, UnregisteredStatus, "Store was not found or inactive.");
@@ -198,7 +339,9 @@ public sealed class DeviceService(HbposSqlSugarContext dbContext) : IDeviceServi
             ? $"HBPOS client reregistration from {currentStoreCode}/{currentDeviceCode}"
             : $"HBPOS client reregistration from {currentStoreCode}/{currentDeviceCode}: {terminalName}";
 
-        await dbContext.PosmDb.Ado.BeginTranAsync();
+        var context = dbContext ?? throw new InvalidOperationException("Db context is required for device reregistration.");
+
+        await context.PosmDb.Ado.BeginTranAsync();
         try
         {
             const string disableSql = """
@@ -211,7 +354,7 @@ public sealed class DeviceService(HbposSqlSugarContext dbContext) : IDeviceServi
                   AND [设备状态] = @EnabledStatus;
                 """;
 
-            await dbContext.PosmDb.Ado.ExecuteCommandAsync(
+            await context.PosmDb.Ado.ExecuteCommandAsync(
                 disableSql,
                 new SugarParameter("@DisabledStatus", DisabledStatus),
                 new SugarParameter("@RemarkSuffix", $" | Disabled by reregistration to {targetStoreCode} at {now:O}"),
@@ -227,7 +370,7 @@ public sealed class DeviceService(HbposSqlSugarContext dbContext) : IDeviceServi
                     (@HardwareId, @DeviceCode, @StoreCode, @DeviceType, @DeviceSystem, @DeviceStatus, @AuthorizationCode, @Remark, @CreatedAt, @CreatedBy);
                 """;
 
-            await dbContext.PosmDb.Ado.ExecuteCommandAsync(
+            await context.PosmDb.Ado.ExecuteCommandAsync(
                 insertSql,
                 new SugarParameter("@HardwareId", hardwareId),
                 new SugarParameter("@DeviceCode", deviceCode),
@@ -240,11 +383,11 @@ public sealed class DeviceService(HbposSqlSugarContext dbContext) : IDeviceServi
                 new SugarParameter("@CreatedAt", now),
                 new SugarParameter("@CreatedBy", "HBPOS_CLIENT"));
 
-            await dbContext.PosmDb.Ado.CommitTranAsync();
+            await context.PosmDb.Ado.CommitTranAsync();
         }
         catch
         {
-            await dbContext.PosmDb.Ado.RollbackTranAsync();
+            await context.PosmDb.Ado.RollbackTranAsync();
             throw;
         }
 
@@ -258,43 +401,42 @@ public sealed class DeviceService(HbposSqlSugarContext dbContext) : IDeviceServi
             null);
     }
 
-    private async Task<DeviceRegistrationRow?> FindDeviceByHardwareIdAsync(string hardwareId)
+    internal static string CreateDeviceCode(string storeCode, DateTime localTime)
     {
-        const string sql = """
-            SELECT TOP 1
-                [系统设备编号] AS DeviceCode,
-                [分店代码] AS StoreCode,
-                [设备硬件识别码] AS HardwareId,
-                [设备状态] AS DeviceStatus,
-                [设备授权码] AS AuthorizationCode
-            FROM [POSM_设备注册信息表]
-            WHERE [设备硬件识别码] = @HardwareId
-            ORDER BY [ID] DESC;
-            """;
-
-        return await dbContext.PosmDb.Ado.SqlQuerySingleAsync<DeviceRegistrationRow>(
-            sql,
-            new SugarParameter("@HardwareId", hardwareId));
+        return $"POS_{storeCode}_{localTime:HHmm}";
     }
 
-    private async Task<DeviceRegistrationRow?> FindDeviceByDeviceCodeAsync(string deviceCode, string storeCode)
+    private async Task<DeviceStoreInfo?> LoadStoreAsync(string storeCode, CancellationToken cancellationToken)
     {
-        const string sql = """
-            SELECT TOP 1
-                [系统设备编号] AS DeviceCode,
-                [分店代码] AS StoreCode,
-                [设备硬件识别码] AS HardwareId,
-                [设备状态] AS DeviceStatus,
-                [设备授权码] AS AuthorizationCode
-            FROM [POSM_设备注册信息表]
-            WHERE [系统设备编号] = @DeviceCode
-              AND [分店代码] = @StoreCode;
-            """;
+        var context = dbContext ?? throw new InvalidOperationException("Db context is required for store lookup.");
 
-        return await dbContext.PosmDb.Ado.SqlQuerySingleAsync<DeviceRegistrationRow>(
-            sql,
-            new SugarParameter("@DeviceCode", deviceCode),
-            new SugarParameter("@StoreCode", storeCode));
+        var store = await context.MainDb.Queryable<BlazorApp.Shared.Models.Store>()
+            .FirstAsync(x => x.StoreCode == storeCode && x.IsActive && !x.IsDeleted, cancellationToken);
+
+        return store is null
+            ? null
+            : new DeviceStoreInfo(store.StoreCode, store.StoreName);
+    }
+
+    private static DeviceRegistrationCreateRequest CreatePendingRegistration(
+        string hardwareId,
+        string storeCode,
+        string terminalName,
+        DateTime createdAt)
+    {
+        return new DeviceRegistrationCreateRequest
+        {
+            HardwareId = hardwareId,
+            DeviceCode = CreateDeviceCode(storeCode, createdAt),
+            StoreCode = storeCode,
+            DeviceStatus = PendingStatus,
+            AuthorizationCode = Guid.NewGuid().ToString("N"),
+            Remark = string.IsNullOrWhiteSpace(terminalName)
+                ? "HBPOS client registration"
+                : $"HBPOS client registration: {terminalName}",
+            CreatedAt = createdAt,
+            CreatedBy = "HBPOS_CLIENT"
+        };
     }
 
     private static DeviceRegisterResponse CreateRegisterResponse(
@@ -327,11 +469,6 @@ public sealed class DeviceService(HbposSqlSugarContext dbContext) : IDeviceServi
         return new DeviceReregisterResponse(deviceCode, storeCode, storeName, status, false, message);
     }
 
-    internal static string CreateDeviceCode(string storeCode, DateTime localTime)
-    {
-        return $"POS_{storeCode}_{localTime:HHmm}";
-    }
-
     private static string GetStatusMessage(int status)
     {
         return status switch
@@ -349,17 +486,144 @@ public sealed class DeviceService(HbposSqlSugarContext dbContext) : IDeviceServi
     {
         return (value ?? string.Empty).Trim();
     }
+}
 
-    private sealed class DeviceRegistrationRow
+public sealed class SqlSugarDeviceRegistrationRepository(HbposSqlSugarContext dbContext) : IDeviceRegistrationRepository
+{
+    public async Task<DeviceRegistrationRecord?> FindLatestByHardwareIdAsync(
+        string hardwareId,
+        CancellationToken cancellationToken)
     {
-        public string? DeviceCode { get; set; }
+        const string sql = """
+            SELECT TOP 1
+                [系统设备编号] AS DeviceCode,
+                [分店代码] AS StoreCode,
+                [设备硬件识别码] AS HardwareId,
+                [设备状态] AS DeviceStatus,
+                [设备授权码] AS AuthorizationCode
+            FROM [POSM_设备注册信息表]
+            WHERE [设备硬件识别码] = @HardwareId
+            ORDER BY [ID] DESC;
+            """;
 
-        public string? StoreCode { get; set; }
+        var record = await dbContext.PosmDb.Ado.SqlQuerySingleAsync<DeviceRegistrationRecord>(
+            sql,
+            new SugarParameter("@HardwareId", hardwareId));
 
-        public string? HardwareId { get; set; }
+        return record;
+    }
 
-        public int DeviceStatus { get; set; }
+    public async Task<DeviceRegistrationRecord?> FindByDeviceCodeAsync(
+        string deviceCode,
+        string storeCode,
+        CancellationToken cancellationToken)
+    {
+        const string sql = """
+            SELECT TOP 1
+                [系统设备编号] AS DeviceCode,
+                [分店代码] AS StoreCode,
+                [设备硬件识别码] AS HardwareId,
+                [设备状态] AS DeviceStatus,
+                [设备授权码] AS AuthorizationCode
+            FROM [POSM_设备注册信息表]
+            WHERE [系统设备编号] = @DeviceCode
+              AND [分店代码] = @StoreCode;
+            """;
 
-        public string? AuthorizationCode { get; set; }
+        var record = await dbContext.PosmDb.Ado.SqlQuerySingleAsync<DeviceRegistrationRecord>(
+            sql,
+            new SugarParameter("@DeviceCode", deviceCode),
+            new SugarParameter("@StoreCode", storeCode));
+
+        return record;
+    }
+
+    public async Task<DeviceRegistrationRecord?> FindActiveOrLockedRegistrationAsync(
+        string hardwareId,
+        CancellationToken cancellationToken)
+    {
+        const string sql = """
+            SELECT TOP 1
+                [系统设备编号] AS DeviceCode,
+                [分店代码] AS StoreCode,
+                [设备硬件识别码] AS HardwareId,
+                [设备状态] AS DeviceStatus,
+                [设备授权码] AS AuthorizationCode
+            FROM [POSM_设备注册信息表]
+            WHERE [设备硬件识别码] = @HardwareId
+              AND [设备状态] IN (1, 2)
+            ORDER BY [ID] DESC;
+            """;
+
+        var record = await dbContext.PosmDb.Ado.SqlQuerySingleAsync<DeviceRegistrationRecord>(
+            sql,
+            new SugarParameter("@HardwareId", hardwareId));
+        return record;
+    }
+
+    public Task<int> DisablePendingRegistrationAsync(
+        DeviceRegistrationDisableRequest request,
+        CancellationToken cancellationToken)
+    {
+        const string sql = """
+            UPDATE [POSM_设备注册信息表]
+            SET [设备状态] = @DisabledStatus,
+                [备注] = CONCAT(ISNULL([备注], ''), @RemarkSuffix)
+            WHERE [系统设备编号] = @DeviceCode
+              AND [分店代码] = @StoreCode
+              AND [设备硬件识别码] = @HardwareId
+              AND [设备状态] = @PendingStatus;
+            """;
+
+        return dbContext.PosmDb.Ado.ExecuteCommandAsync(
+            sql,
+            new SugarParameter("@DisabledStatus", 0),
+            new SugarParameter("@RemarkSuffix", request.RemarkSuffix),
+            new SugarParameter("@DeviceCode", request.DeviceCode),
+            new SugarParameter("@StoreCode", request.StoreCode),
+            new SugarParameter("@HardwareId", request.HardwareId),
+            new SugarParameter("@PendingStatus", -1));
+    }
+
+    public Task CreateRegistrationAsync(
+        DeviceRegistrationCreateRequest request,
+        CancellationToken cancellationToken)
+    {
+        const string sql = """
+            INSERT INTO [POSM_设备注册信息表]
+                ([设备硬件识别码], [系统设备编号], [分店代码], [设备类型], [设备系统], [设备状态], [设备授权码], [备注], [创建时间], [创建人])
+            VALUES
+                (@HardwareId, @DeviceCode, @StoreCode, @DeviceType, @DeviceSystem, @DeviceStatus, @AuthorizationCode, @Remark, @CreatedAt, @CreatedBy);
+            """;
+
+        return dbContext.PosmDb.Ado.ExecuteCommandAsync(
+            sql,
+            new SugarParameter("@HardwareId", request.HardwareId),
+            new SugarParameter("@DeviceCode", request.DeviceCode),
+            new SugarParameter("@StoreCode", request.StoreCode),
+            new SugarParameter("@DeviceType", request.DeviceType),
+            new SugarParameter("@DeviceSystem", request.DeviceSystem),
+            new SugarParameter("@DeviceStatus", request.DeviceStatus),
+            new SugarParameter("@AuthorizationCode", request.AuthorizationCode),
+            new SugarParameter("@Remark", request.Remark),
+            new SugarParameter("@CreatedAt", request.CreatedAt),
+            new SugarParameter("@CreatedBy", request.CreatedBy));
+    }
+
+    public async Task ExecuteInTransactionAsync(
+        Func<CancellationToken, Task> action,
+        CancellationToken cancellationToken)
+    {
+        await dbContext.PosmDb.Ado.BeginTranAsync();
+        try
+        {
+            await action(cancellationToken);
+            await dbContext.PosmDb.Ado.CommitTranAsync();
+        }
+        catch
+        {
+            await dbContext.PosmDb.Ado.RollbackTranAsync();
+            throw;
+        }
     }
 }

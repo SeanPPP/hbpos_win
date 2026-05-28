@@ -367,7 +367,8 @@
                                                     <StackPanel Grid.Column="1" Margin="12,0,0,0" VerticalAlignment="Center">
                                                         <TextBlock Text="{Binding AmountDisplay}" FontSize="16" FontWeight="Black" Foreground="{StaticResource PosPrimaryBrush}" HorizontalAlignment="Right" />
                                                         <Button Content="{loc:Loc shell.sync.retry}"
-                                                                IsEnabled="False"
+                                                                Command="{Binding DataContext.RetrySyncOrderCommand, RelativeSource={RelativeSource AncestorType=Window}}"
+                                                                CommandParameter="{Binding}"
                                                                 Style="{StaticResource PosPrimaryButtonStyle}"
                                                                 Padding="10,4"
                                                                 MinHeight="28"
@@ -387,7 +388,7 @@
                         <DockPanel>
                             <Button DockPanel.Dock="Right"
                                     Content="{loc:Loc shell.sync.retryAll}"
-                                    IsEnabled="False"
+                                    Command="{Binding RetryAllSyncOrdersCommand}"
                                     Style="{StaticResource PosPrimaryButtonStyle}"
                                     MinHeight="30"
                                     Padding="12,4"
@@ -516,5 +517,140 @@
                 </StackPanel>
             </Grid>
         </Border>
+
+        <Grid Grid.RowSpan="3"
+              Visibility="{Binding IsDeviceReregistrationDialogOpen, Converter={StaticResource BoolToVis}}"
+              Background="#99000000"
+              Panel.ZIndex="100">
+            <Border Width="560"
+                    Background="White"
+                    BorderBrush="#FFE0E3EA"
+                    BorderThickness="1"
+                    CornerRadius="8"
+                    Padding="26"
+                    HorizontalAlignment="Center"
+                    VerticalAlignment="Center"
+                    DataContext="{Binding DeviceRegistration}">
+                <Border.Effect>
+                    <DropShadowEffect BlurRadius="24" ShadowDepth="4" Opacity="0.22" />
+                </Border.Effect>
+                <StackPanel>
+                    <StackPanel Orientation="Horizontal" Margin="0,0,0,20">
+                        <Border Width="42" Height="42" Background="{StaticResource PosPrimaryBrush}" CornerRadius="8" Margin="0,0,12,0">
+                            <materialDesign:PackIcon Kind="AccountSwitch"
+                                                     Width="22"
+                                                     Height="22"
+                                                     Foreground="White"
+                                                     HorizontalAlignment="Center"
+                                                     VerticalAlignment="Center" />
+                        </Border>
+                        <StackPanel VerticalAlignment="Center">
+                            <TextBlock Text="{Binding TitleText}"
+                                       FontSize="21"
+                                       FontWeight="Black"
+                                       Foreground="{StaticResource PosTextBrush}" />
+                            <TextBlock Text="请选择要切换注册的分店"
+                                       FontSize="12"
+                                       Foreground="{StaticResource PosMutedForegroundBrush}"
+                                       Margin="0,3,0,0" />
+                        </StackPanel>
+                    </StackPanel>
+
+                    <TextBlock Text="分店"
+                               FontSize="12"
+                               FontWeight="Bold"
+                               Foreground="{StaticResource PosMutedForegroundBrush}"
+                               Margin="0,0,0,6" />
+                    <ComboBox ItemsSource="{Binding Stores}"
+                              SelectedItem="{Binding SelectedStore, Mode=TwoWay}"
+                              DisplayMemberPath="DisplayName"
+                              Height="42"
+                              FontSize="15"
+                              Margin="0,0,0,16" />
+
+                    <Grid Margin="0,0,0,18">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="12" />
+                            <ColumnDefinition Width="*" />
+                        </Grid.ColumnDefinitions>
+                        <StackPanel Grid.Column="0">
+                            <TextBlock Text="硬件识别码"
+                                       FontSize="12"
+                                       FontWeight="Bold"
+                                       Foreground="{StaticResource PosMutedForegroundBrush}"
+                                       Margin="0,0,0,6" />
+                            <TextBox Text="{Binding HardwareId}"
+                                     IsReadOnly="True"
+                                     Height="42"
+                                     FontSize="12"
+                                     TextWrapping="NoWrap" />
+                        </StackPanel>
+                        <StackPanel Grid.Column="2">
+                            <TextBlock Text="设备编号"
+                                       FontSize="12"
+                                       FontWeight="Bold"
+                                       Foreground="{StaticResource PosMutedForegroundBrush}"
+                                       Margin="0,0,0,6" />
+                            <TextBox Text="{Binding DeviceCode}"
+                                     IsReadOnly="True"
+                                     Height="42"
+                                     FontSize="14" />
+                        </StackPanel>
+                    </Grid>
+
+                    <Border MinHeight="42"
+                            Background="#FFFFF7E8"
+                            BorderBrush="#FFFFD59B"
+                            BorderThickness="1"
+                            CornerRadius="6"
+                            Padding="10,8"
+                            Margin="0,0,0,20">
+                        <TextBlock Text="{Binding StatusMessage}"
+                                   FontSize="12"
+                                   Foreground="#FF8F4E00"
+                                   TextWrapping="Wrap" />
+                    </Border>
+
+                    <Grid>
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="12" />
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="12" />
+                            <ColumnDefinition Width="*" />
+                        </Grid.ColumnDefinitions>
+                        <Button Grid.Column="0"
+                                Command="{Binding RegisterCommand}"
+                                Height="44"
+                                Style="{StaticResource PosPrimaryButtonStyle}">
+                            <StackPanel Orientation="Horizontal" HorizontalAlignment="Center">
+                                <materialDesign:PackIcon Kind="CheckCircle" Width="18" Height="18" Foreground="White" Margin="0,0,8,0" />
+                                <TextBlock Text="{Binding RegisterButtonText}" />
+                            </StackPanel>
+                        </Button>
+                        <Button Grid.Column="2"
+                                Command="{Binding VerifyCommand}"
+                                Height="44"
+                                Style="{StaticResource PosSecondaryButtonStyle}">
+                            <StackPanel Orientation="Horizontal" HorizontalAlignment="Center">
+                                <materialDesign:PackIcon Kind="Sync" Width="18" Height="18" Margin="0,0,8,0" />
+                                <TextBlock Text="重新检查" />
+                            </StackPanel>
+                        </Button>
+                        <Button Grid.Column="4"
+                                Command="{Binding CancelCommand}"
+                                Visibility="{Binding CanCancel, Converter={StaticResource BoolToVis}}"
+                                Height="44"
+                                Style="{StaticResource PosSecondaryButtonStyle}">
+                            <StackPanel Orientation="Horizontal" HorizontalAlignment="Center">
+                                <materialDesign:PackIcon Kind="Close" Width="18" Height="18" Margin="0,0,8,0" />
+                                <TextBlock Text="取消" />
+                            </StackPanel>
+                        </Button>
+                    </Grid>
+                </StackPanel>
+            </Border>
+        </Grid>
     </Grid>
 </Window>

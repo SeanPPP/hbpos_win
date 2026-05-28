@@ -122,7 +122,7 @@
   <data name="pos.terminal.actions.entireOrder" xml:space="preserve"><value>整单结算</value></data>
   <data name="pos.terminal.actions.specialItems" xml:space="preserve"><value>特殊商品</value></data>
   <data name="pos.terminal.actions.switchUser" xml:space="preserve"><value>切换用户</value></data>
-  <data name="pos.terminal.actions.reregisterDevice" xml:space="preserve"><value>重新注册设备</value></data>
+  <data name="pos.terminal.actions.reregisterDevice" xml:space="preserve"><value>更换分店重新注册</value></data>
   <data name="pos.terminal.inputBuffer" xml:space="preserve"><value>输入缓冲</value></data>
   <data name="pos.terminal.actions.discountAmount" xml:space="preserve"><value>&#x6298;&#x6263;&#x91D1;&#x989D;</value></data>
   <data name="pos.terminal.actions.discountPercent" xml:space="preserve"><value>&#x6298;&#x6263;%</value></data>
@@ -140,6 +140,8 @@
   <data name="pos.status.cartCleared" xml:space="preserve"><value>购物车已清空。</value></data>
 
   <data name="payment.title" xml:space="preserve"><value>支付</value></data>
+  <data name="payment.refund.title" xml:space="preserve"><value>退款</value></data>
+  <data name="payment.zeroSettlement.title" xml:space="preserve"><value>零结算</value></data>
   <data name="payment.cash.title" xml:space="preserve"><value>支付</value></data>
   <data name="payment.cash.orderSummary" xml:space="preserve"><value>当前订单</value></data>
   <data name="payment.cash.amountTendered" xml:space="preserve"><value>实收金额</value></data>
@@ -153,11 +155,15 @@
   <data name="payment.method.cash" xml:space="preserve"><value>现金</value></data>
   <data name="payment.method.card" xml:space="preserve"><value>银行卡</value></data>
   <data name="payment.method.voucher" xml:space="preserve"><value>代金券</value></data>
+  <data name="payment.method.refundCash" xml:space="preserve"><value>退款现金</value></data>
+  <data name="payment.method.refundCard" xml:space="preserve"><value>退卡</value></data>
+  <data name="payment.method.refundVoucher" xml:space="preserve"><value>退代金券</value></data>
   <data name="payment.method.account" xml:space="preserve"><value>信用账户</value></data>
   <data name="payment.method.installment" xml:space="preserve"><value>分期付款</value></data>
   <data name="payment.action.addCash" xml:space="preserve"><value>添加现金</value></data>
   <data name="payment.voucher.code" xml:space="preserve"><value>代金券编码</value></data>
   <data name="payment.remaining" xml:space="preserve"><value>剩余应付</value></data>
+  <data name="payment.refund.remaining" xml:space="preserve"><value>待退款余额</value></data>
   <data name="payment.status.tenderAdded" xml:space="preserve"><value>已添加付款。</value></data>
   <data name="payment.status.nonCashAlreadyCoversOrder" xml:space="preserve"><value>非现金付款已覆盖本单。</value></data>
   <data name="payment.voucher.status.notConfigured" xml:space="preserve"><value>代金券服务未配置。</value></data>
@@ -232,6 +238,10 @@
   <data name="shell.sync.close" xml:space="preserve"><value>关闭同步中心</value></data>
   <data name="shell.sync.retry" xml:space="preserve"><value>重试</value></data>
   <data name="shell.sync.retryAll" xml:space="preserve"><value>全部重试</value></data>
+  <data name="shell.sync.retryingOne" xml:space="preserve"><value>正在重试订单上传...</value></data>
+  <data name="shell.sync.retryingAll" xml:space="preserve"><value>正在重试订单上传...</value></data>
+  <data name="shell.sync.retryCompleted" xml:space="preserve"><value>订单上传重试完成：成功 {0}，失败 {1}。</value></data>
+  <data name="shell.sync.retryFailed" xml:space="preserve"><value>订单上传重试失败：{0}</value></data>
   <data name="shell.sync.caption" xml:space="preserve"><value>显示失败、待处理和同步中的订单上传任务。</value></data>
   <data name="shell.sync.created" xml:space="preserve"><value>创建：</value></data>
   <data name="shell.sync.lastAttempt" xml:space="preserve"><value>上次尝试：</value></data>
@@ -310,10 +320,17 @@
   <data name="payment.method" xml:space="preserve"><value>付款方式</value></data>
   <data name="payment.appliedTenders" xml:space="preserve"><value>已添加支付</value></data>
   <data name="payment.addTender" xml:space="preserve"><value>添加支付</value></data>
+  <data name="payment.refund.addTender" xml:space="preserve"><value>添加退款</value></data>
   <data name="payment.confirm" xml:space="preserve"><value>完成支付</value></data>
+  <data name="payment.refund.confirm" xml:space="preserve"><value>完成退款</value></data>
+  <data name="payment.zeroSettlement.confirm" xml:space="preserve"><value>完成零结算</value></data>
   <data name="payment.noTenders" xml:space="preserve"><value>尚未添加任何支付。</value></data>
+  <data name="payment.refund.noTenders" xml:space="preserve"><value>尚未添加任何退款。</value></data>
+  <data name="payment.zeroSettlement.noTenders" xml:space="preserve"><value>本单无需添加支付。</value></data>
   <data name="payment.orderSummary" xml:space="preserve"><value>当前订单</value></data>
   <data name="payment.status.ready" xml:space="preserve"><value>请添加支付，直到订单付清。</value></data>
+  <data name="payment.refund.status.ready" xml:space="preserve"><value>请添加退款，直到本单退款完成。</value></data>
+  <data name="payment.zeroSettlement.status.ready" xml:space="preserve"><value>本单净额为零，可直接完成零结算。</value></data>
   <data name="payment.status.invalidAmount" xml:space="preserve"><value>请输入有效的支付金额。</value></data>
   <data name="payment.status.alreadyFullyPaid" xml:space="preserve"><value>订单已付清。</value></data>
   <data name="payment.status.cashTenderAdded" xml:space="preserve"><value>已添加现金支付。</value></data>
@@ -327,6 +344,8 @@
   <data name="payment.status.unsupportedMethod" xml:space="preserve"><value>暂不支持该支付方式。</value></data>
   <data name="payment.status.noTendersAdded" xml:space="preserve"><value>完成支付前请至少添加一笔支付。</value></data>
   <data name="payment.status.remainingBalance" xml:space="preserve"><value>订单付清后才能完成支付。</value></data>
+  <data name="payment.refund.status.noTendersAdded" xml:space="preserve"><value>完成退款前请至少添加一笔退款。</value></data>
+  <data name="payment.refund.status.remainingBalance" xml:space="preserve"><value>退款金额结清后才能完成退款。</value></data>
   <data name="payment.status.duplicateVoucher" xml:space="preserve"><value>该代金券已经添加。</value></data>
   <data name="payment.status.voucherCodeRequired" xml:space="preserve"><value>请先输入代金券编码再添加代金券支付。</value></data>
   <data name="payment.status.duplicatePaymentMethod" xml:space="preserve"><value>该支付方式已经添加。</value></data>
@@ -340,6 +359,8 @@
   <data name="shell.page.loading" xml:space="preserve"><value>&#x52A0;&#x8F7D;&#x4E2D;</value></data>
   <data name="shell.page.pos" xml:space="preserve"><value>&#x6536;&#x94F6;</value></data>
   <data name="shell.page.payment" xml:space="preserve"><value>&#x652F;&#x4ED8;</value></data>
+  <data name="shell.page.refund" xml:space="preserve"><value>&#x9000;&#x6B3E;</value></data>
+  <data name="shell.page.zeroSettlement" xml:space="preserve"><value>&#x96F6;&#x7ED3;&#x7B97;</value></data>
   <data name="shell.page.specialProducts" xml:space="preserve"><value>&#x7279;&#x6B8A;&#x5546;&#x54C1;</value></data>
   <data name="shell.page.returns" xml:space="preserve"><value>&#x9000;&#x8D27;</value></data>
   <data name="shell.page.paymentSuccess" xml:space="preserve"><value>&#x652F;&#x4ED8;&#x6210;&#x529F;</value></data>

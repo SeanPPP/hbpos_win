@@ -38,6 +38,63 @@ public sealed class StoreVoucherServiceTests
         Assert.NotEqual(first.ReservationToken, second.ReservationToken);
     }
 
+    [Fact]
+    public async Task IssueRefundAsync_CreatesRefundVoucherWithTwelveMonthExpiry()
+    {
+        var time = DateTimeOffset.Parse("2026-05-26T10:00:00Z");
+        var repository = new FakeStoreVoucherRepository(null)
+        {
+            CreatedVoucherCode = "RF001"
+        };
+        var service = new StoreVoucherService(
+            repository,
+            new InMemoryStoreVoucherReservationService(new FakeTimeProvider(time)),
+            new FakeTimeProvider(time));
+
+        var response = await service.IssueRefundAsync(
+            new StoreVoucherIssueRefundRequest("S01", 18.5m, "C001", IdempotencyKey: "ORDER-1:PAY-1", OrderReference: "ORDER-1", Reason: "Refund"),
+            CancellationToken.None);
+
+        Assert.Equal("RF001", response.VoucherCode);
+        Assert.Equal(18.5m, response.Amount);
+        Assert.Equal(18.5m, response.RemainingAmount);
+        Assert.Equal("1", response.Status);
+        Assert.Equal(time.AddMonths(12), response.ExpiredAt);
+        Assert.NotNull(repository.LastRefundRequest);
+        Assert.Equal("S01", repository.LastRefundRequest!.StoreCode);
+        Assert.Equal("C001", repository.LastRefundRequest.CashierId);
+        Assert.Equal("ORDER-1:PAY-1", repository.LastRefundRequest.IdempotencyKey);
+        Assert.Equal("ORDER-1", repository.LastRefundRequest.OrderReference);
+    }
+
+    [Fact]
+    public async Task IssueRefundAsync_ReturnsExistingVoucherForSameIdempotencyKey()
+    {
+        var time = DateTimeOffset.Parse("2026-05-26T10:00:00Z");
+        var repository = new FakeStoreVoucherRepository(null)
+        {
+            CreatedVoucherCode = "RF001"
+        };
+        var service = new StoreVoucherService(
+            repository,
+            new InMemoryStoreVoucherReservationService(new FakeTimeProvider(time)),
+            new FakeTimeProvider(time));
+        var request = new StoreVoucherIssueRefundRequest(
+            "S01",
+            18.5m,
+            "C001",
+            IdempotencyKey: "ORDER-1:PAY-1",
+            OrderReference: "ORDER-1",
+            Reason: "Refund");
+
+        var first = await service.IssueRefundAsync(request, CancellationToken.None);
+        repository.CreatedVoucherCode = "RF002";
+        var second = await service.IssueRefundAsync(request, CancellationToken.None);
+
+        Assert.Equal("RF001", first.VoucherCode);
+        Assert.Equal("RF001", second.VoucherCode);
+    }
+
     private static StoreVoucher CreateVoucher(decimal remainingAmount)
     {
         return new StoreVoucher
@@ -58,12 +115,45 @@ public sealed class StoreVoucherServiceTests
 
     private sealed class FakeStoreVoucherRepository(StoreVoucher? voucher) : IStoreVoucherRepository
     {
+        private readonly Dictionary<string, StoreVoucher> refundVouchersByKey = new(StringComparer.Ordinal);
+
+        public string CreatedVoucherCode { get; set; } = "RF001";
+
+        public RefundVoucherCreateModel? LastRefundRequest { get; private set; }
+
         public Task<StoreVoucher?> FindAvailableAsync(
             string storeCode,
             string voucherCode,
             CancellationToken cancellationToken)
         {
             return Task.FromResult(voucher);
+        }
+
+        public Task<StoreVoucher> CreateRefundVoucherAsync(
+            RefundVoucherCreateModel request,
+            CancellationToken cancellationToken)
+        {
+            LastRefundRequest = request;
+            if (!refundVouchersByKey.TryGetValue(request.IdempotencyKey, out var createdVoucher))
+            {
+                createdVoucher = new StoreVoucher
+                {
+                    StoreCode = request.StoreCode,
+                    VoucherCode = CreatedVoucherCode,
+                    VoucherType = 3,
+                    Amount = request.Amount,
+                    RemainingAmount = request.Amount,
+                    Status = "1",
+                    ExpiredDate = request.ExpiredAt.UtcDateTime,
+                    CustomerCode = null,
+                    DiscountRate = 0m,
+                    Remark = $"RefundKey={request.IdempotencyKey}",
+                    IsDelete = false
+                };
+                refundVouchersByKey[request.IdempotencyKey] = createdVoucher;
+            }
+
+            return Task.FromResult(createdVoucher);
         }
     }
 

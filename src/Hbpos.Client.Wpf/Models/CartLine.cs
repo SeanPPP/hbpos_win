@@ -24,7 +24,8 @@ public sealed record ReturnCartLineRequest(
     string PriceSourceLabel,
     string ReturnSourceKey,
     Guid? OriginalOrderGuid,
-    Guid? OriginalOrderLineGuid);
+    Guid? OriginalOrderLineGuid,
+    string? ReturnReason = null);
 
 public sealed class CartLine : ObservableObject
 {
@@ -46,6 +47,7 @@ public sealed class CartLine : ObservableObject
     private string _returnSourceKey = string.Empty;
     private Guid? _originalOrderGuid;
     private Guid? _originalOrderLineGuid;
+    private string? _returnReason;
 
     public CartLine(SellableItemDto item)
         : this(item, CartLineKind.Sale, item.RetailPrice)
@@ -92,6 +94,7 @@ public sealed class CartLine : ObservableObject
         ReturnSourceKey = request.ReturnSourceKey;
         OriginalOrderGuid = request.OriginalOrderGuid;
         OriginalOrderLineGuid = request.OriginalOrderLineGuid;
+        ReturnReason = request.ReturnReason;
     }
 
     public string StoreCode
@@ -256,6 +259,12 @@ public sealed class CartLine : ObservableObject
     {
         get => _originalOrderLineGuid;
         private set => SetProperty(ref _originalOrderLineGuid, value);
+    }
+
+    public string? ReturnReason
+    {
+        get => _returnReason;
+        private set => SetProperty(ref _returnReason, value);
     }
 
     public void Increase(decimal quantity)

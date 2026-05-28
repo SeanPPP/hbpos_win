@@ -85,6 +85,33 @@ public sealed class PosTerminalWorkflowServiceTests
     }
 
     [Fact]
+    public void Guard_payment_allows_return_lines_when_net_amount_is_negative()
+    {
+        var cart = new PosCartService();
+        cart.AddReturnLine(new ReturnCartLineRequest(
+            "S001",
+            "SKU-RET-GUARD",
+            null,
+            "Guard Refund Tea",
+            "930233",
+            "ITEM-RET-GUARD",
+            null,
+            1m,
+            5m,
+            PriceSourceKind.StoreRetailPrice,
+            PriceSourceKind.StoreRetailPrice.ToString(),
+            "RETURN-GUARD-1",
+            Guid.NewGuid(),
+            Guid.NewGuid()));
+        var service = new PosTerminalWorkflowService(new LocalSellableItemIndex(), cart);
+
+        var result = service.GuardPayment();
+
+        Assert.True(result.PaymentAllowed);
+        Assert.Null(result.StatusKey);
+    }
+
+    [Fact]
     public async Task Add_selected_item_remote_delete_keeps_local_cart_line()
     {
         var cart = new PosCartService();

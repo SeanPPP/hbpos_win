@@ -73,6 +73,11 @@ public sealed class CashPaymentWorkflowService(
 
     public decimal CalculateChange(string? amountTenderedText, decimal actualAmount)
     {
+        if (RoundCurrency(actualAmount) < 0m)
+        {
+            return 0m;
+        }
+
         if (!TryParseTenderedAmount(amountTenderedText, out var tenderedAmount))
         {
             return 0m;
@@ -90,6 +95,12 @@ public sealed class CashPaymentWorkflowService(
 
     public decimal CalculateRemainingAmount(decimal actualAmount, IReadOnlyList<PaymentTender> tenders)
     {
+        actualAmount = RoundCurrency(actualAmount);
+        if (actualAmount < 0m)
+        {
+            return CalculateRefundRemainingAmount(actualAmount, tenders);
+        }
+
         var normalizedTenders = tenders.Select(NormalizeTender).ToList();
         var nonCashTotal = RoundCurrency(normalizedTenders
             .Where(tender => tender.Method != PaymentMethodKind.Cash)
@@ -108,6 +119,11 @@ public sealed class CashPaymentWorkflowService(
 
     public decimal CalculateChange(IReadOnlyList<PaymentTender> tenders, decimal actualAmount)
     {
+        if (RoundCurrency(actualAmount) < 0m)
+        {
+            return 0m;
+        }
+
         var normalizedTenders = tenders.Select(NormalizeTender).ToList();
         var nonCashTotal = RoundCurrency(normalizedTenders
             .Where(tender => tender.Method != PaymentMethodKind.Cash)
@@ -138,16 +154,53 @@ public sealed class CashPaymentWorkflowService(
             return PaymentTenderAttemptResult.Fail("payment.status.invalidAmount");
         }
 
-        var remainingAmount = Math.Max(0m, CalculateRemainingAmount(actualAmount, currentTenders));
-        if (remainingAmount <= 0m)
+        var isRefund = RoundCurrency(actualAmount) < 0m;
+        var remainingAmount = CalculateRemainingAmount(actualAmount, currentTenders);
+        if ((!isRefund && remainingAmount <= 0m) ||
+            (isRefund && remainingAmount >= 0m))
         {
             return PaymentTenderAttemptResult.Fail("payment.status.alreadyFullyPaid");
         }
 
-        if (method == PaymentMethodKind.Voucher &&
+        if (!isRefund &&
+            method == PaymentMethodKind.Voucher &&
             HasExistingVoucherTender(currentTenders, referenceText))
         {
             return PaymentTenderAttemptResult.Fail("payment.status.duplicateVoucher");
+        }
+
+        if (isRefund)
+        {
+            if (method == PaymentMethodKind.Card && string.IsNullOrWhiteSpace(referenceText))
+            {
+                return PaymentTenderAttemptResult.Fail("payment.status.cardDeclined", "Original card payment reference is required.");
+            }
+
+            return method switch
+            {
+                PaymentMethodKind.Cash => CreateRefundCashTenderAttempt(amount),
+                PaymentMethodKind.Card => await AuthorizeRefundTenderAsync(
+                    amount,
+                    CalculateExternalRemainingAmount(actualAmount, currentTenders),
+                    session,
+                    referenceText,
+                    cancellationToken,
+                    _cardTerminalClient.RefundAsync,
+                    PaymentMethodKind.Card,
+                    "payment.status.cardExceedsRemaining",
+                    "payment.status.cardDeclined",
+                    "payment.status.cardTenderAdded"),
+                PaymentMethodKind.Voucher => AuthorizeRefundTenderAsync(
+                    amount,
+                    CalculateExternalRemainingAmount(actualAmount, currentTenders),
+                    session,
+                    referenceText,
+                    cancellationToken,
+                    PaymentMethodKind.Voucher,
+                    "payment.status.voucherExceedsRemaining",
+                    "payment.status.voucherTenderAdded"),
+                _ => PaymentTenderAttemptResult.Fail("payment.status.unsupportedMethod")
+            };
         }
 
         return method switch
@@ -214,10 +267,14 @@ public sealed class CashPaymentWorkflowService(
         CancellationToken cancellationToken = default)
     {
         var result = checkout.CreatePaymentOrder(cart, session, tenders, cashTenderedAmount);
-        await orderRepository.SavePendingOrderAsync(result.Order, cancellationToken);
+        var order = await IssueRefundVouchersAsync(result.Order, session, cancellationToken);
+        result = result with { Order = order };
+        await orderRepository.SavePendingOrderAsync(order, cancellationToken);
 
-        var hasVoucher = result.Order.Payments.Any(payment => payment.Method == Hbpos.Contracts.Orders.PaymentMethodKind.Voucher);
-        if (hasVoucher)
+        var hasPositiveVoucher = result.Order.Payments.Any(payment =>
+            payment.Method == Hbpos.Contracts.Orders.PaymentMethodKind.Voucher &&
+            payment.Amount > 0m);
+        if (hasPositiveVoucher)
         {
             if (orderUploadService is null)
             {
@@ -346,6 +403,123 @@ public sealed class CashPaymentWorkflowService(
             approvedStatusKey);
     }
 
+    private static async Task<PaymentTenderAttemptResult> AuthorizeRefundTenderAsync(
+        decimal amount,
+        decimal remainingAmount,
+        PosSessionState session,
+        string? referenceText,
+        CancellationToken cancellationToken,
+        Func<decimal, PosSessionState, string?, CancellationToken, Task<PaymentAuthorizationResult>> authorizeAsync,
+        PaymentMethodKind method,
+        string exceedsRemainingStatusKey,
+        string declinedStatusKey,
+        string approvedStatusKey)
+    {
+        if (amount > remainingAmount)
+        {
+            return PaymentTenderAttemptResult.Fail(exceedsRemainingStatusKey);
+        }
+
+        var authorization = await authorizeAsync(amount, session, referenceText, cancellationToken);
+        if (!authorization.Approved)
+        {
+            return PaymentTenderAttemptResult.Fail(
+                declinedStatusKey,
+                authorization.Message);
+        }
+
+        var authorizedAmount = decimal.Round(
+            authorization.AuthorizedAmount ?? amount,
+            2,
+            MidpointRounding.AwayFromZero);
+        if (authorizedAmount <= 0m)
+        {
+            return PaymentTenderAttemptResult.Fail(declinedStatusKey, authorization.Message);
+        }
+
+        if (authorizedAmount > remainingAmount)
+        {
+            return PaymentTenderAttemptResult.Fail(exceedsRemainingStatusKey);
+        }
+
+        if (method == PaymentMethodKind.Card && authorizedAmount != amount)
+        {
+            return PaymentTenderAttemptResult.Fail(
+                declinedStatusKey,
+                "Card terminal authorized amount did not match the requested amount.");
+        }
+
+        var reference = method == PaymentMethodKind.Card
+            ? CardRefundReference.Format(authorization.Reference, referenceText!)
+            : authorization.Reference;
+        return PaymentTenderAttemptResult.Success(
+            new PaymentTender(method, -authorizedAmount, reference, CardTransactions: authorization.CardTransactions),
+            approvedStatusKey);
+    }
+
+    private static PaymentTenderAttemptResult AuthorizeRefundTenderAsync(
+        decimal amount,
+        decimal remainingAmount,
+        PosSessionState session,
+        string? referenceText,
+        CancellationToken cancellationToken,
+        PaymentMethodKind method,
+        string exceedsRemainingStatusKey,
+        string approvedStatusKey)
+    {
+        _ = session;
+        _ = referenceText;
+        cancellationToken.ThrowIfCancellationRequested();
+
+        if (amount > remainingAmount)
+        {
+            return PaymentTenderAttemptResult.Fail(exceedsRemainingStatusKey);
+        }
+
+        return PaymentTenderAttemptResult.Success(
+            new PaymentTender(method, -RoundCurrency(amount), "VOUCHER_REFUND_PENDING", IdempotencyKey: Guid.NewGuid().ToString("N")),
+            approvedStatusKey);
+    }
+
+    private async Task<LocalOrder> IssueRefundVouchersAsync(
+        LocalOrder order,
+        PosSessionState session,
+        CancellationToken cancellationToken)
+    {
+        var updatedPayments = new List<LocalPayment>(order.Payments.Count);
+        var changed = false;
+
+        foreach (var payment in order.Payments)
+        {
+            if (payment.Method != PaymentMethodKind.Voucher || payment.Amount >= 0m)
+            {
+                updatedPayments.Add(payment);
+                continue;
+            }
+
+            var authorization = await _voucherTenderClient.IssueRefundAsync(
+                Math.Abs(payment.Amount),
+                session,
+                order.OrderGuid.ToString("D"),
+                string.IsNullOrWhiteSpace(payment.IdempotencyKey)
+                    ? $"{order.OrderGuid:D}:{payment.PaymentGuid:D}"
+                    : payment.IdempotencyKey.Trim(),
+                "Refund",
+                cancellationToken);
+            if (!authorization.Approved || string.IsNullOrWhiteSpace(authorization.Reference))
+            {
+                throw new InvalidOperationException(authorization.Message ?? "Voucher refund issuing failed.");
+            }
+
+            updatedPayments.Add(payment with { Reference = authorization.Reference });
+            changed = true;
+        }
+
+        return changed
+            ? order with { Payments = updatedPayments }
+            : order;
+    }
+
     private static bool HasExistingVoucherTender(
         IReadOnlyList<PaymentTender> currentTenders,
         string? voucherCode)
@@ -365,9 +539,11 @@ public sealed class CashPaymentWorkflowService(
     private static string? ParseVoucherCodeFromReference(string? reference)
     {
         var parts = (reference ?? string.Empty).Split(':', StringSplitOptions.TrimEntries);
-        return parts.Length >= 2 && parts[0].Equals("VOUCHER", StringComparison.OrdinalIgnoreCase)
-            ? parts[1]
-            : reference;
+        return parts.Length >= 2 &&
+            (parts[0].Equals("VOUCHER", StringComparison.OrdinalIgnoreCase) ||
+             parts[0].Equals("VOUCHER_REFUND", StringComparison.OrdinalIgnoreCase))
+                ? parts[1]
+                : reference;
     }
 
     private static string? NormalizeVoucherCode(string? voucherCode)
@@ -385,9 +561,20 @@ public sealed class CashPaymentWorkflowService(
                 "payment.status.cashTenderAdded");
     }
 
+    private PaymentTenderAttemptResult CreateRefundCashTenderAttempt(decimal amount)
+    {
+        var normalizedAmount = _cashRoundingPolicy.NormalizeCashTender(amount);
+        return normalizedAmount <= 0m
+            ? PaymentTenderAttemptResult.Fail("payment.status.invalidAmount")
+            : PaymentTenderAttemptResult.Success(
+                new PaymentTender(PaymentMethodKind.Cash, -normalizedAmount),
+                "payment.status.cashTenderAdded");
+    }
+
     private decimal CalculateExternalRemainingAmount(decimal actualAmount, IReadOnlyList<PaymentTender> currentTenders)
     {
-        return Math.Max(0m, RoundCurrency(actualAmount - CalculateTenderedAmountForActualBalance(currentTenders)));
+        var remaining = RoundCurrency(RoundCurrency(actualAmount) - CalculateTenderedAmountForActualBalance(currentTenders));
+        return Math.Abs(remaining);
     }
 
     private decimal CalculateTenderedAmountForActualBalance(IReadOnlyList<PaymentTender> tenders)
@@ -398,9 +585,34 @@ public sealed class CashPaymentWorkflowService(
     private PaymentTender NormalizeTender(PaymentTender tender)
     {
         var normalizedAmount = tender.Method == PaymentMethodKind.Cash
-            ? _cashRoundingPolicy.NormalizeCashTender(tender.Amount)
+            ? NormalizeCashTender(tender.Amount)
             : RoundCurrency(tender.Amount);
         return tender with { Amount = normalizedAmount };
+    }
+
+    private decimal CalculateRefundRemainingAmount(decimal actualAmount, IReadOnlyList<PaymentTender> tenders)
+    {
+        var normalizedTenders = tenders.Select(NormalizeTender).ToList();
+        var nonCashTotal = RoundCurrency(normalizedTenders
+            .Where(tender => tender.Method != PaymentMethodKind.Cash)
+            .Sum(tender => tender.Amount));
+        var cashTotal = RoundCurrency(normalizedTenders
+            .Where(tender => tender.Method == PaymentMethodKind.Cash)
+            .Sum(tender => tender.Amount));
+        if (cashTotal >= 0m)
+        {
+            return RoundCurrency(actualAmount - nonCashTotal);
+        }
+
+        var roundedCashRefund = _cashRoundingPolicy.CalculateRoundedCashDue(Math.Abs(actualAmount), Math.Abs(nonCashTotal));
+        return RoundCurrency(cashTotal + roundedCashRefund);
+    }
+
+    private decimal NormalizeCashTender(decimal amount)
+    {
+        return amount < 0m
+            ? -_cashRoundingPolicy.NormalizeCashTender(Math.Abs(amount))
+            : _cashRoundingPolicy.NormalizeCashTender(amount);
     }
 
     private static decimal RoundCurrency(decimal amount)
@@ -415,6 +627,12 @@ public interface ICardTerminalClient
         decimal amount,
         PosSessionState session,
         CancellationToken cancellationToken = default);
+
+    Task<PaymentAuthorizationResult> RefundAsync(
+        decimal amount,
+        PosSessionState session,
+        string? originalReference,
+        CancellationToken cancellationToken = default);
 }
 
 public interface IVoucherTenderClient
@@ -423,6 +641,14 @@ public interface IVoucherTenderClient
         decimal amount,
         PosSessionState session,
         string? voucherCode,
+        CancellationToken cancellationToken = default);
+
+    Task<PaymentAuthorizationResult> IssueRefundAsync(
+        decimal amount,
+        PosSessionState session,
+        string orderReference,
+        string idempotencyKey,
+        string? reason = null,
         CancellationToken cancellationToken = default);
 }
 
@@ -465,6 +691,15 @@ public sealed class UnavailableCardTerminalClient : ICardTerminalClient
     {
         return Task.FromResult(new PaymentAuthorizationResult(false));
     }
+
+    public Task<PaymentAuthorizationResult> RefundAsync(
+        decimal amount,
+        PosSessionState session,
+        string? originalReference,
+        CancellationToken cancellationToken = default)
+    {
+        return Task.FromResult(new PaymentAuthorizationResult(false));
+    }
 }
 
 public sealed class UnavailableVoucherTenderClient : IVoucherTenderClient
@@ -479,6 +714,17 @@ public sealed class UnavailableVoucherTenderClient : IVoucherTenderClient
         decimal amount,
         PosSessionState session,
         string? voucherCode,
+        CancellationToken cancellationToken = default)
+    {
+        return Task.FromResult(new PaymentAuthorizationResult(false));
+    }
+
+    public Task<PaymentAuthorizationResult> IssueRefundAsync(
+        decimal amount,
+        PosSessionState session,
+        string orderReference,
+        string idempotencyKey,
+        string? reason = null,
         CancellationToken cancellationToken = default)
     {
         return Task.FromResult(new PaymentAuthorizationResult(false));

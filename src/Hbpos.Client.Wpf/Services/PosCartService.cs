@@ -1,13 +1,17 @@
 using Hbpos.Client.Wpf.Models;
 using Hbpos.Contracts.Catalog;
+using Hbpos.Contracts.Orders;
 
 namespace Hbpos.Client.Wpf.Services;
 
 public sealed class PosCartService
 {
     private readonly List<CartLine> _lines = [];
+    private readonly List<OrderReturnPaymentCapacityDto> _returnPaymentCapacities = [];
 
     public IReadOnlyList<CartLine> Lines => _lines;
+
+    public IReadOnlyList<OrderReturnPaymentCapacityDto> ReturnPaymentCapacities => _returnPaymentCapacities;
 
     public decimal TotalAmount => decimal.Round(_lines.Sum(line => line.GrossAmount), 2, MidpointRounding.AwayFromZero);
 
@@ -91,6 +95,41 @@ public sealed class PosCartService
         return line;
     }
 
+    public void AddReturnPaymentCapacities(IEnumerable<OrderReturnPaymentCapacityDto> capacities)
+    {
+        var capacityList = capacities
+            .Where(capacity => capacity.RemainingAmount > 0m)
+            .ToList();
+        if (capacityList.Count == 0)
+        {
+            return;
+        }
+
+        var changed = false;
+        foreach (var capacity in capacityList)
+        {
+            var existingIndex = _returnPaymentCapacities.FindIndex(existing =>
+                existing.Method == capacity.Method &&
+                string.Equals(existing.Reference ?? string.Empty, capacity.Reference ?? string.Empty, StringComparison.OrdinalIgnoreCase) &&
+                existing.OriginalOrderGuid == capacity.OriginalOrderGuid);
+            if (existingIndex >= 0)
+            {
+                _returnPaymentCapacities[existingIndex] = capacity;
+            }
+            else
+            {
+                _returnPaymentCapacities.Add(capacity);
+            }
+
+            changed = true;
+        }
+
+        if (changed)
+        {
+            OnCartChanged();
+        }
+    }
+
     public CartLine? FindLineByLookupCode(string storeCode, string lookupCode)
     {
         var normalizedLookupCode = CartLine.NormalizeLookupCode(lookupCode);
@@ -160,6 +199,11 @@ public sealed class PosCartService
             return false;
         }
 
+        if (line.IsReturnLine && !_lines.Any(existing => existing.IsReturnLine))
+        {
+            _returnPaymentCapacities.Clear();
+        }
+
         OnCartChanged();
         return true;
     }
@@ -186,6 +230,10 @@ public sealed class PosCartService
         if (!line.Decrease(1m))
         {
             _lines.Remove(line);
+            if (line.IsReturnLine && !_lines.Any(existing => existing.IsReturnLine))
+            {
+                _returnPaymentCapacities.Clear();
+            }
         }
 
         OnCartChanged();
@@ -269,10 +317,17 @@ public sealed class PosCartService
     {
         if (_lines.Count == 0)
         {
+            if (_returnPaymentCapacities.Count > 0)
+            {
+                _returnPaymentCapacities.Clear();
+                OnCartChanged();
+            }
+
             return;
         }
 
         _lines.Clear();
+        _returnPaymentCapacities.Clear();
         OnCartChanged();
     }
 
@@ -296,13 +351,15 @@ public sealed class PosCartService
                 line.Kind,
                 line.ReturnSourceKey,
                 line.OriginalOrderGuid,
-                line.OriginalOrderLineGuid))
+                line.OriginalOrderLineGuid,
+                line.ReturnReason))
             .ToArray());
     }
 
     public void RestoreSnapshot(PosCartSnapshot snapshot)
     {
         _lines.Clear();
+        _returnPaymentCapacities.Clear();
         foreach (var snapshotLine in snapshot.Lines)
         {
             if (!IsPositiveIntegerQuantity(snapshotLine.Quantity))
@@ -327,7 +384,8 @@ public sealed class PosCartService
                     snapshotLine.PriceSourceLabel,
                     snapshotLine.ReturnSourceKey,
                     snapshotLine.OriginalOrderGuid,
-                    snapshotLine.OriginalOrderLineGuid));
+                    snapshotLine.OriginalOrderLineGuid,
+                    snapshotLine.ReturnReason));
             }
             else if (snapshotLine.Kind == CartLineKind.OpenItem)
             {
@@ -440,4 +498,5 @@ public sealed record PosCartLineSnapshot(
     CartLineKind Kind = CartLineKind.Sale,
     string ReturnSourceKey = "",
     Guid? OriginalOrderGuid = null,
-    Guid? OriginalOrderLineGuid = null);
+    Guid? OriginalOrderLineGuid = null,
+    string? ReturnReason = null);

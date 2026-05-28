@@ -119,6 +119,172 @@ public sealed class DeviceRegistrationTests
     }
 
     [Fact]
+    public async Task DeviceRegistrationViewModel_PendingRegistration_AllowsSwitchingStoreBeforeSubmit()
+    {
+        var workflow = new FakeDeviceRegistrationWorkflowService
+        {
+            HardwareId = "HW-001",
+            LoadResult = new DeviceRegistrationLoadResult(
+                [new StoreSelectionItem("1002", "Lutwyche", true), new StoreSelectionItem("1003", "Zillmere", true)],
+                new StoreSelectionItem("1002", "Lutwyche", true),
+                "POS-OLD",
+                true,
+                "Pending approval"),
+            RegisterResult = new DeviceRegistrationActionResult(
+                "POS-NEW",
+                "1003",
+                "Zillmere",
+                "HW-001",
+                true,
+                "Pending approval",
+                null,
+                false,
+                false),
+            VerifyResult = new DeviceRegistrationActionResult(
+                "POS-NEW",
+                "1003",
+                "Zillmere",
+                "HW-001",
+                true,
+                "Pending approval",
+                null,
+                false,
+                false)
+        };
+        var viewModel = new DeviceRegistrationViewModel(workflow);
+        var cached = new LocalDeviceCache("POS-OLD", "1002", "Lutwyche", "HW-001", -1, false, "Pending approval", DateTimeOffset.UtcNow);
+
+        await viewModel.InitializeAsync(cached);
+
+        Assert.Equal("POS-OLD", viewModel.DeviceCode);
+        Assert.True(viewModel.HasPendingRegistration);
+        Assert.False(viewModel.RegisterCommand.CanExecute(null));
+        Assert.True(viewModel.VerifyCommand.CanExecute(null));
+
+        viewModel.SelectedStore = viewModel.Stores.Single(store => store.StoreCode == "1003");
+
+        Assert.Empty(viewModel.DeviceCode);
+        Assert.False(viewModel.HasPendingRegistration);
+        Assert.True(viewModel.RegisterCommand.CanExecute(null));
+        Assert.False(viewModel.VerifyCommand.CanExecute(null));
+        Assert.Equal("提交切换分店注册", viewModel.RegisterButtonText);
+
+        viewModel.SelectedStore = viewModel.Stores.Single(store => store.StoreCode == "1002");
+
+        Assert.Equal("POS-OLD", viewModel.DeviceCode);
+        Assert.True(viewModel.HasPendingRegistration);
+        Assert.False(viewModel.RegisterCommand.CanExecute(null));
+        Assert.True(viewModel.VerifyCommand.CanExecute(null));
+
+        viewModel.SelectedStore = viewModel.Stores.Single(store => store.StoreCode == "1003");
+        await viewModel.RegisterCommand.ExecuteAsync(null);
+
+        Assert.Equal("1003", workflow.LastRegisterStoreCode);
+        Assert.Equal("POS-NEW", viewModel.DeviceCode);
+        Assert.True(viewModel.HasPendingRegistration);
+        Assert.False(viewModel.RegisterCommand.CanExecute(null));
+        Assert.True(viewModel.VerifyCommand.CanExecute(null));
+
+        await viewModel.VerifyCommand.ExecuteAsync(null);
+
+        Assert.Equal("1003", workflow.LastVerifyStoreCode);
+        Assert.Equal("POS-NEW", workflow.LastVerifyDeviceCode);
+    }
+
+    [Fact]
+    public async Task DeviceRegistrationViewModel_PendingRegistration_AllowsSwitchWhenCachedStoreIsNotVisible()
+    {
+        var workflow = new FakeDeviceRegistrationWorkflowService
+        {
+            HardwareId = "HW-001",
+            LoadResult = new DeviceRegistrationLoadResult(
+                [new StoreSelectionItem("1003", "Zillmere", true)],
+                new StoreSelectionItem("1003", "Zillmere", true),
+                "POS-OLD",
+                true,
+                "Pending approval")
+        };
+        var viewModel = new DeviceRegistrationViewModel(workflow);
+        var cached = new LocalDeviceCache("POS-OLD", "1002", "Lutwyche", "HW-001", -1, false, "Pending approval", DateTimeOffset.UtcNow);
+
+        await viewModel.InitializeAsync(cached);
+
+        Assert.Equal("1003", viewModel.SelectedStore?.StoreCode);
+        Assert.Empty(viewModel.DeviceCode);
+        Assert.False(viewModel.HasPendingRegistration);
+        Assert.True(viewModel.RegisterCommand.CanExecute(null));
+        Assert.False(viewModel.VerifyCommand.CanExecute(null));
+    }
+
+    [Fact]
+    public async Task DeviceRegistrationViewModel_RejectedCachedDevice_DoesNotBecomePendingRegistration()
+    {
+        var workflow = new FakeDeviceRegistrationWorkflowService
+        {
+            HardwareId = "HW-001",
+            LoadResult = new DeviceRegistrationLoadResult(
+                [new StoreSelectionItem("1003", "Zillmere", true)],
+                new StoreSelectionItem("1003", "Zillmere", true),
+                "POS-OLD",
+                false,
+                "Device hardware is already registered to another store.")
+        };
+        var viewModel = new DeviceRegistrationViewModel(workflow);
+        var cached = new LocalDeviceCache("POS-OLD", "1002", "Lutwyche", "HW-001", 1, false, "Device hardware is already registered to another store.", DateTimeOffset.UtcNow);
+
+        await viewModel.InitializeAsync(cached);
+
+        Assert.False(viewModel.HasPendingRegistration);
+        Assert.Equal("POS-OLD", viewModel.DeviceCode);
+        Assert.True(viewModel.RegisterCommand.CanExecute(null));
+        Assert.True(viewModel.VerifyCommand.CanExecute(null));
+    }
+
+    [Fact]
+    public async Task DeviceRegistrationViewModel_RejectedStoreSwitch_DoesNotBecomePendingRegistration()
+    {
+        var workflow = new FakeDeviceRegistrationWorkflowService
+        {
+            HardwareId = "HW-001",
+            LoadResult = new DeviceRegistrationLoadResult(
+                [new StoreSelectionItem("1002", "Lutwyche", true), new StoreSelectionItem("1003", "Zillmere", true)],
+                new StoreSelectionItem("1002", "Lutwyche", true),
+                "POS-OLD",
+                true,
+                "Pending approval"),
+            RegisterResult = new DeviceRegistrationActionResult(
+                "POS-OLD",
+                "1002",
+                "Lutwyche",
+                "HW-001",
+                false,
+                "Device hardware is already registered to another store.",
+                null,
+                false,
+                false)
+        };
+        var viewModel = new DeviceRegistrationViewModel(workflow);
+        var cached = new LocalDeviceCache("POS-OLD", "1002", "Lutwyche", "HW-001", -1, false, "Pending approval", DateTimeOffset.UtcNow);
+
+        await viewModel.InitializeAsync(cached);
+        viewModel.SelectedStore = viewModel.Stores.Single(store => store.StoreCode == "1003");
+        await viewModel.RegisterCommand.ExecuteAsync(null);
+
+        Assert.Empty(viewModel.DeviceCode);
+        Assert.False(viewModel.HasPendingRegistration);
+        Assert.True(viewModel.RegisterCommand.CanExecute(null));
+        Assert.False(viewModel.VerifyCommand.CanExecute(null));
+        Assert.Equal("Device hardware is already registered to another store.", viewModel.StatusMessage);
+
+        viewModel.SelectedStore = viewModel.Stores.Single(store => store.StoreCode == "1002");
+
+        Assert.Empty(viewModel.DeviceCode);
+        Assert.False(viewModel.HasPendingRegistration);
+        Assert.True(viewModel.RegisterCommand.CanExecute(null));
+        Assert.False(viewModel.VerifyCommand.CanExecute(null));
+    }
+
+    [Fact]
     public async Task DeviceRegistrationViewModel_ReregisterMode_MapsResultAndRaisesReregistered()
     {
         var workflow = new FakeDeviceRegistrationWorkflowService
@@ -147,6 +313,10 @@ public sealed class DeviceRegistrationTests
 
         viewModel.PrepareReregister("1002");
         await viewModel.LoadStoresAsync(cachedDevice: null);
+
+        Assert.Equal("更换分店重新注册", viewModel.TitleText);
+        Assert.Equal("提交更换分店注册", viewModel.RegisterButtonText);
+
         await viewModel.RegisterCommand.ExecuteAsync(null);
 
         Assert.Equal("1002", workflow.LastLoadExcludedStoreCode);

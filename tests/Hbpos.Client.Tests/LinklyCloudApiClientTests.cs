@@ -1,0 +1,308 @@
+using System.Net;
+using System.Text;
+using System.Text.Json;
+using Hbpos.Client.Wpf.Services;
+
+namespace Hbpos.Client.Tests;
+
+public sealed class LinklyCloudApiClientTests
+{
+    [Fact]
+    public async Task PairAsync_posts_credentials_and_reads_secret()
+    {
+        using var logs = new ConsoleLogCapture();
+        HttpRequestMessage? capturedRequest = null;
+        var client = new LinklyCloudApiClient(new HttpClient(new StubHttpMessageHandler(request =>
+        {
+            capturedRequest = CloneRequestWithBody(request);
+            return JsonResponse("""{ "secret": "paired-secret" }""");
+        })));
+
+        var secret = await client.PairAsync(
+            "https://auth.example/v1/",
+            "store-user",
+            "store-password",
+            "12345");
+
+        Assert.Equal("paired-secret", secret);
+        Assert.NotNull(capturedRequest);
+        Assert.Equal("https://auth.example/v1/pairing/cloudpos", capturedRequest!.RequestUri!.AbsoluteUri);
+        var body = await capturedRequest.Content!.ReadAsStringAsync();
+        Assert.Equal("store-user", ReadJsonString(body, "username"));
+        Assert.Equal("store-password", ReadJsonString(body, "password"));
+        Assert.Equal("12345", ReadJsonString(body, "pairCode"));
+        Assert.Contains(logs.Lines, line => line.Contains("pair request start", StringComparison.Ordinal));
+        Assert.DoesNotContain(logs.Lines, line => line.Contains("store-user", StringComparison.Ordinal));
+        Assert.DoesNotContain(logs.Lines, line => line.Contains("store-password", StringComparison.Ordinal));
+        Assert.DoesNotContain(logs.Lines, line => line.Contains("12345", StringComparison.Ordinal));
+        Assert.DoesNotContain(logs.Lines, line => line.Contains("paired-secret", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task GetTokenAsync_posts_secret_and_pos_identity()
+    {
+        using var logs = new ConsoleLogCapture();
+        HttpRequestMessage? capturedRequest = null;
+        var client = new LinklyCloudApiClient(new HttpClient(new StubHttpMessageHandler(request =>
+        {
+            capturedRequest = CloneRequestWithBody(request);
+            return JsonResponse("""{ "token": "bearer-token", "expirySeconds": 60 }""");
+        })));
+
+        var token = await client.GetTokenAsync(CreateCloudSettings(), "3e7f5001-58a3-43fa-9129-6e84a7b4f2a0");
+
+        Assert.Equal("bearer-token", token.Token);
+        Assert.True(token.ExpiresAt > DateTimeOffset.UtcNow);
+        Assert.NotNull(capturedRequest);
+        Assert.Equal("https://auth.example/v1/tokens/cloudpos", capturedRequest!.RequestUri!.AbsoluteUri);
+        var body = await capturedRequest.Content!.ReadAsStringAsync();
+        Assert.Equal("paired-secret", ReadJsonString(body, "secret"));
+        Assert.Equal("HotBargainPOS", ReadJsonString(body, "posName"));
+        Assert.Equal("2026.5.1", ReadJsonString(body, "posVersion"));
+        Assert.Equal("3e7f5001-58a3-43fa-9129-6e84a7b4f2a0", ReadJsonString(body, "posId"));
+        Assert.Equal("a256b7ec-709d-4c7d-8ffe-57cc7ca1fd22", ReadJsonString(body, "posVendorId"));
+        Assert.Contains(logs.Lines, line => line.Contains("token request start", StringComparison.Ordinal));
+        Assert.DoesNotContain(logs.Lines, line => line.Contains("paired-secret", StringComparison.Ordinal));
+        Assert.DoesNotContain(logs.Lines, line => line.Contains("bearer-token", StringComparison.Ordinal));
+    }
+
+    [Theory]
+    [InlineData("not-a-uuid", "a256b7ec-709d-4c7d-8ffe-57cc7ca1fd22", "Linkly POS id must be a UUID v4.")]
+    [InlineData("3e7f5001-58a3-33fa-9129-6e84a7b4f2a0", "a256b7ec-709d-4c7d-8ffe-57cc7ca1fd22", "Linkly POS id must be a UUID v4.")]
+    [InlineData("3e7f5001-58a3-43fa-9129-6e84a7b4f2a0", "not-a-uuid", "Linkly POS vendor id must be a UUID v4.")]
+    [InlineData("3e7f5001-58a3-43fa-9129-6e84a7b4f2a0", "a256b7ec-709d-3c7d-8ffe-57cc7ca1fd22", "Linkly POS vendor id must be a UUID v4.")]
+    public async Task GetTokenAsync_requires_pos_identity_uuid_v4(
+        string posId,
+        string posVendorId,
+        string expectedMessage)
+    {
+        var client = new LinklyCloudApiClient(new HttpClient(new StubHttpMessageHandler(_ =>
+            JsonResponse("""{ "token": "bearer-token", "expirySeconds": 60 }"""))));
+        var settings = CreateCloudSettings() with { LinklyPosVendorId = posVendorId };
+
+        var exception = await Assert.ThrowsAsync<LinklyCloudApiException>(() =>
+            client.GetTokenAsync(settings, posId));
+
+        Assert.Equal(expectedMessage, exception.Message);
+    }
+
+    [Fact]
+    public async Task SendStatusAsync_posts_status_request_and_parses_response()
+    {
+        HttpRequestMessage? capturedRequest = null;
+        var client = new LinklyCloudApiClient(new HttpClient(new StubHttpMessageHandler(request =>
+        {
+            capturedRequest = CloneRequestWithBody(request);
+            return JsonResponse(
+                """
+                {
+                  "SessionId": "session-1",
+                  "ResponseType": "status",
+                  "Response": {
+                    "Success": true,
+                    "ResponseCode": "00",
+                    "ResponseText": "READY",
+                    "LoggedOn": true,
+                    "Catid": "TERM",
+                    "Caid": "MERCHANT"
+                  }
+                }
+                """);
+        })));
+
+        var result = await client.SendStatusAsync(CreateCloudSettings(), "bearer-token");
+
+        Assert.True(result.Succeeded);
+        Assert.Equal("00", result.ResponseCode);
+        Assert.Equal("READY", result.ResponseText);
+        Assert.True(result.LoggedOn);
+        Assert.NotNull(capturedRequest);
+        Assert.Equal(HttpMethod.Post, capturedRequest!.Method);
+        Assert.Contains("/status?async=false", capturedRequest.RequestUri!.AbsoluteUri, StringComparison.Ordinal);
+        Assert.Equal("Bearer", capturedRequest.Headers.Authorization?.Scheme);
+        Assert.Equal("bearer-token", capturedRequest.Headers.Authorization?.Parameter);
+        var body = await capturedRequest.Content!.ReadAsStringAsync();
+        Assert.Equal("0", ReadNestedJsonString(body, "Request", "StatusType"));
+    }
+
+    [Fact]
+    public async Task SendTransactionAsync_posts_purchase_and_parses_transaction_response()
+    {
+        HttpRequestMessage? capturedRequest = null;
+        var client = new LinklyCloudApiClient(new HttpClient(new StubHttpMessageHandler(request =>
+        {
+            capturedRequest = CloneRequestWithBody(request);
+            return JsonResponse(
+                """
+                {
+                  "SessionId": "session-1",
+                  "ResponseType": "transaction",
+                  "Response": {
+                    "Success": true,
+                    "ResponseCode": "00",
+                    "ResponseText": "APPROVED",
+                    "TxnRef": "TXN-1",
+                    "AmtPurchase": 1000,
+                    "AuthCode": 123456,
+                    "CardType": "VISA",
+                    "Pan": "4111111111111234",
+                    "Caid": "MID",
+                    "Stan": 42,
+                    "PurchaseAnalysisData": { "RFN": "RFN-1" }
+                  }
+                }
+                """);
+        })));
+
+        var result = await client.SendTransactionAsync(
+            CreateCloudSettings(),
+            "bearer-token",
+            new LinklyCloudTransactionRequest("P", 1000, "TXN-1"));
+
+        Assert.True(result.Succeeded);
+        Assert.Equal("TXN-1", result.TxnRef);
+        Assert.Equal("123456", result.AuthCode);
+        Assert.Equal("VISA", result.CardType);
+        Assert.Equal("4111111111111234", result.Pan);
+        Assert.Equal(10m, result.Amount);
+        Assert.Equal("RFN-1", result.RefundReference);
+        Assert.NotNull(capturedRequest);
+        Assert.Contains("/transaction?async=false", capturedRequest!.RequestUri!.AbsoluteUri, StringComparison.Ordinal);
+        var body = await capturedRequest.Content!.ReadAsStringAsync();
+        Assert.Equal("P", ReadNestedJsonString(body, "Request", "TxnType"));
+        Assert.Equal("1000", ReadNestedJsonString(body, "Request", "AmtPurchase"));
+        Assert.Equal("TXN-1", ReadNestedJsonString(body, "Request", "TxnRef"));
+    }
+
+    [Theory]
+    [InlineData(HttpStatusCode.Accepted)]
+    [InlineData(HttpStatusCode.RequestTimeout)]
+    [InlineData(HttpStatusCode.InternalServerError)]
+    public async Task GetTransactionAsync_treats_recoverable_status_as_pending(HttpStatusCode statusCode)
+    {
+        var client = new LinklyCloudApiClient(new HttpClient(new StubHttpMessageHandler(_ =>
+            TextResponse(statusCode, string.Empty))));
+
+        var result = await client.GetTransactionAsync(CreateCloudSettings(), "bearer-token", "session-1");
+
+        Assert.Equal("session-1", result.SessionId);
+        Assert.Equal(LinklyCloudTransactionOutcome.Pending, result.Outcome);
+    }
+
+    [Fact]
+    public async Task GetTransactionAsync_treats_not_found_as_not_submitted()
+    {
+        var client = new LinklyCloudApiClient(new HttpClient(new StubHttpMessageHandler(_ =>
+            TextResponse(HttpStatusCode.NotFound, string.Empty))));
+
+        var result = await client.GetTransactionAsync(CreateCloudSettings(), "bearer-token", "session-1");
+
+        Assert.Equal("session-1", result.SessionId);
+        Assert.Equal(LinklyCloudTransactionOutcome.NotSubmitted, result.Outcome);
+    }
+
+    private static CardTerminalSettings CreateCloudSettings()
+    {
+        return CardTerminalSettings.FromEnvironment() with
+        {
+            LinklyConnectionMode = LinklyConnectionMode.Cloud,
+            LinklyCloudSecret = "paired-secret",
+            LinklyCloudAuthBaseUrl = "https://auth.example/v1/",
+            LinklyCloudRestBaseUrl = "https://rest.example/v1/",
+            LinklyPosName = "HotBargainPOS",
+            LinklyPosVersion = "2026.5.1",
+            LinklyPosVendorId = "a256b7ec-709d-4c7d-8ffe-57cc7ca1fd22"
+        };
+    }
+
+    private static HttpResponseMessage JsonResponse(string json)
+    {
+        return new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            Content = new StringContent(json, Encoding.UTF8, "application/json")
+        };
+    }
+
+    private static HttpResponseMessage TextResponse(HttpStatusCode statusCode, string text)
+    {
+        return new HttpResponseMessage(statusCode)
+        {
+            Content = new StringContent(text, Encoding.UTF8, "text/plain")
+        };
+    }
+
+    private static HttpRequestMessage CloneRequestWithBody(HttpRequestMessage request)
+    {
+        var clone = new HttpRequestMessage(request.Method, request.RequestUri);
+        clone.Headers.Authorization = request.Headers.Authorization;
+        if (request.Content is not null)
+        {
+            clone.Content = new StringContent(
+                request.Content.ReadAsStringAsync().GetAwaiter().GetResult(),
+                Encoding.UTF8,
+                "application/json");
+        }
+
+        return clone;
+    }
+
+    private static string? ReadJsonString(string json, string propertyName)
+    {
+        using var document = JsonDocument.Parse(json);
+        return document.RootElement.GetProperty(propertyName).ValueKind == JsonValueKind.Number
+            ? document.RootElement.GetProperty(propertyName).GetRawText()
+            : document.RootElement.GetProperty(propertyName).GetString();
+    }
+
+    private static string? ReadNestedJsonString(string json, string objectName, string propertyName)
+    {
+        using var document = JsonDocument.Parse(json);
+        var value = document.RootElement.GetProperty(objectName).GetProperty(propertyName);
+        return value.ValueKind == JsonValueKind.Number ? value.GetRawText() : value.GetString();
+    }
+
+    private sealed class StubHttpMessageHandler(
+        Func<HttpRequestMessage, HttpResponseMessage> handler) : HttpMessageHandler
+    {
+        protected override Task<HttpResponseMessage> SendAsync(
+            HttpRequestMessage request,
+            CancellationToken cancellationToken)
+        {
+            return Task.FromResult(handler(request));
+        }
+    }
+
+    private sealed class ConsoleLogCapture : IDisposable
+    {
+        private readonly List<string> _lines = [];
+
+        public ConsoleLogCapture()
+        {
+            ConsoleLog.LineWritten += OnLineWritten;
+        }
+
+        public IReadOnlyList<string> Lines
+        {
+            get
+            {
+                lock (_lines)
+                {
+                    return _lines.ToArray();
+                }
+            }
+        }
+
+        public void Dispose()
+        {
+            ConsoleLog.LineWritten -= OnLineWritten;
+        }
+
+        private void OnLineWritten(string line)
+        {
+            lock (_lines)
+            {
+                _lines.Add(line);
+            }
+        }
+    }
+}

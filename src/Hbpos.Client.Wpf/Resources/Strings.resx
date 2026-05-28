@@ -125,7 +125,7 @@
   <data name="pos.terminal.actions.wholeOrderToggle" xml:space="preserve"><value>Whole Order</value></data>
   <data name="pos.terminal.actions.specialItems" xml:space="preserve"><value>Special Items</value></data>
   <data name="pos.terminal.actions.switchUser" xml:space="preserve"><value>Switch User</value></data>
-  <data name="pos.terminal.actions.reregisterDevice" xml:space="preserve"><value>Re-register Device</value></data>
+  <data name="pos.terminal.actions.reregisterDevice" xml:space="preserve"><value>Change Store Registration</value></data>
   <data name="pos.terminal.inputBuffer" xml:space="preserve"><value>Input Buffer</value></data>
   <data name="pos.terminal.quickHalf" xml:space="preserve"><value>0.5</value></data>
   <data name="pos.terminal.quickNinetyNine" xml:space="preserve"><value>0.99</value></data>
@@ -151,6 +151,8 @@
   <data name="pos.status.orderDiscountUpdated" xml:space="preserve"><value>Order discount applied.</value></data>
 
   <data name="payment.title" xml:space="preserve"><value>Payment</value></data>
+  <data name="payment.refund.title" xml:space="preserve"><value>Refund</value></data>
+  <data name="payment.zeroSettlement.title" xml:space="preserve"><value>Zero Settlement</value></data>
   <data name="payment.cash.title" xml:space="preserve"><value>Payment</value></data>
   <data name="payment.cash.orderSummary" xml:space="preserve"><value>Current order</value></data>
   <data name="payment.cash.amountTendered" xml:space="preserve"><value>Amount Tendered</value></data>
@@ -164,11 +166,15 @@
   <data name="payment.method.cash" xml:space="preserve"><value>Cash</value></data>
   <data name="payment.method.card" xml:space="preserve"><value>Credit/Debit Card</value></data>
   <data name="payment.method.voucher" xml:space="preserve"><value>Voucher</value></data>
+  <data name="payment.method.refundCash" xml:space="preserve"><value>Refund Cash</value></data>
+  <data name="payment.method.refundCard" xml:space="preserve"><value>Refund Card</value></data>
+  <data name="payment.method.refundVoucher" xml:space="preserve"><value>Refund Voucher</value></data>
   <data name="payment.method.account" xml:space="preserve"><value>Credit Account</value></data>
   <data name="payment.method.installment" xml:space="preserve"><value>Installment</value></data>
   <data name="payment.action.addCash" xml:space="preserve"><value>Add Cash Tender</value></data>
   <data name="payment.voucher.code" xml:space="preserve"><value>Voucher code</value></data>
   <data name="payment.remaining" xml:space="preserve"><value>Remaining</value></data>
+  <data name="payment.refund.remaining" xml:space="preserve"><value>Refund Remaining</value></data>
   <data name="payment.status.tenderAdded" xml:space="preserve"><value>Payment tender added.</value></data>
   <data name="payment.status.nonCashAlreadyCoversOrder" xml:space="preserve"><value>Non-cash payments already cover this order.</value></data>
   <data name="payment.voucher.status.notConfigured" xml:space="preserve"><value>Voucher service is not configured.</value></data>
@@ -239,6 +245,10 @@
   <data name="shell.sync.close" xml:space="preserve"><value>Close sync center</value></data>
   <data name="shell.sync.retry" xml:space="preserve"><value>Retry</value></data>
   <data name="shell.sync.retryAll" xml:space="preserve"><value>Retry All</value></data>
+  <data name="shell.sync.retryingOne" xml:space="preserve"><value>Retrying order upload...</value></data>
+  <data name="shell.sync.retryingAll" xml:space="preserve"><value>Retrying order uploads...</value></data>
+  <data name="shell.sync.retryCompleted" xml:space="preserve"><value>Order upload retry completed: {0} succeeded, {1} failed.</value></data>
+  <data name="shell.sync.retryFailed" xml:space="preserve"><value>Order upload retry failed: {0}</value></data>
   <data name="shell.sync.caption" xml:space="preserve"><value>Shows failed, pending, and syncing order uploads.</value></data>
   <data name="shell.sync.created" xml:space="preserve"><value>Created:</value></data>
   <data name="shell.sync.lastAttempt" xml:space="preserve"><value>Last attempt:</value></data>
@@ -309,10 +319,17 @@
   <data name="payment.method" xml:space="preserve"><value>Payment Method</value></data>
   <data name="payment.appliedTenders" xml:space="preserve"><value>Applied Tenders</value></data>
   <data name="payment.addTender" xml:space="preserve"><value>Add Tender</value></data>
+  <data name="payment.refund.addTender" xml:space="preserve"><value>Add Refund</value></data>
   <data name="payment.confirm" xml:space="preserve"><value>Complete Payment</value></data>
+  <data name="payment.refund.confirm" xml:space="preserve"><value>Complete Refund</value></data>
+  <data name="payment.zeroSettlement.confirm" xml:space="preserve"><value>Complete Zero Settlement</value></data>
   <data name="payment.noTenders" xml:space="preserve"><value>No tenders added yet.</value></data>
+  <data name="payment.refund.noTenders" xml:space="preserve"><value>No refund tenders added yet.</value></data>
+  <data name="payment.zeroSettlement.noTenders" xml:space="preserve"><value>No payment is required for this order.</value></data>
   <data name="payment.orderSummary" xml:space="preserve"><value>Current order</value></data>
   <data name="payment.status.ready" xml:space="preserve"><value>Add payment tenders until the order is fully paid.</value></data>
+  <data name="payment.refund.status.ready" xml:space="preserve"><value>Add refund tenders until the refund is fully covered.</value></data>
+  <data name="payment.zeroSettlement.status.ready" xml:space="preserve"><value>This order balances to zero. Complete the order without adding a tender.</value></data>
   <data name="payment.status.invalidAmount" xml:space="preserve"><value>Enter a valid payment amount.</value></data>
   <data name="payment.status.alreadyFullyPaid" xml:space="preserve"><value>The order is already fully paid.</value></data>
   <data name="payment.status.cashTenderAdded" xml:space="preserve"><value>Cash tender added.</value></data>
@@ -326,6 +343,8 @@
   <data name="payment.status.unsupportedMethod" xml:space="preserve"><value>This payment method is not supported.</value></data>
   <data name="payment.status.noTendersAdded" xml:space="preserve"><value>Add at least one tender before completing payment.</value></data>
   <data name="payment.status.remainingBalance" xml:space="preserve"><value>The order must be fully paid before completion.</value></data>
+  <data name="payment.refund.status.noTendersAdded" xml:space="preserve"><value>Add at least one refund tender before completing the refund.</value></data>
+  <data name="payment.refund.status.remainingBalance" xml:space="preserve"><value>The refund must be fully covered before completion.</value></data>
   <data name="payment.status.duplicateVoucher" xml:space="preserve"><value>This voucher has already been added.</value></data>
   <data name="payment.status.voucherCodeRequired" xml:space="preserve"><value>Enter a voucher code before adding voucher payment.</value></data>
   <data name="payment.status.duplicatePaymentMethod" xml:space="preserve"><value>This payment method has already been added.</value></data>
@@ -339,6 +358,8 @@
   <data name="shell.page.loading" xml:space="preserve"><value>Loading</value></data>
   <data name="shell.page.pos" xml:space="preserve"><value>POS</value></data>
   <data name="shell.page.payment" xml:space="preserve"><value>Payment</value></data>
+  <data name="shell.page.refund" xml:space="preserve"><value>Refund</value></data>
+  <data name="shell.page.zeroSettlement" xml:space="preserve"><value>Zero Settlement</value></data>
   <data name="shell.page.specialProducts" xml:space="preserve"><value>Special Items</value></data>
   <data name="shell.page.returns" xml:space="preserve"><value>Returns</value></data>
   <data name="shell.page.paymentSuccess" xml:space="preserve"><value>Payment Success</value></data>
