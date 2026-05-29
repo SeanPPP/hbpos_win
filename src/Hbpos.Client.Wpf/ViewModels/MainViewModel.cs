@@ -921,7 +921,6 @@ public sealed partial class MainViewModel : ObservableObject
                 _cashPaymentWorkflowService,
                 Session,
                 _localization);
-            CashPayment.PaymentCancelled += (_, _) => ShowPos();
             CashPayment.PaymentCompleted += OnPaymentCompleted;
             CashPayment.PropertyChanged += OnCashPaymentPropertyChanged;
         }

@@ -2130,6 +2130,22 @@ public sealed class PosTerminalCashPaymentViewModelTests
     }
 
     [Fact]
+    public void Payment_page_hides_cancel_entry_and_does_not_raise_navigation_cancel_during_regular_entry()
+    {
+        var cart = new PosCartService();
+        cart.AddItem(CreateItem("SKU-153", "Regular Tea", "930153", PriceSourceKind.StoreRetailPrice, 10m));
+        var workflow = new FakeCashPaymentWorkflowService();
+        var viewModel = new PaymentViewModel(cart, workflow, Session);
+
+        Assert.False(viewModel.IsCancelPaymentVisible);
+        Assert.False(viewModel.CancelCommand.CanExecute(null));
+
+        viewModel.CancelCommand.Execute(null);
+
+        Assert.False(viewModel.IsCancelPaymentVisible);
+    }
+
+    [Fact]
     public async Task Payment_page_locks_interactions_while_card_payment_is_pending()
     {
         var cart = new PosCartService();
@@ -2146,6 +2162,7 @@ public sealed class PosTerminalCashPaymentViewModelTests
 
         Assert.True(viewModel.IsCardPaymentInProgress);
         Assert.True(viewModel.IsPaymentInteractionLocked);
+        Assert.True(viewModel.IsCancelPaymentVisible);
         Assert.False(viewModel.NumberInputCommand.CanExecute("1"));
         Assert.False(viewModel.SelectCashCommand.CanExecute(null));
         Assert.False(viewModel.SelectCardCommand.CanExecute(null));
@@ -2161,6 +2178,7 @@ public sealed class PosTerminalCashPaymentViewModelTests
 
         Assert.False(viewModel.IsCardPaymentInProgress);
         Assert.False(viewModel.IsPaymentInteractionLocked);
+        Assert.False(viewModel.IsCancelPaymentVisible);
         Assert.Single(viewModel.PaymentTenders);
     }
 
@@ -2175,8 +2193,6 @@ public sealed class PosTerminalCashPaymentViewModelTests
             AddTenderResult = new(TaskCreationOptions.RunContinuationsAsynchronously)
         };
         var viewModel = new PaymentViewModel(cart, workflow, Session);
-        var cancelledNavigation = false;
-        viewModel.PaymentCancelled += (_, _) => cancelledNavigation = true;
 
         var paymentTask = viewModel.SelectCardCommand.ExecuteAsync(null);
         await workflow.AddTenderStarted.Task;
@@ -2184,11 +2200,43 @@ public sealed class PosTerminalCashPaymentViewModelTests
         viewModel.CancelCommand.Execute(null);
         await paymentTask;
 
-        Assert.False(cancelledNavigation);
         Assert.Empty(viewModel.PaymentTenders);
         Assert.False(viewModel.IsCardPaymentInProgress);
+        Assert.False(viewModel.IsCancelPaymentVisible);
         Assert.True(viewModel.SelectCardCommand.CanExecute(null));
         Assert.Equal("payment.status.cardCancelled", viewModel.StatusMessage);
+    }
+
+    [Fact]
+    public async Task Payment_page_keeps_late_card_approval_when_second_cancel_is_not_requested()
+    {
+        var cart = new PosCartService();
+        cart.AddItem(CreateItem("SKU-156", "Late Approval Tea", "930156", PriceSourceKind.StoreRetailPrice, 10m));
+        var workflow = new FakeCashPaymentWorkflowService
+        {
+            AddTenderStarted = new(TaskCreationOptions.RunContinuationsAsynchronously),
+            AddTenderResult = new(TaskCreationOptions.RunContinuationsAsynchronously),
+            IgnoreCancellation = true
+        };
+        var viewModel = new PaymentViewModel(cart, workflow, Session);
+
+        var paymentTask = viewModel.SelectCardCommand.ExecuteAsync(null);
+        await workflow.AddTenderStarted.Task;
+
+        viewModel.CancelCommand.Execute(null);
+
+        Assert.True(viewModel.IsCancelPaymentVisible);
+        Assert.True(viewModel.CancelCommand.CanExecute(null));
+
+        workflow.AddTenderResult.SetResult(PaymentTenderAttemptResult.Success(
+            new PaymentTender(PaymentMethodKind.Card, 10m, "CARD-LATE-APPROVED"),
+            "payment.status.cardTenderAdded"));
+        await paymentTask;
+
+        var tender = Assert.Single(viewModel.PaymentTenders);
+        Assert.Equal(PaymentMethodKind.Card, tender.Method);
+        Assert.False(viewModel.IsCancelPaymentVisible);
+        Assert.Equal("payment.status.cardTenderAdded", viewModel.StatusMessage);
     }
 
     [Fact]
@@ -2203,8 +2251,6 @@ public sealed class PosTerminalCashPaymentViewModelTests
             IgnoreCancellation = true
         };
         var viewModel = new PaymentViewModel(cart, workflow, Session);
-        var cancelledNavigation = false;
-        viewModel.PaymentCancelled += (_, _) => cancelledNavigation = true;
 
         var paymentTask = viewModel.SelectCardCommand.ExecuteAsync(null);
         await workflow.AddTenderStarted.Task;
@@ -2213,6 +2259,7 @@ public sealed class PosTerminalCashPaymentViewModelTests
 
         Assert.False(viewModel.IsCardPaymentInProgress);
         Assert.False(viewModel.IsPaymentInteractionLocked);
+        Assert.True(viewModel.IsCancelPaymentVisible);
         Assert.False(viewModel.SelectCardCommand.CanExecute(null));
         Assert.False(viewModel.AddTenderCommand.CanExecute(null));
         Assert.False(viewModel.ConfirmPaymentCommand.CanExecute(null));
@@ -2220,14 +2267,13 @@ public sealed class PosTerminalCashPaymentViewModelTests
 
         viewModel.CancelCommand.Execute(null);
 
-        Assert.True(cancelledNavigation);
-
         workflow.AddTenderResult.SetResult(PaymentTenderAttemptResult.Success(
             new PaymentTender(PaymentMethodKind.Card, 10m, "CARD-LATE"),
             "payment.status.cardTenderAdded"));
         await paymentTask;
 
         Assert.Empty(viewModel.PaymentTenders);
+        Assert.False(viewModel.IsCancelPaymentVisible);
         Assert.Equal("payment.status.cardCancelled", viewModel.StatusMessage);
     }
 
@@ -2379,6 +2425,7 @@ public sealed class PosTerminalCashPaymentViewModelTests
 
         Assert.Empty(viewModel.PaymentTenders);
         Assert.False(viewModel.IsCardPaymentInProgress);
+        Assert.False(viewModel.IsCancelPaymentVisible);
         Assert.True(viewModel.SelectCardCommand.CanExecute(null));
         Assert.Equal("payment.status.cardTimedOut", viewModel.StatusMessage);
     }
@@ -2401,6 +2448,7 @@ public sealed class PosTerminalCashPaymentViewModelTests
 
         Assert.Empty(viewModel.PaymentTenders);
         Assert.False(viewModel.IsCardPaymentInProgress);
+        Assert.False(viewModel.IsCancelPaymentVisible);
         Assert.True(viewModel.SelectCardCommand.CanExecute(null));
         Assert.Equal("payment.status.cardTimedOut", viewModel.StatusMessage);
     }

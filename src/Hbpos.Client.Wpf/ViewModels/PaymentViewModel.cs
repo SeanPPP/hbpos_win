@@ -131,7 +131,6 @@ public partial class PaymentViewModel : ObservableObject
 
     public event EventHandler<PaymentCompletedEventArgs>? PaymentCompleted;
 
-    public event EventHandler? PaymentCancelled;
 
     public string ScreenTitleText => T(GetScreenTitleKey());
 
@@ -168,6 +167,9 @@ public partial class PaymentViewModel : ObservableObject
     public string StatusMessage => _statusTextOverride ?? T(_statusKey);
 
     public bool IsPaymentInteractionEnabled => !IsPaymentInteractionLocked;
+
+    // 普通支付状态隐藏取消入口，避免将取消误用为返回收银页。
+    public bool IsCancelPaymentVisible => IsCardPaymentInProgress || _awaitingLateCardResultAfterManualCancel;
 
     public decimal TotalAmount => _cart.TotalAmount;
 
@@ -832,18 +834,13 @@ public partial class PaymentViewModel : ObservableObject
         {
             _discardLateCardResultAfterManualCancel = true;
             NotifyPaymentCommandStates();
-            PaymentCancelled?.Invoke(this, EventArgs.Empty);
-            return;
         }
-
-        PaymentCancelled?.Invoke(this, EventArgs.Empty);
     }
 
     private bool CanCancelPayment()
     {
         return IsCardPaymentInProgress ||
-            _awaitingLateCardResultAfterManualCancel ||
-            (IsPaymentInteractionEnabled && _activeCardPaymentCts is null);
+            _awaitingLateCardResultAfterManualCancel;
     }
 
     private void CancelActiveCardPayment()
@@ -1179,6 +1176,7 @@ public partial class PaymentViewModel : ObservableObject
         RemoveTenderCommand.NotifyCanExecuteChanged();
         ConfirmPaymentCommand.NotifyCanExecuteChanged();
         CancelCommand.NotifyCanExecuteChanged();
+        OnPropertyChanged(nameof(IsCancelPaymentVisible));
         OnPropertyChanged(nameof(IsConfirmPaymentVisible));
     }
 

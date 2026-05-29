@@ -98,17 +98,7 @@
 
             <Border Grid.Row="0" Padding="20,16" Background="{StaticResource PosScreenBackgroundBrush}">
                 <StackPanel>
-                    <Button Command="{Binding CancelCommand}"
-                            Style="{StaticResource PosSecondaryButtonStyle}"
-                            HorizontalAlignment="Left"
-                            MinHeight="38"
-                            Padding="14,0">
-                        <StackPanel Orientation="Horizontal">
-                            <materialDesign:PackIcon Kind="ArrowLeft" Width="16" Height="16" Margin="0,0,6,0" />
-                            <TextBlock Text="{loc:Loc shell.backToPos}" FontWeight="Bold" />
-                        </StackPanel>
-                    </Button>
-                    <StackPanel Orientation="Horizontal" Margin="0,6,0,0">
+                    <StackPanel Orientation="Horizontal">
                         <Border Padding="8,3" Background="#1A0056D2" CornerRadius="4">
                             <TextBlock FontSize="10" FontWeight="Bold" Foreground="{StaticResource PosPrimaryBrush}">
                                 <Run Text="{Binding CartLines.Count, Mode=OneWay}" />
@@ -308,32 +298,37 @@
             <Grid Grid.Row="4" Margin="16,0,16,18">
                 <Grid.ColumnDefinitions>
                     <ColumnDefinition Width="*" />
-                    <ColumnDefinition Width="1.2*" />
-                    <ColumnDefinition Width="1.2*" />
+                    <ColumnDefinition Width="1.8*" />
                 </Grid.ColumnDefinitions>
-                <Button Command="{Binding CancelCommand}" Height="50" Style="{StaticResource PosSecondaryButtonStyle}" Margin="0,0,8,0">
-                    <StackPanel Orientation="Horizontal">
-                        <materialDesign:PackIcon Kind="ArrowLeft" Width="18" Height="18" Margin="0,0,8,0" />
-                        <TextBlock Text="{Binding CancelText}" FontWeight="Bold" />
-                    </StackPanel>
-                </Button>
-                <Button Grid.Column="1" Command="{Binding AddTenderCommand}" Height="50" Margin="8,0,8,0">
+                <Button Command="{Binding CancelCommand}" Height="50" Margin="0,0,8,0">
                     <Button.Style>
                         <Style TargetType="Button" BasedOn="{StaticResource PosSecondaryButtonStyle}">
-                            <Setter Property="Visibility" Value="Visible" />
+                            <Setter Property="Visibility" Value="Collapsed" />
                             <Style.Triggers>
-                                <DataTrigger Binding="{Binding IsTenderEntryVisible}" Value="False">
-                                    <Setter Property="Visibility" Value="Collapsed" />
+                                <DataTrigger Binding="{Binding IsCancelPaymentVisible}" Value="True">
+                                    <Setter Property="Visibility" Value="Visible" />
                                 </DataTrigger>
                             </Style.Triggers>
                         </Style>
                     </Button.Style>
-                    <StackPanel Orientation="Horizontal">
-                        <materialDesign:PackIcon Kind="PlusCircle" Width="20" Height="20" Margin="0,0,8,0" />
-                        <TextBlock Text="{Binding AddTenderText}" FontWeight="Black" />
-                    </StackPanel>
+                    <TextBlock Text="{Binding CancelText}" FontWeight="Bold" HorizontalAlignment="Center" />
                 </Button>
-                <Button Grid.Column="2" Command="{Binding ConfirmPaymentCommand}" Height="50" Style="{StaticResource PosPrimaryButtonStyle}" Margin="8,0,0,0">
+                <Button Command="{Binding ConfirmPaymentCommand}"
+                        Height="50">
+                    <Button.Style>
+                        <Style TargetType="Button" BasedOn="{StaticResource PosPrimaryButtonStyle}">
+                            <Setter Property="Grid.Column" Value="0" />
+                            <Setter Property="Grid.ColumnSpan" Value="2" />
+                            <Setter Property="Margin" Value="0" />
+                            <Style.Triggers>
+                                <DataTrigger Binding="{Binding IsCancelPaymentVisible}" Value="True">
+                                    <Setter Property="Grid.Column" Value="1" />
+                                    <Setter Property="Grid.ColumnSpan" Value="1" />
+                                    <Setter Property="Margin" Value="8,0,0,0" />
+                                </DataTrigger>
+                            </Style.Triggers>
+                        </Style>
+                    </Button.Style>
                     <StackPanel Orientation="Horizontal">
                         <materialDesign:PackIcon Kind="CheckCircle" Width="22" Height="22" Foreground="White" Margin="0,0,10,0" />
                         <TextBlock Text="{Binding ConfirmPaymentText}" Foreground="White" FontSize="16" FontWeight="Black" />
