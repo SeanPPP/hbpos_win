@@ -1,7 +1,10 @@
+using System.Text.Json;
 using BlazorApp.Shared.Models.POSM;
 using Hbpos.Api.Data;
 using Hbpos.Contracts.Orders;
+using Microsoft.Extensions.Logging;
 using SqlSugar;
+using System.Diagnostics;
 using StoreVoucherEntity = BlazorApp.Service.Models.HBPOSM_POSM.StoreVoucher;
 
 namespace Hbpos.Api.Services;
@@ -14,26 +17,41 @@ public interface IOrderSyncService
 public sealed class OrderSyncService(
     IOrderRepository repository,
     IOrderSyncPlanner planner,
-    IStoreVoucherReservationService reservationService) : IOrderSyncService
+    IStoreVoucherReservationService reservationService,
+    ILogger<OrderSyncService>? logger = null) : IOrderSyncService
 {
     public async Task<OrderSyncResponse> SyncAsync(
         OrderSyncRequest request,
         CancellationToken cancellationToken)
     {
+        var stopwatch = Stopwatch.StartNew();
+        Log(
+            $"service start orderGuid={request.OrderGuid:D} store={request.StoreCode} device={request.DeviceCode} " +
+            $"lines={request.Lines.Count} payments={request.Payments.Count}");
         if (await repository.ExistsAsync(request.OrderGuid, cancellationToken))
         {
+            Log($"service completed orderGuid={request.OrderGuid:D} status=already-synced elapsedMs={stopwatch.ElapsedMilliseconds}");
             return new OrderSyncResponse(request.OrderGuid, true, true, "AlreadySynced");
         }
 
         var voucherRedemptions = await BuildVoucherRedemptionsAsync(request, cancellationToken);
+        Log($"voucher redemptions prepared orderGuid={request.OrderGuid:D} count={voucherRedemptions.Count}");
         var plan = planner.CreatePlan(request);
+        Log(
+            $"plan created orderGuid={request.OrderGuid:D} saleLines={plan.Lines.Count} payments={plan.Payments.Count} " +
+            $"bankTransactions={plan.BankTransactions.Count} returns={plan.ReturnRecords.Count}");
         await repository.InsertAsync(plan, voucherRedemptions, cancellationToken);
+        Log($"repository insert completed orderGuid={request.OrderGuid:D}");
 
         foreach (var redemption in voucherRedemptions)
         {
             await reservationService.ConsumeAsync(redemption.ReservationToken, cancellationToken);
+            Log(
+                $"voucher reservation consumed orderGuid={request.OrderGuid:D} token={ShortToken(redemption.ReservationToken)} " +
+                $"voucher={redemption.VoucherCode} amount={redemption.Amount}");
         }
 
+        Log($"service completed orderGuid={request.OrderGuid:D} status=synced elapsedMs={stopwatch.ElapsedMilliseconds}");
         return new OrderSyncResponse(request.OrderGuid, true, false, "Synced");
     }
 
@@ -56,6 +74,7 @@ public sealed class OrderSyncService(
         {
             if (payment.Amount < 0m)
             {
+                Log($"voucher redemption skipped orderGuid={request.OrderGuid:D} reason=refund-payment paymentGuid={payment.PaymentGuid:D} amount={payment.Amount}");
                 continue;
             }
 
@@ -94,6 +113,22 @@ public sealed class OrderSyncService(
         return redemptions;
     }
 
+    private void Log(string message)
+    {
+        logger?.LogInformation("OrderSyncService {Message}", message);
+    }
+
+    private static string ShortToken(string? token)
+    {
+        if (string.IsNullOrWhiteSpace(token))
+        {
+            return "<null>";
+        }
+
+        var trimmed = token.Trim();
+        return trimmed.Length <= 8 ? trimmed : $"{trimmed[..8]}...";
+    }
+
     private static string NormalizeRequired(string? value, string message)
     {
         if (string.IsNullOrWhiteSpace(value))
@@ -120,8 +155,12 @@ public sealed record StoreVoucherRedemptionCommit(
     string ReservationToken,
     decimal Amount);
 
-public sealed class SqlSugarOrderRepository(HbposSqlSugarContext dbContext) : IOrderRepository
+public sealed class SqlSugarOrderRepository(
+    HbposSqlSugarContext dbContext,
+    ILogger<SqlSugarOrderRepository> logger) : IOrderRepository
 {
+    private const int LogPreviewMaxLength = 80;
+
     public async Task<bool> ExistsAsync(Guid orderGuid, CancellationToken cancellationToken)
     {
         var orderGuidText = orderGuid.ToString("D");
@@ -134,6 +173,15 @@ public sealed class SqlSugarOrderRepository(HbposSqlSugarContext dbContext) : IO
         IReadOnlyList<StoreVoucherRedemptionCommit> voucherRedemptions,
         CancellationToken cancellationToken)
     {
+        var stopwatch = Stopwatch.StartNew();
+        logger.LogInformation(
+            "OrderSyncRepository insert start OrderGuid={OrderGuid} Lines={LineCount} Payments={PaymentCount} BankTransactions={BankTransactionCount} Returns={ReturnCount} Vouchers={VoucherCount}",
+            plan.Order.OrderGuid,
+            plan.Lines.Count,
+            plan.Payments.Count,
+            plan.BankTransactions.Count,
+            plan.ReturnRecords.Count,
+            voucherRedemptions.Count);
         var db = dbContext.PosmDb;
         if (plan.ReturnRecords.Count > 0)
         {
@@ -151,6 +199,10 @@ public sealed class SqlSugarOrderRepository(HbposSqlSugarContext dbContext) : IO
 
             if (existing)
             {
+                logger.LogInformation(
+                    "OrderSyncRepository insert skipped OrderGuid={OrderGuid} Reason=already-exists ElapsedMs={ElapsedMs}",
+                    plan.Order.OrderGuid,
+                    stopwatch.ElapsedMilliseconds);
                 await db.Ado.CommitTranAsync();
                 return;
             }
@@ -158,12 +210,24 @@ public sealed class SqlSugarOrderRepository(HbposSqlSugarContext dbContext) : IO
             if (voucherRedemptions.Count > 0)
             {
                 await ApplyVoucherPaymentsAsync(db, plan, voucherRedemptions, cancellationToken);
+                logger.LogInformation(
+                    "OrderSyncRepository voucher apply completed OrderGuid={OrderGuid} VoucherCount={VoucherCount}",
+                    plan.Order.OrderGuid,
+                    voucherRedemptions.Count);
             }
 
             await db.Insertable(plan.Order).ExecuteCommandAsync(cancellationToken);
             if (plan.Lines.Count > 0)
             {
-                await db.Insertable(plan.Lines.ToList()).ExecuteCommandAsync(cancellationToken);
+                try
+                {
+                    await db.Insertable(plan.Lines.ToList()).ExecuteCommandAsync(cancellationToken);
+                }
+                catch (Exception ex)
+                {
+                    LogSalesOrderDetailInsertFailure(logger, ex, plan);
+                    throw;
+                }
             }
 
             if (plan.Payments.Count > 0)
@@ -187,10 +251,23 @@ public sealed class SqlSugarOrderRepository(HbposSqlSugarContext dbContext) : IO
             }
 
             await db.Ado.CommitTranAsync();
+            logger.LogInformation(
+                "OrderSyncRepository insert completed OrderGuid={OrderGuid} Lines={LineCount} Payments={PaymentCount} BankTransactions={BankTransactionCount} Returns={ReturnCount} ElapsedMs={ElapsedMs}",
+                plan.Order.OrderGuid,
+                plan.Lines.Count,
+                plan.Payments.Count,
+                plan.BankTransactions.Count,
+                plan.ReturnRecords.Count,
+                stopwatch.ElapsedMilliseconds);
         }
-        catch
+        catch (Exception ex)
         {
             await db.Ado.RollbackTranAsync();
+            logger.LogError(
+                ex,
+                "OrderSyncRepository insert failed OrderGuid={OrderGuid} ElapsedMs={ElapsedMs}",
+                plan.Order.OrderGuid,
+                stopwatch.ElapsedMilliseconds);
             throw;
         }
     }
@@ -236,6 +313,64 @@ public sealed class SqlSugarOrderRepository(HbposSqlSugarContext dbContext) : IO
         }
     }
 
+    internal static IReadOnlyList<SalesOrderDetailInsertDiagnostic> BuildSalesOrderDetailDiagnostics(
+        IReadOnlyList<SalesOrderDetail> lines)
+    {
+        return lines.Select(line => new SalesOrderDetailInsertDiagnostic(
+                line.OrderDetailGuid,
+                BuildTextDiagnostic(line.ProductCode),
+                BuildTextDiagnostic(line.ReferenceGUID),
+                BuildTextDiagnostic(line.ProductName),
+                BuildTextDiagnostic(line.Barcode),
+                BuildTextDiagnostic(line.Remark),
+                BuildTextDiagnostic(line.CreatedBy),
+                BuildTextDiagnostic(line.UpdatedBy)))
+            .ToList();
+    }
+
+    internal static string BuildSalesOrderDetailDiagnosticsText(IReadOnlyList<SalesOrderDetail> lines)
+    {
+        return JsonSerializer.Serialize(BuildSalesOrderDetailDiagnostics(lines));
+    }
+
+    private static void LogSalesOrderDetailInsertFailure(
+        ILogger logger,
+        Exception exception,
+        OrderSyncPlan plan)
+    {
+        // 明细插入失败时保留字段长度和安全预览，便于定位数据库触发器字符串解析问题。
+        logger.LogError(
+            exception,
+            "Sales order detail insert failed. OrderGuid={OrderGuid} LineCount={LineCount} Stage={Stage} Lines={LineDiagnostics}",
+            plan.Order.OrderGuid,
+            plan.Lines.Count,
+            "sales_order_detail_insert",
+            BuildSalesOrderDetailDiagnosticsText(plan.Lines));
+    }
+
+    private static TextDiagnostic BuildTextDiagnostic(string? value)
+    {
+        return new TextDiagnostic(value?.Length ?? 0, Preview(value));
+    }
+
+    private static string Preview(string? value)
+    {
+        if (string.IsNullOrEmpty(value))
+        {
+            return string.Empty;
+        }
+
+        var preview = value.Length <= LogPreviewMaxLength
+            ? value
+            : value[..LogPreviewMaxLength];
+        return RemoveLogControlChars(preview);
+    }
+
+    private static string RemoveLogControlChars(string value)
+    {
+        return new string(value.Select(ch => char.IsControl(ch) ? ' ' : ch).ToArray());
+    }
+
     private static void ValidateVoucherForOrder(StoreVoucherEntity voucher, string storeCode)
     {
         if (voucher.IsDelete == true)
@@ -261,3 +396,15 @@ public sealed class SqlSugarOrderRepository(HbposSqlSugarContext dbContext) : IO
     }
 
 }
+
+internal sealed record TextDiagnostic(int Length, string Preview);
+
+internal sealed record SalesOrderDetailInsertDiagnostic(
+    string? OrderDetailGuid,
+    TextDiagnostic ProductCode,
+    TextDiagnostic ReferenceGUID,
+    TextDiagnostic ProductName,
+    TextDiagnostic Barcode,
+    TextDiagnostic Remark,
+    TextDiagnostic CreatedBy,
+    TextDiagnostic UpdatedBy);

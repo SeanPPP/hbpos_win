@@ -1,6 +1,7 @@
 using System.Net.Http;
 using System.Net.Http.Json;
 using System.Text.Json;
+using System.Diagnostics;
 using Hbpos.Client.Wpf.Models;
 using Hbpos.Contracts.Common;
 using Hbpos.Contracts.Orders;
@@ -27,22 +28,34 @@ public sealed class OrderUploadService(
 {
     public async Task UploadOrderAsync(Guid orderGuid, CancellationToken cancellationToken = default)
     {
+        var stopwatch = Stopwatch.StartNew();
+        Log($"upload start orderGuid={orderGuid:D}");
         var order = await orderRepository.GetOrderAsync(orderGuid, cancellationToken)
             ?? throw new InvalidOperationException("Order was not found for upload.");
         try
         {
             await uploadRepository.MarkSyncingAsync(orderGuid, cancellationToken);
-            var response = await apiClient.SyncAsync(ToRequest(order), cancellationToken);
+            Log(
+                $"mark syncing orderGuid={orderGuid:D} store={order.StoreCode} device={order.DeviceCode} " +
+                $"lines={order.Lines.Count} payments={order.Payments.Count} actualAmount={order.ActualAmount}");
+            var request = ToRequest(order);
+            var response = await apiClient.SyncAsync(request, cancellationToken);
             if (!response.Accepted)
             {
                 throw new InvalidOperationException(response.Message ?? "Order sync was not accepted.");
             }
 
             await uploadRepository.MarkSyncedAsync(orderGuid, cancellationToken);
+            Log(
+                $"upload completed orderGuid={orderGuid:D} accepted={response.Accepted} alreadySynced={response.AlreadySynced} " +
+                $"message={response.Message ?? "<null>"} elapsedMs={stopwatch.ElapsedMilliseconds}");
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
             await uploadRepository.MarkFailedAsync(orderGuid, ex.Message, cancellationToken);
+            Log(
+                $"upload failed orderGuid={orderGuid:D} error={ex.GetType().Name} message={ex.Message} " +
+                $"elapsedMs={stopwatch.ElapsedMilliseconds}");
             throw;
         }
     }
@@ -109,6 +122,11 @@ public sealed class OrderUploadService(
                 ? (parts[1], string.Empty)
             : (reference ?? string.Empty, string.Empty);
     }
+
+    private static void Log(string message)
+    {
+        ConsoleLog.Write("OrderSync", message);
+    }
 }
 
 public sealed class OrderUploadExecutionService(
@@ -117,24 +135,32 @@ public sealed class OrderUploadExecutionService(
 {
     public async Task<OrderUploadExecutionResult> ExecuteOneAsync(Guid orderGuid, CancellationToken cancellationToken = default)
     {
+        var stopwatch = Stopwatch.StartNew();
+        Log($"execute one start orderGuid={orderGuid:D}");
         try
         {
             await uploadService.UploadOrderAsync(orderGuid, cancellationToken);
+            Log($"execute one completed orderGuid={orderGuid:D} uploaded=1 failed=0 elapsedMs={stopwatch.ElapsedMilliseconds}");
             return new OrderUploadExecutionResult(1, 1, 0);
         }
         catch (OperationCanceledException)
         {
+            Log($"execute one canceled orderGuid={orderGuid:D} elapsedMs={stopwatch.ElapsedMilliseconds}");
             throw;
         }
-        catch
+        catch (Exception ex)
         {
+            Log($"execute one failed orderGuid={orderGuid:D} error={ex.GetType().Name} message={ex.Message} elapsedMs={stopwatch.ElapsedMilliseconds}");
             return new OrderUploadExecutionResult(1, 0, 1);
         }
     }
 
     public async Task<OrderUploadExecutionResult> ExecutePendingAsync(int batchSize = 20, CancellationToken cancellationToken = default)
     {
+        var stopwatch = Stopwatch.StartNew();
+        Log($"execute pending start batchSize={batchSize}");
         var orderGuids = await uploadRepository.GetPendingOrderGuidsAsync(batchSize, cancellationToken);
+        Log($"execute pending queued count={orderGuids.Count} batchSize={batchSize}");
         var uploadedCount = 0;
         var failedCount = 0;
 
@@ -145,18 +171,33 @@ public sealed class OrderUploadExecutionService(
             {
                 await uploadService.UploadOrderAsync(orderGuid, cancellationToken);
                 uploadedCount++;
+                Log($"execute pending item completed orderGuid={orderGuid:D} uploadedCount={uploadedCount} failedCount={failedCount}");
             }
             catch (OperationCanceledException)
             {
+                Log(
+                    $"execute pending canceled orderGuid={orderGuid:D} attempted={orderGuids.Count} uploaded={uploadedCount} " +
+                    $"failed={failedCount} elapsedMs={stopwatch.ElapsedMilliseconds}");
                 throw;
             }
-            catch
+            catch (Exception ex)
             {
                 failedCount++;
+                Log(
+                    $"execute pending item failed orderGuid={orderGuid:D} uploadedCount={uploadedCount} failedCount={failedCount} " +
+                    $"error={ex.GetType().Name} message={ex.Message}");
             }
         }
 
+        Log(
+            $"execute pending completed attempted={orderGuids.Count} uploaded={uploadedCount} failed={failedCount} " +
+            $"elapsedMs={stopwatch.ElapsedMilliseconds}");
         return new OrderUploadExecutionResult(orderGuids.Count, uploadedCount, failedCount);
+    }
+
+    private static void Log(string message)
+    {
+        ConsoleLog.Write("OrderSync", message);
     }
 }
 
@@ -190,6 +231,10 @@ public sealed class OrderSyncApiClient(HttpClient httpClient) : IOrderSyncApiCli
 
     public async Task<OrderSyncResponse> SyncAsync(OrderSyncRequest request, CancellationToken cancellationToken = default)
     {
+        var stopwatch = Stopwatch.StartNew();
+        Log(
+            $"http sync start orderGuid={request.OrderGuid:D} store={request.StoreCode} device={request.DeviceCode} " +
+            $"lines={request.Lines.Count} payments={request.Payments.Count}");
         using var response = await httpClient.PostAsJsonAsync("api/v1/orders/sync", request, JsonOptions, cancellationToken);
         var content = await response.Content.ReadAsStringAsync(cancellationToken);
         ApiResult<OrderSyncResponse>? result = null;
@@ -200,13 +245,25 @@ public sealed class OrderSyncApiClient(HttpClient httpClient) : IOrderSyncApiCli
 
         if (!response.IsSuccessStatusCode || result is null || !result.Success || result.Data is null)
         {
+            Log(
+                $"http sync failed orderGuid={request.OrderGuid:D} http={(int)response.StatusCode} " +
+                $"success={result?.Success.ToString() ?? "<null>"} errorCode={result?.ErrorCode ?? "<null>"} " +
+                $"message={result?.Message ?? "<null>"} elapsedMs={stopwatch.ElapsedMilliseconds}");
             throw new CatalogApiException(
                 result?.Message ?? $"Order sync failed with HTTP {(int)response.StatusCode}.",
                 response.StatusCode,
                 result?.ErrorCode);
         }
 
+        Log(
+            $"http sync completed orderGuid={request.OrderGuid:D} http={(int)response.StatusCode} accepted={result.Data.Accepted} " +
+            $"alreadySynced={result.Data.AlreadySynced} message={result.Data.Message ?? "<null>"} elapsedMs={stopwatch.ElapsedMilliseconds}");
         return result.Data;
+    }
+
+    private static void Log(string message)
+    {
+        ConsoleLog.Write("OrderSync", message);
     }
 }
 

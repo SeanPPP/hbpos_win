@@ -4,6 +4,8 @@ using Hbpos.Contracts.Common;
 using Hbpos.Contracts.Orders;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.Extensions.Logging;
+using System.Diagnostics;
 
 namespace Hbpos.Api.Controllers;
 
@@ -12,7 +14,8 @@ namespace Hbpos.Api.Controllers;
 public sealed class OrdersController(
     IOrderSyncService orderSyncService,
     IOrderHistoryService orderHistoryService,
-    IOrderReturnService orderReturnService) : ControllerBase
+    IOrderReturnService orderReturnService,
+    ILogger<OrdersController>? logger = null) : ControllerBase
 {
     [Authorize]
     [HttpPost("sync")]
@@ -20,30 +23,48 @@ public sealed class OrdersController(
         [FromBody] OrderSyncRequest request,
         CancellationToken cancellationToken)
     {
+        var stopwatch = Stopwatch.StartNew();
+        Log(
+            $"sync request start orderGuid={request.OrderGuid:D} store={request.StoreCode} device={request.DeviceCode} " +
+            $"lines={request.Lines.Count} payments={request.Payments.Count} actualAmount={request.ActualAmount}");
         if (!this.IsDeviceScopeAllowed(request.StoreCode, request.DeviceCode))
         {
+            Log($"sync request rejected orderGuid={request.OrderGuid:D} reason=device-scope-forbidden elapsedMs={stopwatch.ElapsedMilliseconds}");
             return DeviceAuthorizationExtensions.DeviceScopeForbidden<OrderSyncResponse>("Device is not authorized for this store.");
         }
 
         if (request.Lines.Count == 0)
         {
+            Log($"sync request rejected orderGuid={request.OrderGuid:D} reason=missing-lines elapsedMs={stopwatch.ElapsedMilliseconds}");
             return BadRequest(ApiResult<OrderSyncResponse>.Fail("ORDER_LINES_REQUIRED", "订单明细不能为空"));
         }
 
         if (request.ActualAmount != 0m && request.Payments.Count == 0)
         {
+            Log($"sync request rejected orderGuid={request.OrderGuid:D} reason=missing-payments elapsedMs={stopwatch.ElapsedMilliseconds}");
             return BadRequest(ApiResult<OrderSyncResponse>.Fail("ORDER_PAYMENTS_REQUIRED", "订单付款不能为空"));
         }
 
         try
         {
             var response = await orderSyncService.SyncAsync(request, cancellationToken);
+            Log(
+                $"sync request completed orderGuid={request.OrderGuid:D} accepted={response.Accepted} " +
+                $"alreadySynced={response.AlreadySynced} message={response.Message} elapsedMs={stopwatch.ElapsedMilliseconds}");
             return Ok(ApiResult<OrderSyncResponse>.Ok(response));
         }
         catch (InvalidOperationException ex)
         {
+            Log(
+                $"sync request invalid orderGuid={request.OrderGuid:D} error={ex.GetType().Name} " +
+                $"message={ex.Message} elapsedMs={stopwatch.ElapsedMilliseconds}");
             return BadRequest(ApiResult<OrderSyncResponse>.Fail("ORDER_SYNC_INVALID", ex.Message));
         }
+    }
+
+    private void Log(string message)
+    {
+        logger?.LogInformation("OrderSyncController {Message}", message);
     }
 
     [Authorize]
