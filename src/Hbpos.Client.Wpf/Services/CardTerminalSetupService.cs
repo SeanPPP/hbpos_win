@@ -1,3 +1,5 @@
+using Hbpos.Client.Wpf.Localization;
+
 namespace Hbpos.Client.Wpf.Services;
 
 public interface ICardTerminalSetupService
@@ -76,7 +78,8 @@ public sealed class CardTerminalSetupService(
     ILinklyCloudCredentialApiClient? linklyCloudCredentialApiClient = null,
     ILinklyCloudApiClient? linklyCloudApiClient = null,
     ILinklyCloudTerminalClient? linklyCloudTerminalClient = null,
-    DeviceAuthorizationState? deviceAuthorizationState = null) : ICardTerminalSetupService
+    DeviceAuthorizationState? deviceAuthorizationState = null,
+    ILocalizationService? localization = null) : ICardTerminalSetupService
 {
     public Task<CardTerminalConfiguration> LoadConfigurationAsync(CancellationToken cancellationToken = default)
     {
@@ -239,26 +242,26 @@ public sealed class CardTerminalSetupService(
         if (linklyCloudCredentialApiClient is null || linklyCloudApiClient is null)
         {
             LogLinklyCloudSetup($"pair blocked environment={environment} reason=missing-dependencies");
-            return new LinklyConnectionTestResult(false, "Linkly Cloud setup is unavailable.");
+            return new LinklyConnectionTestResult(false, T("settings.linklyCloud.unavailable", "Linkly Cloud setup is unavailable."));
         }
 
         if (string.IsNullOrWhiteSpace(pairCode))
         {
             LogLinklyCloudSetup($"pair blocked environment={environment} reason=missing-pair-code");
-            return new LinklyConnectionTestResult(false, "Pair code is required.");
+            return new LinklyConnectionTestResult(false, T("settings.linklyCloud.pairCodeRequired", "Pair code is required."));
         }
 
         var environmentSettings = CardTerminalSettings.FromEnvironment();
         if (string.IsNullOrWhiteSpace(environmentSettings.LinklyPosVendorId))
         {
             LogLinklyCloudSetup($"pair blocked environment={environment} reason=missing-pos-vendor-id");
-            return new LinklyConnectionTestResult(false, "Linkly POS vendor id is not configured.");
+            return new LinklyConnectionTestResult(false, T("settings.linklyCloud.vendorIdMissing", "Linkly POS vendor id is not configured."));
         }
 
         if (!IsUuidV4(environmentSettings.LinklyPosVendorId))
         {
             LogLinklyCloudSetup($"pair blocked environment={environment} reason=invalid-pos-vendor-id");
-            return new LinklyConnectionTestResult(false, "Linkly POS vendor id must be a UUID v4.");
+            return new LinklyConnectionTestResult(false, T("settings.linklyCloud.vendorIdInvalid", "Linkly POS vendor id must be a UUID v4."));
         }
 
         try
@@ -277,7 +280,7 @@ public sealed class CardTerminalSetupService(
                 cancellationToken);
             await settingsStore.SaveLinklyCloudSecretAsync(environment, secret, cancellationToken);
             LogLinklyCloudSetup($"pair succeeded environment={environment} store={LogValue(credential.StoreCode)} secretSaved=true");
-            return new LinklyConnectionTestResult(true, "Linkly Cloud terminal paired.");
+            return new LinklyConnectionTestResult(true, T("settings.linklyCloud.paired", "Linkly Cloud terminal paired."));
         }
         catch (CatalogApiException ex)
         {
@@ -302,7 +305,7 @@ public sealed class CardTerminalSetupService(
         if (linklyCloudTerminalClient is null || deviceAuthorizationState?.Current is null)
         {
             LogLinklyCloudSetup($"test blocked environment={environment} reason=missing-dependencies-or-device-state");
-            return new LinklyConnectionTestResult(false, "Linkly Cloud setup is unavailable.");
+            return new LinklyConnectionTestResult(false, T("settings.linklyCloud.unavailable", "Linkly Cloud setup is unavailable."));
         }
 
         LogLinklyCloudSetup($"test start environment={environment} store={LogValue(deviceAuthorizationState.Current.StoreCode)} device={LogValue(deviceAuthorizationState.Current.DeviceCode)}");
@@ -459,5 +462,10 @@ public sealed class CardTerminalSetupService(
             trimmed.Length == 36 &&
             trimmed[14] == '4' &&
             trimmed[19] is '8' or '9' or 'a' or 'A' or 'b' or 'B';
+    }
+
+    private string T(string key, string fallback)
+    {
+        return localization?.T(key) ?? fallback;
     }
 }

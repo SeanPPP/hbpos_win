@@ -50,6 +50,7 @@ public sealed class ReceiptQueryService(ILocalOrderRepository orderRepository) :
 
     public static ReceiptDetails CreateReceipt(LocalOrder order)
     {
+        // 小票详情补带本地持久化的实收/找零，避免界面只能依赖瞬时导航参数。
         return new ReceiptDetails(
             order.OrderGuid,
             order.StoreCode,
@@ -70,7 +71,9 @@ public sealed class ReceiptQueryService(ILocalOrderRepository orderRepository) :
                 payment.Method,
                 payment.Amount,
                 payment.Reference,
-                payment.CardTransactions)).ToList());
+                payment.CardTransactions)).ToList(),
+            order.TenderedAmount,
+            order.ChangeAmount);
     }
 }
 
@@ -84,7 +87,9 @@ public sealed record ReceiptDetails(
     decimal DiscountAmount,
     decimal ActualAmount,
     IReadOnlyList<ReceiptPreviewLine> Lines,
-    IReadOnlyList<ReceiptPaymentLine> Payments)
+    IReadOnlyList<ReceiptPaymentLine> Payments,
+    decimal? TenderedAmount = null,
+    decimal? ChangeAmount = null)
 {
     public string TransactionIdDisplay => $"#{OrderGuid.ToString("N")[..10].ToUpperInvariant()}";
 

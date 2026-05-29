@@ -36,6 +36,7 @@ public static class ServiceRegistration
         services.AddSingleton<ILocalOrderUploadRepository, LocalOrderUploadRepository>();
         services.AddSingleton<ISuspendedOrderRepository, SuspendedOrderRepository>();
         services.AddSingleton<ISyncQueueRepository, SyncQueueRepository>();
+        services.AddSingleton<ILocalDailyCloseRepository, LocalDailyCloseRepository>();
         services.AddHttpClient<ICatalogApiClient, CatalogApiClient>(client =>
         {
             client.BaseAddress = GetApiBaseAddress();
@@ -99,6 +100,9 @@ public static class ServiceRegistration
         services.AddSingleton<IReceiptTextFormatter, ReceiptTextFormatter>();
         services.AddSingleton<IReceiptPrinterDriver, XpReceiptPrinterDriver>();
         services.AddSingleton<IReceiptPrintService, ReceiptPrintService>();
+        services.AddSingleton<ICashDrawerService, CashDrawerService>();
+        services.AddSingleton<IDailyCloseService, DailyCloseService>();
+        services.AddSingleton<IDailyClosePrintService, DailyClosePrintService>();
         services.AddSingleton<IOrderUploadService, OrderUploadService>();
         services.AddSingleton<IOrderUploadExecutionService, OrderUploadExecutionService>();
         services.AddSingleton<ICardTerminalSettingsStore>(sp => new CardTerminalSettingsStore(
@@ -139,6 +143,8 @@ public static class ServiceRegistration
         services.AddSingleton<IReceiptReturnsWorkflowService, ReceiptReturnsWorkflowService>();
         services.AddSingleton<ICustomerDisplayOrchestrator, CustomerDisplayOrchestrator>();
         services.AddSingleton<IUserFeedbackService, WindowsMessageBeepUserFeedbackService>();
+        services.AddSingleton<IApplicationExitService, WpfApplicationExitService>();
+        services.AddSingleton<IConfirmationDialogService, WpfConfirmationDialogService>();
         services.AddTransient<IPosTerminalWorkflowService>(sp => new PosTerminalWorkflowService(
             sp.GetRequiredService<LocalSellableItemIndex>(),
             sp.GetRequiredService<PosCartService>(),
@@ -191,7 +197,12 @@ public static class ServiceRegistration
             receiptPrintService: sp.GetRequiredService<IReceiptPrintService>(),
             receiptPrinterSettingsStore: sp.GetRequiredService<IReceiptPrinterSettingsStore>(),
             receiptTextFormatter: sp.GetRequiredService<IReceiptTextFormatter>(),
-            orderUploadExecutionService: sp.GetRequiredService<IOrderUploadExecutionService>()));
+            orderUploadExecutionService: sp.GetRequiredService<IOrderUploadExecutionService>(),
+            dailyCloseService: sp.GetRequiredService<IDailyCloseService>(),
+            dailyClosePrintService: sp.GetRequiredService<IDailyClosePrintService>(),
+            cashDrawerService: sp.GetRequiredService<ICashDrawerService>(),
+            applicationExitService: sp.GetRequiredService<IApplicationExitService>(),
+            confirmationDialogService: sp.GetRequiredService<IConfirmationDialogService>()));
         services.AddSingleton<MainWindow>();
 
         return services;

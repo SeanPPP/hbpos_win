@@ -304,8 +304,84 @@ public sealed class PosCoreTests
             Assert.Equal(2, savedOrder.Lines.Count);
             Assert.Equal("ITEM-101", savedOrder.Lines[0].ItemNumber);
             Assert.Equal(order.ActualAmount, Assert.Single(savedOrder.Payments).Amount);
+            Assert.Equal(order.TenderedAmount, savedOrder.TenderedAmount);
+            Assert.Equal(order.ChangeAmount, savedOrder.ChangeAmount);
             Assert.Equal(OrderLineKind.Return, savedOrder.Lines[1].Kind);
             Assert.Equal("RETURN-SOURCE-ORDER", savedOrder.Lines[1].ReturnSourceKey);
+        }
+        finally
+        {
+            Microsoft.Data.Sqlite.SqliteConnection.ClearAllPools();
+            if (File.Exists(databasePath))
+            {
+                File.Delete(databasePath);
+            }
+        }
+    }
+
+    [Fact]
+    public async Task Local_schema_service_adds_tendered_and_change_columns_without_data_loss()
+    {
+        var databasePath = Path.Combine(Path.GetTempPath(), $"hbpos-client-schema-{Guid.NewGuid():N}.db");
+
+        try
+        {
+            var store = new LocalSqliteStore(databasePath);
+
+            await using (var connection = await store.OpenConnectionAsync())
+            {
+                await using var command = connection.CreateCommand();
+                command.CommandText = """
+                    CREATE TABLE LocalOrders (
+                        OrderGuid TEXT PRIMARY KEY,
+                        StoreCode TEXT NOT NULL,
+                        DeviceCode TEXT NOT NULL,
+                        CashierId TEXT NOT NULL,
+                        CashierName TEXT NOT NULL,
+                        SoldAt TEXT NOT NULL,
+                        TotalAmount TEXT NOT NULL,
+                        DiscountAmount TEXT NOT NULL,
+                        ActualAmount TEXT NOT NULL,
+                        SyncStatus TEXT NOT NULL
+                    );
+
+                    INSERT INTO LocalOrders
+                    (OrderGuid, StoreCode, DeviceCode, CashierId, CashierName, SoldAt, TotalAmount, DiscountAmount, ActualAmount, SyncStatus)
+                    VALUES
+                    ('11111111-2222-3333-4444-555555555555', 'S001', 'POS-01', 'C001', 'Alice', '2026-05-24T09:30:00.0000000+00:00', '10.00', '1.00', '9.00', 'Pending');
+                    """;
+                await command.ExecuteNonQueryAsync();
+            }
+
+            var schema = new LocalSchemaService(store);
+            await schema.InitializeAsync();
+
+            await using var verifyConnection = await store.OpenConnectionAsync();
+            await using var pragmaCommand = verifyConnection.CreateCommand();
+            pragmaCommand.CommandText = "PRAGMA table_info(LocalOrders);";
+            var columns = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            await using (var reader = await pragmaCommand.ExecuteReaderAsync())
+            {
+                while (await reader.ReadAsync())
+                {
+                    columns.Add(reader.GetString(1));
+                }
+            }
+
+            Assert.Contains("TenderedAmount", columns);
+            Assert.Contains("ChangeAmount", columns);
+
+            await using var dataCommand = verifyConnection.CreateCommand();
+            dataCommand.CommandText = """
+                SELECT TotalAmount, TenderedAmount, ChangeAmount
+                FROM LocalOrders
+                WHERE OrderGuid = '11111111-2222-3333-4444-555555555555';
+                """;
+            await using var dataReader = await dataCommand.ExecuteReaderAsync();
+            Assert.True(await dataReader.ReadAsync());
+            Assert.Equal("10.00", dataReader.GetString(0));
+            Assert.True(dataReader.IsDBNull(1));
+            Assert.True(dataReader.IsDBNull(2));
         }
         finally
         {
@@ -411,6 +487,62 @@ public sealed class PosCoreTests
     }
 
     [Fact]
+    public async Task Local_schema_service_migrates_existing_orders_with_tendered_and_change_columns()
+    {
+        var databasePath = Path.Combine(Path.GetTempPath(), $"hbpos-client-order-migration-{Guid.NewGuid():N}.db");
+
+        try
+        {
+            await using (var connection = new Microsoft.Data.Sqlite.SqliteConnection($"Data Source={databasePath}"))
+            {
+                await connection.OpenAsync();
+                await using var command = connection.CreateCommand();
+                command.CommandText = """
+                    CREATE TABLE LocalOrders (
+                        OrderGuid TEXT PRIMARY KEY,
+                        StoreCode TEXT NOT NULL,
+                        DeviceCode TEXT NOT NULL,
+                        CashierId TEXT NOT NULL,
+                        CashierName TEXT NOT NULL,
+                        SoldAt TEXT NOT NULL,
+                        TotalAmount TEXT NOT NULL,
+                        DiscountAmount TEXT NOT NULL,
+                        ActualAmount TEXT NOT NULL,
+                        SyncStatus TEXT NOT NULL
+                    );
+                    """;
+                await command.ExecuteNonQueryAsync();
+            }
+
+            var schema = new LocalSchemaService(new LocalSqliteStore(databasePath));
+            await schema.InitializeAsync();
+
+            await using var verifyConnection = new Microsoft.Data.Sqlite.SqliteConnection($"Data Source={databasePath}");
+            await verifyConnection.OpenAsync();
+            await using var verifyCommand = verifyConnection.CreateCommand();
+            verifyCommand.CommandText = "PRAGMA table_info(LocalOrders);";
+            await using var reader = await verifyCommand.ExecuteReaderAsync();
+
+            var columns = new List<string>();
+            while (await reader.ReadAsync())
+            {
+                columns.Add(reader.GetString(1));
+            }
+
+            Assert.Contains("TenderedAmount", columns);
+            Assert.Contains("ChangeAmount", columns);
+        }
+        finally
+        {
+            Microsoft.Data.Sqlite.SqliteConnection.ClearAllPools();
+            if (File.Exists(databasePath))
+            {
+                File.Delete(databasePath);
+            }
+        }
+    }
+
+    [Fact]
     public async Task Local_schema_service_migrates_existing_order_lines_with_return_columns()
     {
         var databasePath = Path.Combine(Path.GetTempPath(), $"hbpos-client-migration-{Guid.NewGuid():N}.db");
@@ -499,6 +631,66 @@ public sealed class PosCoreTests
     }
 
     [Fact]
+    public void Payment_success_view_model_shows_cash_change_when_persisted_change_is_positive()
+    {
+        var order = CreateLocalOrder(tenderedAmount: 10m, changeAmount: 1m);
+        var viewModel = new PaymentSuccessViewModel();
+
+        viewModel.LoadFromOrder(order);
+
+        Assert.True(viewModel.IsCashChangeVisible);
+        Assert.Equal(10m, viewModel.TenderedAmount);
+        Assert.Equal(1m, viewModel.ChangeAmount);
+        Assert.Contains(viewModel.ReceiptPreviewRows, row => row.Text.Contains("Tendered", StringComparison.Ordinal));
+        Assert.Contains(viewModel.ReceiptPreviewRows, row => row.Text.Contains("Change", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void Payment_success_view_model_shows_cash_change_when_persisted_change_is_zero()
+    {
+        var order = CreateLocalOrder(tenderedAmount: 9m, changeAmount: 0m);
+        var viewModel = new PaymentSuccessViewModel();
+
+        viewModel.LoadFromOrder(order);
+
+        Assert.True(viewModel.IsCashChangeVisible);
+        Assert.Equal(0m, viewModel.ChangeAmount);
+    }
+
+    [Theory]
+    [InlineData(PaymentMethodKind.Card, 9, 0)]
+    [InlineData(PaymentMethodKind.Voucher, 9, 0)]
+    [InlineData(PaymentMethodKind.Cash, -9, 0)]
+    public void Payment_success_view_model_hides_cash_change_when_order_is_not_cash_sale(
+        PaymentMethodKind paymentMethod,
+        decimal actualAmount,
+        decimal changeAmount)
+    {
+        var order = CreateLocalOrder(
+            paymentMethod: paymentMethod,
+            actualAmount: actualAmount,
+            tenderedAmount: Math.Abs(actualAmount),
+            changeAmount: changeAmount);
+        var viewModel = new PaymentSuccessViewModel();
+
+        viewModel.LoadFromOrder(order);
+
+        Assert.False(viewModel.IsCashChangeVisible);
+    }
+
+    [Fact]
+    public void Payment_success_view_model_hides_cash_change_for_legacy_order_without_persisted_change()
+    {
+        var order = CreateLocalOrder(tenderedAmount: null, changeAmount: null);
+        var viewModel = new PaymentSuccessViewModel();
+
+        viewModel.LoadFromOrder(order);
+
+        Assert.False(viewModel.IsCashChangeVisible);
+        Assert.DoesNotContain(viewModel.ReceiptPreviewRows, row => row.Text.Contains("Tendered", StringComparison.Ordinal));
+    }
+
+    [Fact]
     public async Task Pos_terminal_print_last_receipt_command_invokes_callback_and_shows_status()
     {
         var printed = false;
@@ -557,11 +749,17 @@ public sealed class PosCoreTests
         string deviceCode = "POS-01",
         DateTimeOffset? soldAt = null,
         string firstLookupCode = "690101",
-        string firstItemNumber = "ITEM-101")
+        string firstItemNumber = "ITEM-101",
+        PaymentMethodKind paymentMethod = PaymentMethodKind.Cash,
+        decimal actualAmount = 9.00m,
+        decimal? tenderedAmount = 10.00m,
+        decimal? changeAmount = 1.00m)
     {
+        var totalAmount = actualAmount + 0.20m;
+        var firstLineAmount = decimal.Round(actualAmount - 4.00m, 2, MidpointRounding.AwayFromZero);
         var lines = new[]
         {
-            new LocalOrderLine(Guid.NewGuid(), "SKU-101", null, "Organic Gala Apples", firstLookupCode, firstItemNumber, 2m, 2.50m, 0m, 5.00m, PriceSourceKind.StoreRetailPrice),
+            new LocalOrderLine(Guid.NewGuid(), "SKU-101", null, "Organic Gala Apples", firstLookupCode, firstItemNumber, 2m, 2.50m, 0m, firstLineAmount, PriceSourceKind.StoreRetailPrice),
             new LocalOrderLine(
                 Guid.NewGuid(),
                 "SKU-102",
@@ -572,7 +770,7 @@ public sealed class PosCoreTests
                 1m,
                 4.20m,
                 0.20m,
-                4.00m,
+                decimal.Round(actualAmount - firstLineAmount, 2, MidpointRounding.AwayFromZero),
                 PriceSourceKind.ProductBase,
                 OrderLineKind.Return,
                 "RETURN-SOURCE-ORDER",
@@ -587,10 +785,12 @@ public sealed class PosCoreTests
             "C001",
             "Alice",
             soldAt ?? DateTimeOffset.UtcNow,
-            9.20m,
+            totalAmount,
             0.20m,
-            9.00m,
+            actualAmount,
             lines,
-            [new LocalPayment(Guid.NewGuid(), Hbpos.Contracts.Orders.PaymentMethodKind.Cash, 9.00m, null)]);
+            [new LocalPayment(Guid.NewGuid(), paymentMethod, actualAmount, null)],
+            tenderedAmount,
+            changeAmount);
     }
 }

@@ -1,8 +1,10 @@
 using System.Collections.ObjectModel;
+using System.Globalization;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using Hbpos.Client.Wpf.Models;
 using Hbpos.Client.Wpf.Services;
+using Hbpos.Contracts.Orders;
 
 namespace Hbpos.Client.Wpf.ViewModels;
 
@@ -29,6 +31,15 @@ public sealed partial class PaymentSuccessViewModel : ObservableObject
 
     [ObservableProperty]
     private string _cashierName = string.Empty;
+
+    [ObservableProperty]
+    private decimal? _tenderedAmount;
+
+    [ObservableProperty]
+    private decimal? _changeAmount;
+
+    [ObservableProperty]
+    private bool _isCashChangeVisible;
 
     public PaymentSuccessViewModel()
         : this(initialize: true, receiptQueryService: null, receiptTextFormatter: null, receiptPrinterSettingsStore: null)
@@ -89,6 +100,10 @@ public sealed partial class PaymentSuccessViewModel : ObservableObject
 
     public string NewTransactionLabel => "success.newTransaction";
 
+    public string TenderedAmountDisplay => TenderedAmount?.ToString("C2", CultureInfo.CurrentCulture) ?? "-";
+
+    public string ChangeAmountDisplay => ChangeAmount?.ToString("C2", CultureInfo.CurrentCulture) ?? "-";
+
     public string TransactionIdDisplay => TransactionId is null
         ? "-"
         : $"#{TransactionId.Value.ToString("N")[..10].ToUpperInvariant()}";
@@ -147,6 +162,9 @@ public sealed partial class PaymentSuccessViewModel : ObservableObject
         StoreCode = receipt.StoreCode;
         DeviceCode = receipt.DeviceCode;
         CashierName = receipt.CashierName;
+        TenderedAmount = receipt.TenderedAmount;
+        ChangeAmount = receipt.ChangeAmount;
+        IsCashChangeVisible = ShouldShowCashChange(receipt);
 
         ReceiptLines.ReplaceWith(receipt.Lines);
         Payments.ReplaceWith(receipt.Payments);
@@ -156,6 +174,8 @@ public sealed partial class PaymentSuccessViewModel : ObservableObject
         OnPropertyChanged(nameof(SoldAtDisplay));
         OnPropertyChanged(nameof(Subtotal));
         OnPropertyChanged(nameof(DiscountTotal));
+        OnPropertyChanged(nameof(TenderedAmountDisplay));
+        OnPropertyChanged(nameof(ChangeAmountDisplay));
         PrintReceiptCommand.NotifyCanExecuteChanged();
     }
 
@@ -180,18 +200,56 @@ public sealed partial class PaymentSuccessViewModel : ObservableObject
     {
         try
         {
-            return _receiptTextFormatter.Build(receipt, settings, receipt.SoldAt).PreviewRows;
+            return AddCashChangePreviewRows(_receiptTextFormatter.Build(receipt, settings, receipt.SoldAt).PreviewRows, receipt);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
             try
             {
-                return new ReceiptTextFormatter().Build(receipt, ReceiptPrinterSettings.Default, receipt.SoldAt).PreviewRows;
+                return AddCashChangePreviewRows(new ReceiptTextFormatter().Build(receipt, ReceiptPrinterSettings.Default, receipt.SoldAt).PreviewRows, receipt);
             }
             catch (Exception fallbackEx) when (fallbackEx is not OperationCanceledException)
             {
                 return [];
             }
         }
+    }
+
+    private static bool ShouldShowCashChange(ReceiptDetails receipt)
+    {
+        // 旧订单没有持久化找零字段时不推测，避免历史交易显示错误找零。
+        return receipt.ActualAmount > 0m &&
+            receipt.ChangeAmount is not null &&
+            receipt.Payments.Any(payment => payment.Method == PaymentMethodKind.Cash);
+    }
+
+    private static IReadOnlyList<ReceiptPreviewRow> AddCashChangePreviewRows(
+        IReadOnlyList<ReceiptPreviewRow> rows,
+        ReceiptDetails receipt)
+    {
+        if (!ShouldShowCashChange(receipt))
+        {
+            return rows;
+        }
+
+        var previewRows = rows.ToList();
+        previewRows.Add(new ReceiptPreviewRow(ReceiptPreviewRowKind.Separator, new string('-', 42)));
+        // 这里只增强成功页预览，不写入 ReceiptTextFormatter，因此不会改变实际打印小票。
+        previewRows.Add(new ReceiptPreviewRow(ReceiptPreviewRowKind.Text, FitPreviewColumns("Tendered", FormatMoney(receipt.TenderedAmount ?? 0m)), ReceiptPrintAlignment.Left, true));
+        previewRows.Add(new ReceiptPreviewRow(ReceiptPreviewRowKind.Text, FitPreviewColumns("Change", FormatMoney(receipt.ChangeAmount ?? 0m)), ReceiptPrintAlignment.Left, true));
+        return previewRows;
+    }
+
+    private static string FormatMoney(decimal amount)
+    {
+        return string.Create(CultureInfo.InvariantCulture, $"${amount:0.00}");
+    }
+
+    private static string FitPreviewColumns(string left, string right)
+    {
+        const int lineWidth = 42;
+        left = left.Length > 24 ? left[..24] : left;
+        right = right.Length > 16 ? right[..16] : right;
+        return left + new string(' ', Math.Max(1, lineWidth - left.Length - right.Length)) + right;
     }
 }

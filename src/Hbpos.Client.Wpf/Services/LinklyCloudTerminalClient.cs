@@ -1,6 +1,7 @@
 using System.Globalization;
 using System.Net.Http;
 using System.Text.Json;
+using Hbpos.Client.Wpf.Localization;
 using Hbpos.Client.Wpf.Models;
 using Hbpos.Contracts.Orders;
 
@@ -31,7 +32,8 @@ public interface ILinklyCloudTerminalClient
 public sealed class LinklyCloudTerminalClient(
     ILinklyCloudApiClient apiClient,
     ILinklyCloudSecretStore secretStore,
-    TimeSpan? pollInterval = null) : ILinklyCloudTerminalClient
+    TimeSpan? pollInterval = null,
+    ILocalizationService? localization = null) : ILinklyCloudTerminalClient
 {
     private static readonly TimeSpan DefaultPollInterval = TimeSpan.FromSeconds(2);
     private const string ProcessorName = "ANZ";
@@ -51,14 +53,14 @@ public sealed class LinklyCloudTerminalClient(
             var message = FormatResponseMessage(result.ResponseText, result.ResponseCode);
             Log($"test completed environment={settings.Environment} store={LogValue(storeCode)} device={LogValue(deviceCode)} success={result.Succeeded} responseCode={LogValue(result.ResponseCode)} loggedOn={result.LoggedOn}");
             return result.Succeeded
-                ? new LinklyConnectionTestResult(true, string.IsNullOrWhiteSpace(message) ? "Linkly Cloud connection succeeded." : message)
-                : new LinklyConnectionTestResult(false, string.IsNullOrWhiteSpace(message) ? "Linkly Cloud status check failed." : message);
+                ? new LinklyConnectionTestResult(true, string.IsNullOrWhiteSpace(message) ? T("linkly.cloud.test.success", "Linkly Cloud connection succeeded.") : message)
+                : new LinklyConnectionTestResult(false, string.IsNullOrWhiteSpace(message) ? T("linkly.cloud.test.failed", "Linkly Cloud status check failed.") : message);
         }
         catch (LinklyCloudApiException ex)
         {
             Log($"test failed environment={settings.Environment} store={LogValue(storeCode)} device={LogValue(deviceCode)} authFailure={ex.IsAuthenticationFailure} error={ex.GetType().Name}");
             return new LinklyConnectionTestResult(false, ex.IsAuthenticationFailure
-                ? "Linkly Cloud pairing is invalid. Pair the terminal again."
+                ? T("linkly.cloud.pairingInvalid", "Linkly Cloud pairing is invalid. Pair the terminal again.")
                 : ex.Message);
         }
     }
@@ -87,7 +89,7 @@ public sealed class LinklyCloudTerminalClient(
     {
         var refundReference = TryParseRefundReference(originalReference);
         return string.IsNullOrWhiteSpace(refundReference)
-            ? Task.FromResult(new PaymentAuthorizationResult(false, null, "Linkly Cloud refund requires an original RFN reference."))
+            ? Task.FromResult(new PaymentAuthorizationResult(false, null, T("linkly.cloud.refundMissingReference", "Linkly Cloud refund requires an original RFN reference.")))
             : RunTransactionAsync(
                 "R",
                 amount,
@@ -108,19 +110,19 @@ public sealed class LinklyCloudTerminalClient(
         if (amount <= 0m)
         {
             Log($"transaction blocked txnType={txnType} store={LogValue(session.StoreCode)} device={LogValue(session.DeviceCode)} reason=invalid-amount");
-            return new PaymentAuthorizationResult(false, null, "Card amount must be greater than zero.");
+            return new PaymentAuthorizationResult(false, null, T("linkly.cloud.amountMustBePositive", "Card amount must be greater than zero."));
         }
 
         if (string.IsNullOrWhiteSpace(settings.LinklyCloudSecret))
         {
             Log($"transaction blocked txnType={txnType} store={LogValue(session.StoreCode)} device={LogValue(session.DeviceCode)} reason=missing-secret");
-            return new PaymentAuthorizationResult(false, null, "Linkly Cloud terminal is not paired.");
+            return new PaymentAuthorizationResult(false, null, T("linkly.cloud.notPaired", "Linkly Cloud terminal is not paired."));
         }
 
         if (string.IsNullOrWhiteSpace(settings.LinklyPosVendorId))
         {
             Log($"transaction blocked txnType={txnType} store={LogValue(session.StoreCode)} device={LogValue(session.DeviceCode)} reason=missing-pos-vendor-id");
-            return new PaymentAuthorizationResult(false, null, "Linkly POS vendor id is not configured.");
+            return new PaymentAuthorizationResult(false, null, T("linkly.cloud.vendorIdMissing", "Linkly POS vendor id is not configured."));
         }
 
         using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
@@ -168,7 +170,7 @@ public sealed class LinklyCloudTerminalClient(
             if (result.Outcome == LinklyCloudTransactionOutcome.NotSubmitted)
             {
                 Log($"transaction not-submitted final txnType={txnType} txnRef={txnRef}");
-                return new PaymentAuthorizationResult(false, null, "Linkly Cloud transaction was not submitted. Retry the payment.");
+                return new PaymentAuthorizationResult(false, null, T("linkly.cloud.notSubmitted", "Linkly Cloud transaction was not submitted. Retry the payment."));
             }
 
             Log($"transaction completed txnType={txnType} sessionId={result.SessionId} txnRef={LogValue(result.TxnRef ?? txnRef)} approved={result.Succeeded && string.Equals(result.ResponseCode?.Trim(), "00", StringComparison.OrdinalIgnoreCase)} responseCode={LogValue(result.ResponseCode)} outcome={result.Outcome}");
@@ -177,24 +179,24 @@ public sealed class LinklyCloudTerminalClient(
         catch (OperationCanceledException) when (timeoutCts.IsCancellationRequested && !cancellationToken.IsCancellationRequested)
         {
             Log($"transaction timed-out txnType={txnType} store={LogValue(session.StoreCode)} device={LogValue(session.DeviceCode)}");
-            return new PaymentAuthorizationResult(false, null, "Linkly Cloud transaction timed out.");
+            return new PaymentAuthorizationResult(false, null, T("linkly.cloud.timeout", "Linkly Cloud transaction timed out."));
         }
         catch (LinklyCloudApiException ex)
         {
             Log($"transaction failed txnType={txnType} store={LogValue(session.StoreCode)} device={LogValue(session.DeviceCode)} authFailure={ex.IsAuthenticationFailure} error={ex.GetType().Name}");
             return new PaymentAuthorizationResult(false, null, ex.IsAuthenticationFailure
-                ? "Linkly Cloud pairing is invalid. Pair the terminal again."
+                ? T("linkly.cloud.pairingInvalid", "Linkly Cloud pairing is invalid. Pair the terminal again.")
                 : ex.Message);
         }
         catch (JsonException)
         {
             Log($"transaction failed txnType={txnType} store={LogValue(session.StoreCode)} device={LogValue(session.DeviceCode)} reason=invalid-json");
-            return new PaymentAuthorizationResult(false, null, "Linkly Cloud returned an invalid response.");
+            return new PaymentAuthorizationResult(false, null, T("linkly.cloud.invalidResponse", "Linkly Cloud returned an invalid response."));
         }
         catch (HttpRequestException)
         {
             Log($"transaction failed txnType={txnType} store={LogValue(session.StoreCode)} device={LogValue(session.DeviceCode)} reason=http-request-exception");
-            return new PaymentAuthorizationResult(false, null, "Linkly Cloud communication failed.");
+            return new PaymentAuthorizationResult(false, null, T("linkly.cloud.communicationFailed", "Linkly Cloud communication failed."));
         }
     }
 
@@ -246,7 +248,7 @@ public sealed class LinklyCloudTerminalClient(
         return await apiClient.GetTokenAsync(settings, posId, cancellationToken);
     }
 
-    private static PaymentAuthorizationResult ToAuthorizationResult(
+    private PaymentAuthorizationResult ToAuthorizationResult(
         LinklyCloudTransactionResult response,
         decimal requestedAmount,
         string requestedTxnRef)
@@ -334,16 +336,22 @@ public sealed class LinklyCloudTerminalClient(
         return digits.Length <= 4 ? digits : $"****{digits[^4..]}";
     }
 
-    private static string FormatResponseMessage(string? responseText, string? responseCode)
+    private string FormatResponseMessage(string? responseText, string? responseCode)
     {
         var text = NormalizeOptional(responseText);
         var code = NormalizeOptional(responseCode);
         if (text is null && code is null)
         {
-            return "ANZ Linkly Cloud transaction was declined.";
+            return T("linkly.cloud.declined", "ANZ Linkly Cloud transaction was declined.");
         }
 
-        return code is null ? text! : $"{text ?? "ANZ Linkly Cloud transaction was declined."} ({code})";
+        return code is null ? text! : $"{text ?? T("linkly.cloud.declined", "ANZ Linkly Cloud transaction was declined.")} ({code})";
+    }
+
+    private string T(string key, string fallback)
+    {
+        var value = localization?.T(key);
+        return string.IsNullOrWhiteSpace(value) || value == $"[[{key}]]" ? fallback : value;
     }
 
     private static string? NormalizeOptional(string? value)

@@ -111,12 +111,24 @@ public sealed class SettingsViewModelTests
             reregisterDeviceAsync: () =>
             {
                 reregisterCallCount++;
-                return Task.CompletedTask;
+                return Task.FromResult(DeviceReregistrationStartResult.StartedWith("Select a new store."));
             });
 
         await viewModel.ReregisterDeviceCommand.ExecuteAsync(null);
 
         Assert.Equal(1, reregisterCallCount);
+    }
+
+    [Fact]
+    public async Task ReregisterDeviceCommand_shows_blocked_reason_on_settings_status()
+    {
+        var viewModel = new SettingsViewModel(
+            new FakeCardTerminalSetupService(),
+            reregisterDeviceAsync: () => Task.FromResult(DeviceReregistrationStartResult.Blocked("存在待同步订单。")));
+
+        await viewModel.ReregisterDeviceCommand.ExecuteAsync(null);
+
+        Assert.Equal("存在待同步订单。", viewModel.StatusMessage);
     }
 
     [Fact]

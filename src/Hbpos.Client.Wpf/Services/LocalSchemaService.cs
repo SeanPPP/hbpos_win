@@ -21,6 +21,7 @@ public sealed class LocalSchemaService(LocalSqliteStore store) : ILocalSchemaSer
 
         await EnsureLocalSellableItemIndexColumnsAsync(connection, cancellationToken);
         await EnsureDeviceCacheColumnsAsync(connection, cancellationToken);
+        await EnsureLocalOrderColumnsAsync(connection, cancellationToken);
         await EnsureLocalOrderLineColumnsAsync(connection, cancellationToken);
         await EnsureSuspendedOrderLineColumnsAsync(connection, cancellationToken);
         await EnsureSuspendedOrderReturnPaymentCapacityColumnsAsync(connection, cancellationToken);
@@ -134,6 +135,24 @@ public sealed class LocalSchemaService(LocalSqliteStore store) : ILocalSchemaSer
             WHERE SyncedAt IS NULL OR TRIM(SyncedAt) = '';
             """,
             cancellationToken);
+    }
+
+    private static async Task EnsureLocalOrderColumnsAsync(
+        SqliteConnection connection,
+        CancellationToken cancellationToken)
+    {
+        var columns = await ReadColumnNamesAsync(connection, "LocalOrders", cancellationToken);
+        if (!columns.Contains("TenderedAmount"))
+        {
+            // 对旧版本地库做无损补列，已有订单保持 NULL，避免迁移时改写历史数据。
+            await ExecuteAsync(connection, "ALTER TABLE LocalOrders ADD COLUMN TenderedAmount TEXT NULL;", cancellationToken);
+        }
+
+        if (!columns.Contains("ChangeAmount"))
+        {
+            // 找零金额仅在本地展示链路使用，允许为空以兼容非现金与历史订单。
+            await ExecuteAsync(connection, "ALTER TABLE LocalOrders ADD COLUMN ChangeAmount TEXT NULL;", cancellationToken);
+        }
     }
 
     private static async Task EnsureLocalOrderLineColumnsAsync(
@@ -300,6 +319,8 @@ public sealed class LocalSchemaService(LocalSqliteStore store) : ILocalSchemaSer
             TotalAmount TEXT NOT NULL,
             DiscountAmount TEXT NOT NULL,
             ActualAmount TEXT NOT NULL,
+            TenderedAmount TEXT NULL,
+            ChangeAmount TEXT NULL,
             SyncStatus TEXT NOT NULL
         );
         """,
@@ -350,6 +371,46 @@ public sealed class LocalSchemaService(LocalSqliteStore store) : ILocalSchemaSer
             BankDateTime TEXT NULL,
             Amount TEXT NOT NULL,
             ReceiptText TEXT NULL
+        );
+        """,
+        """
+        CREATE TABLE IF NOT EXISTS LocalDailyCloses (
+            DailyCloseGuid TEXT PRIMARY KEY,
+            StoreCode TEXT NOT NULL,
+            DeviceCode TEXT NOT NULL,
+            CashierId TEXT NOT NULL,
+            CashierName TEXT NOT NULL,
+            BusinessDate TEXT NOT NULL,
+            PeriodFrom TEXT NOT NULL,
+            PeriodTo TEXT NOT NULL,
+            SavedAt TEXT NOT NULL,
+            OrderCount INTEGER NOT NULL,
+            CashSalesAmount TEXT NOT NULL,
+            CashRefundAmount TEXT NOT NULL,
+            CashNetAmount TEXT NOT NULL,
+            CardSalesAmount TEXT NOT NULL,
+            CardRefundAmount TEXT NOT NULL,
+            CardNetAmount TEXT NOT NULL,
+            VoucherSalesAmount TEXT NOT NULL,
+            VoucherRefundAmount TEXT NOT NULL,
+            VoucherNetAmount TEXT NOT NULL,
+            RefundAmount TEXT NOT NULL,
+            ReturnQuantity TEXT NOT NULL,
+            NoteSubtotal TEXT NOT NULL,
+            CoinSubtotal TEXT NOT NULL,
+            CountedCashAmount TEXT NOT NULL,
+            CashDifference TEXT NOT NULL
+        );
+        """,
+        """
+        CREATE TABLE IF NOT EXISTS LocalDailyCloseCashCounts (
+            Id INTEGER PRIMARY KEY AUTOINCREMENT,
+            DailyCloseGuid TEXT NOT NULL,
+            DenominationValue TEXT NOT NULL,
+            Label TEXT NOT NULL,
+            Kind INTEGER NOT NULL,
+            Quantity INTEGER NOT NULL,
+            Amount TEXT NOT NULL
         );
         """,
         """
@@ -470,6 +531,18 @@ public sealed class LocalSchemaService(LocalSqliteStore store) : ILocalSchemaSer
         """
         CREATE INDEX IF NOT EXISTS IX_LocalCardTransactions_OrderGuid
         ON LocalCardTransactions (OrderGuid);
+        """,
+        """
+        CREATE INDEX IF NOT EXISTS IX_LocalOrders_Store_Device_SoldAt
+        ON LocalOrders (StoreCode, DeviceCode, SoldAt);
+        """,
+        """
+        CREATE INDEX IF NOT EXISTS IX_LocalDailyCloses_Store_Device_BusinessDate_SavedAt
+        ON LocalDailyCloses (StoreCode, DeviceCode, BusinessDate, SavedAt DESC);
+        """,
+        """
+        CREATE INDEX IF NOT EXISTS IX_LocalDailyCloseCashCounts_DailyCloseGuid
+        ON LocalDailyCloseCashCounts (DailyCloseGuid);
         """,
         """
         CREATE INDEX IF NOT EXISTS IX_SuspendedOrders_Store_Status_SuspendedAt

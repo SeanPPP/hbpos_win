@@ -568,7 +568,7 @@
                                 <ColumnDefinition Width="1.2*" />
                             </Grid.ColumnDefinitions>
                             <Button Grid.Column="0" Content="{loc:Loc Clear}" Command="{Binding NumberInputCommand}" CommandParameter="Clear" Style="{StaticResource PosStitchClearNumberButtonStyle}" />
-                            <Button Grid.Column="1" Content="Space" Command="{Binding NumberInputCommand}" CommandParameter="Space" Style="{StaticResource PosStitchNumberButtonStyle}" />
+                            <Button Grid.Column="1" Content="{loc:Loc common.space}" Command="{Binding NumberInputCommand}" CommandParameter="Space" Style="{StaticResource PosStitchNumberButtonStyle}" />
                             <Button Grid.Column="2" Content="." Command="{Binding NumberInputCommand}" CommandParameter="." Style="{StaticResource PosStitchNumberButtonStyle}" />
                             <Button Grid.Column="3" Content="{Binding SearchButtonText}" Command="{Binding NumberInputCommand}" CommandParameter="Enter" Style="{StaticResource PosStitchQuickButtonStyle}" />
                         </Grid>
@@ -986,20 +986,20 @@
                         <TextBlock Text="{Binding HoldOrderText}" Style="{StaticResource PosStitchTileLabelStyle}" />
                     </StackPanel>
                 </Button>
-                <Button Command="{Binding ClearCartCommand}" Style="{StaticResource PosStitchExitButtonStyle}">
-                    <StackPanel>
-                        <Border Style="{StaticResource PosStitchExitIconCircleStyle}">
-                            <materialDesign:PackIcon Kind="DeleteSweep" Width="18" Height="18" Foreground="White" HorizontalAlignment="Center" VerticalAlignment="Center" />
-                        </Border>
-                        <TextBlock Text="{Binding ClearCartText}" Style="{StaticResource PosStitchTileLabelStyle}" Foreground="White" />
-                    </StackPanel>
-                </Button>
-                <Button IsEnabled="False" Style="{StaticResource PosStitchActionButtonStyle}">
+                <Button Command="{Binding OpenCashDrawerCommand}" Style="{StaticResource PosStitchActionButtonStyle}">
                     <StackPanel>
                         <Border Style="{StaticResource PosStitchActionIconCircleStyle}">
-                            <materialDesign:PackIcon Kind="CashRegister" Width="18" Height="18" Foreground="{StaticResource PosMutedForegroundBrush}" HorizontalAlignment="Center" VerticalAlignment="Center" />
+                            <materialDesign:PackIcon Kind="CashRegister" Width="18" Height="18" Foreground="{StaticResource PosPrimaryBrush}" HorizontalAlignment="Center" VerticalAlignment="Center" />
                         </Border>
-                        <TextBlock Text="{loc:Loc OpenCashDrawer}" Style="{StaticResource PosStitchTileLabelStyle}" />
+                        <TextBlock Text="{Binding OpenCashDrawerText}" Style="{StaticResource PosStitchTileLabelStyle}" />
+                    </StackPanel>
+                </Button>
+                <Button Command="{Binding OpenDailyCloseCommand}" Style="{StaticResource PosStitchActionButtonStyle}">
+                    <StackPanel>
+                        <Border Style="{StaticResource PosStitchActionIconCircleStyle}">
+                            <materialDesign:PackIcon Kind="CalendarCheck" Width="18" Height="18" Foreground="{StaticResource PosPrimaryBrush}" HorizontalAlignment="Center" VerticalAlignment="Center" />
+                        </Border>
+                        <TextBlock Text="{Binding DailyCloseText}" Style="{StaticResource PosStitchTileLabelStyle}" />
                     </StackPanel>
                 </Button>
                 <Button Command="{Binding RecallOrderCommand}" Style="{StaticResource PosStitchActionButtonStyle}">
@@ -1018,20 +1018,12 @@
                         <TextBlock Text="{Binding PrintLastReceiptText}" Style="{StaticResource PosStitchTileLabelStyle}" />
                     </StackPanel>
                 </Button>
-                <Button Command="{Binding OpenHistoryCommand}" Style="{StaticResource PosStitchActionButtonStyle}">
+                <Button Command="{Binding ExitApplicationCommand}" Style="{StaticResource PosStitchExitButtonStyle}">
                     <StackPanel>
-                        <Border Style="{StaticResource PosStitchActionIconCircleStyle}">
-                            <materialDesign:PackIcon Kind="History" Width="18" Height="18" Foreground="{StaticResource PosPrimaryBrush}" HorizontalAlignment="Center" VerticalAlignment="Center" />
+                        <Border Style="{StaticResource PosStitchExitIconCircleStyle}">
+                            <materialDesign:PackIcon Kind="Power" Width="18" Height="18" Foreground="White" HorizontalAlignment="Center" VerticalAlignment="Center" />
                         </Border>
-                        <TextBlock Text="{Binding HistoryText}" Style="{StaticResource PosStitchTileLabelStyle}" />
-                    </StackPanel>
-                </Button>
-                <Button Command="{Binding OpenCustomerDisplayCommand}" Style="{StaticResource PosStitchActionButtonStyle}">
-                    <StackPanel>
-                        <Border Style="{StaticResource PosStitchActionIconCircleStyle}">
-                            <materialDesign:PackIcon Kind="Monitor" Width="18" Height="18" Foreground="{StaticResource PosPrimaryBrush}" HorizontalAlignment="Center" VerticalAlignment="Center" />
-                        </Border>
-                        <TextBlock Text="{Binding CustomerDisplayText}" Style="{StaticResource PosStitchTileLabelStyle}" />
+                        <TextBlock Text="{Binding ExitApplicationText}" Style="{StaticResource PosStitchTileLabelStyle}" Foreground="White" />
                     </StackPanel>
                 </Button>
                 <Button Command="{Binding OpenSettingsCommand}" Style="{StaticResource PosStitchActionButtonStyle}">

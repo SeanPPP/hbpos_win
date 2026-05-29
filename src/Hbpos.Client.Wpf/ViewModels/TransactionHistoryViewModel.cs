@@ -56,7 +56,7 @@ public sealed partial class TransactionHistoryViewModel : ObservableObject
     private string _searchText = string.Empty;
 
     [ObservableProperty]
-    private string _dateFilterText = "Today";
+    private string _dateFilterText = string.Empty;
 
     [ObservableProperty]
     private DateTime? _dateFrom = DateTime.Today;
@@ -65,10 +65,10 @@ public sealed partial class TransactionHistoryViewModel : ObservableObject
     private DateTime? _dateTo = DateTime.Today;
 
     [ObservableProperty]
-    private string _storeFilterText = "All Stores";
+    private string _storeFilterText = string.Empty;
 
     [ObservableProperty]
-    private string _terminalFilterText = "All Terminals";
+    private string _terminalFilterText = string.Empty;
 
     [ObservableProperty]
     private TerminalFilterOption? _selectedTerminalOption;

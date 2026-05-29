@@ -38,6 +38,20 @@ public sealed class ReceiptPrintingTests
     }
 
     [Fact]
+    public void Receipt_text_formatter_does_not_print_success_page_cash_change_preview_rows()
+    {
+        var receipt = CreateReceipt(Guid.NewGuid(), tenderedAmount: 10m, changeAmount: 1m);
+        var formatter = new ReceiptTextFormatter();
+
+        var document = formatter.Build(receipt, ReceiptPrinterSettings.Default, receipt.SoldAt);
+
+        Assert.DoesNotContain(document.PreviewRows, row => row.Text.Contains("Tendered", StringComparison.Ordinal));
+        Assert.DoesNotContain(document.PreviewRows, row => row.Text.Contains("Change", StringComparison.Ordinal));
+        Assert.DoesNotContain(document.Elements, element => element.Text.Contains("Tendered", StringComparison.Ordinal));
+        Assert.DoesNotContain(document.Elements, element => element.Text.Contains("Change", StringComparison.Ordinal));
+    }
+
+    [Fact]
     public async Task Receipt_print_service_prints_latest_receipt_with_configured_settings()
     {
         var receipt = CreateReceipt(Guid.NewGuid());
@@ -127,6 +141,57 @@ public sealed class ReceiptPrintingTests
     }
 
     [Fact]
+    public async Task Cash_drawer_service_opens_with_configured_printer_settings()
+    {
+        var settingsStore = new FakeReceiptPrinterSettingsStore
+        {
+            Settings = ReceiptPrinterSettings.Default with { PrinterPort = "COM5" }
+        };
+        var driver = new RecordingReceiptPrinterDriver
+        {
+            OpenCashDrawerResult = new ReceiptPrinterDriverResult(true, "Cash drawer opened.")
+        };
+        var service = new CashDrawerService(settingsStore, driver);
+
+        var result = await service.OpenAsync();
+
+        Assert.True(result.Succeeded);
+        Assert.Equal("Cash drawer opened.", result.Message);
+        Assert.Equal("COM5", driver.LastCashDrawerSettings?.PrinterPort);
+        Assert.Equal(1, driver.OpenCashDrawerCallCount);
+    }
+
+    [Fact]
+    public async Task Cash_drawer_service_returns_failure_when_driver_fails()
+    {
+        var driver = new RecordingReceiptPrinterDriver
+        {
+            OpenCashDrawerResult = new ReceiptPrinterDriverResult(false, "drawer offline")
+        };
+        var service = new CashDrawerService(new FakeReceiptPrinterSettingsStore(), driver);
+
+        var result = await service.OpenAsync();
+
+        Assert.False(result.Succeeded);
+        Assert.Equal("drawer offline", result.Message);
+    }
+
+    [Fact]
+    public async Task Cash_drawer_service_returns_failure_when_driver_throws()
+    {
+        var driver = new RecordingReceiptPrinterDriver
+        {
+            OpenCashDrawerException = new InvalidOperationException("sdk missing")
+        };
+        var service = new CashDrawerService(new FakeReceiptPrinterSettingsStore(), driver);
+
+        var result = await service.OpenAsync();
+
+        Assert.False(result.Succeeded);
+        Assert.Equal("sdk missing", result.Message);
+    }
+
+    [Fact]
     public async Task Receipt_printer_settings_store_persists_fields_and_defaults_port()
     {
         var repository = new InMemorySettingsRepository();
@@ -156,7 +221,7 @@ public sealed class ReceiptPrintingTests
         Assert.Equal(80, loaded.CutDistance);
     }
 
-    private static ReceiptDetails CreateReceipt(Guid orderGuid)
+    private static ReceiptDetails CreateReceipt(Guid orderGuid, decimal? tenderedAmount = null, decimal? changeAmount = null)
     {
         return new ReceiptDetails(
             orderGuid,
@@ -192,7 +257,9 @@ public sealed class ReceiptPrintingTests
                             9.00m,
                             "APPROVED CARD RECEIPT")
                     ])
-            ]);
+            ],
+            tenderedAmount,
+            changeAmount);
     }
 
     private sealed class FakeReceiptQueryService : IReceiptQueryService
@@ -251,7 +318,15 @@ public sealed class ReceiptPrintingTests
 
         public ReceiptPrinterSettings? LastSettings { get; private set; }
 
+        public ReceiptPrinterSettings? LastCashDrawerSettings { get; private set; }
+
         public ReceiptPrinterDriverResult PrintResult { get; init; } = new(true, "printed");
+
+        public ReceiptPrinterDriverResult OpenCashDrawerResult { get; init; } = new(true, "drawer opened");
+
+        public Exception? OpenCashDrawerException { get; init; }
+
+        public int OpenCashDrawerCallCount { get; private set; }
 
         public Task<ReceiptPrinterDriverResult> PrintAsync(
             ReceiptPrintDocument document,
@@ -269,6 +344,20 @@ public sealed class ReceiptPrintingTests
         {
             LastSettings = settings;
             return Task.FromResult(new ReceiptPrinterDriverResult(true, "tested"));
+        }
+
+        public Task<ReceiptPrinterDriverResult> OpenCashDrawerAsync(
+            ReceiptPrinterSettings settings,
+            CancellationToken cancellationToken = default)
+        {
+            OpenCashDrawerCallCount++;
+            LastCashDrawerSettings = settings;
+            if (OpenCashDrawerException is not null)
+            {
+                throw OpenCashDrawerException;
+            }
+
+            return Task.FromResult(OpenCashDrawerResult);
         }
     }
 
@@ -309,6 +398,13 @@ public sealed class ReceiptPrintingTests
             CancellationToken cancellationToken = default)
         {
             return Task.FromResult(new ReceiptPrinterDriverResult(true, "tested"));
+        }
+
+        public Task<ReceiptPrinterDriverResult> OpenCashDrawerAsync(
+            ReceiptPrinterSettings settings,
+            CancellationToken cancellationToken = default)
+        {
+            return Task.FromResult(new ReceiptPrinterDriverResult(true, "drawer opened"));
         }
     }
 

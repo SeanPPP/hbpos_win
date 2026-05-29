@@ -32,8 +32,8 @@ public sealed class LocalOrderRepository(LocalSqliteStore store) : ILocalOrderRe
             command.Transaction = transaction;
             command.CommandText = """
                 INSERT INTO LocalOrders
-                (OrderGuid, StoreCode, DeviceCode, CashierId, CashierName, SoldAt, TotalAmount, DiscountAmount, ActualAmount, SyncStatus)
-                VALUES ($OrderGuid, $StoreCode, $DeviceCode, $CashierId, $CashierName, $SoldAt, $TotalAmount, $DiscountAmount, $ActualAmount, 'Pending');
+                (OrderGuid, StoreCode, DeviceCode, CashierId, CashierName, SoldAt, TotalAmount, DiscountAmount, ActualAmount, TenderedAmount, ChangeAmount, SyncStatus)
+                VALUES ($OrderGuid, $StoreCode, $DeviceCode, $CashierId, $CashierName, $SoldAt, $TotalAmount, $DiscountAmount, $ActualAmount, $TenderedAmount, $ChangeAmount, 'Pending');
                 """;
             command.Parameters.AddWithValue("$OrderGuid", order.OrderGuid.ToString());
             command.Parameters.AddWithValue("$StoreCode", order.StoreCode);
@@ -44,6 +44,9 @@ public sealed class LocalOrderRepository(LocalSqliteStore store) : ILocalOrderRe
             command.Parameters.AddWithValue("$TotalAmount", order.TotalAmount);
             command.Parameters.AddWithValue("$DiscountAmount", order.DiscountAmount);
             command.Parameters.AddWithValue("$ActualAmount", order.ActualAmount);
+            // 收款/找零信息允许为空，保持历史订单与非现金场景兼容。
+            command.Parameters.AddWithValue("$TenderedAmount", order.TenderedAmount ?? (object)DBNull.Value);
+            command.Parameters.AddWithValue("$ChangeAmount", order.ChangeAmount ?? (object)DBNull.Value);
             await command.ExecuteNonQueryAsync(cancellationToken);
         }
 
@@ -242,7 +245,7 @@ public sealed class LocalOrderRepository(LocalSqliteStore store) : ILocalOrderRe
     {
         await using var command = connection.CreateCommand();
         command.CommandText = """
-            SELECT OrderGuid, StoreCode, DeviceCode, CashierId, CashierName, SoldAt, TotalAmount, DiscountAmount, ActualAmount
+            SELECT OrderGuid, StoreCode, DeviceCode, CashierId, CashierName, SoldAt, TotalAmount, DiscountAmount, ActualAmount, TenderedAmount, ChangeAmount
             FROM LocalOrders
             WHERE OrderGuid = $OrderGuid;
             """;
@@ -265,7 +268,9 @@ public sealed class LocalOrderRepository(LocalSqliteStore store) : ILocalOrderRe
             ReadDecimal(reader, "DiscountAmount"),
             ReadDecimal(reader, "ActualAmount"),
             [],
-            []);
+            [],
+            ReadNullableDecimal(reader, "TenderedAmount"),
+            ReadNullableDecimal(reader, "ChangeAmount"));
     }
 
     private static async Task<IReadOnlyList<LocalOrderLine>> ReadOrderLinesAsync(
@@ -426,6 +431,12 @@ public sealed class LocalOrderRepository(LocalSqliteStore store) : ILocalOrderRe
             string stringValue => decimal.Parse(stringValue, CultureInfo.InvariantCulture),
             _ => Convert.ToDecimal(value, CultureInfo.InvariantCulture)
         };
+    }
+
+    private static decimal? ReadNullableDecimal(SqliteDataReader reader, string name)
+    {
+        var ordinal = reader.GetOrdinal(name);
+        return reader.IsDBNull(ordinal) ? null : ReadDecimal(reader, name);
     }
 
     private static DateTimeOffset ReadDateTimeOffset(SqliteDataReader reader, string name)

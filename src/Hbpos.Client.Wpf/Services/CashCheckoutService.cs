@@ -259,7 +259,10 @@ public sealed class CashCheckoutService
             cart.DiscountAmount,
             cart.ActualAmount,
             lines,
-            payments);
+            payments,
+            // 将本次收款与找零固化到订单头，供支付成功页和历史小票复用。
+            tenderedAmount,
+            changeAmount);
 
         return new PaymentCheckoutResult(order, tenderedAmount, changeAmount);
     }

@@ -26,6 +26,8 @@ public sealed class ReceiptQueryServiceTests
         Assert.Equal(order.TotalAmount, receipt.TotalAmount);
         Assert.Equal(order.DiscountAmount, receipt.DiscountAmount);
         Assert.Equal(order.ActualAmount, receipt.ActualAmount);
+        Assert.Equal(order.TenderedAmount, receipt.TenderedAmount);
+        Assert.Equal(order.ChangeAmount, receipt.ChangeAmount);
         Assert.Equal("#" + order.OrderGuid.ToString("N")[..10].ToUpperInvariant(), receipt.TransactionIdDisplay);
         Assert.Equal(order.SoldAt.ToLocalTime().ToString("MMM dd, yyyy HH:mm"), receipt.SoldAtDisplay);
         Assert.Equal(2, receipt.Lines.Count);
@@ -73,7 +75,9 @@ public sealed class ReceiptQueryServiceTests
                 new LocalOrderLine(Guid.NewGuid(), "SKU-401", null, "Receipt Noodles", "930401", "ITEM-401", 1m, firstLineActual, 0m, firstLineActual, PriceSourceKind.StoreRetailPrice),
                 new LocalOrderLine(Guid.NewGuid(), "SKU-402", null, "Receipt Juice", "930402", "ITEM-402", 1m, 4.2m, discountAmount, secondLineActual, PriceSourceKind.ProductBase)
             ],
-            [new LocalPayment(Guid.NewGuid(), PaymentMethodKind.Cash, actualAmount, null)]);
+            [new LocalPayment(Guid.NewGuid(), PaymentMethodKind.Cash, actualAmount, null)],
+            actualAmount + 1m,
+            1m);
     }
 
     private sealed class StubOrderRepository(IEnumerable<LocalOrder> orders) : ILocalOrderRepository

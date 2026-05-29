@@ -1,4 +1,4 @@
-using Hbpos.Client.Wpf.Models;
+﻿using Hbpos.Client.Wpf.Models;
 using Hbpos.Client.Wpf.Services;
 using Hbpos.Client.Wpf.ViewModels;
 
@@ -167,7 +167,7 @@ public sealed class DeviceRegistrationTests
         Assert.False(viewModel.HasPendingRegistration);
         Assert.True(viewModel.RegisterCommand.CanExecute(null));
         Assert.False(viewModel.VerifyCommand.CanExecute(null));
-        Assert.Equal("提交切换分店注册", viewModel.RegisterButtonText);
+        Assert.Equal("Submit Store Switch Registration", viewModel.RegisterButtonText);
 
         viewModel.SelectedStore = viewModel.Stores.Single(store => store.StoreCode == "1002");
 
@@ -314,9 +314,13 @@ public sealed class DeviceRegistrationTests
         viewModel.PrepareReregister("1002");
         await viewModel.LoadStoresAsync(cachedDevice: null);
 
-        Assert.Equal("更换分店重新注册", viewModel.TitleText);
-        Assert.Equal("提交更换分店注册", viewModel.RegisterButtonText);
+        Assert.Equal("Reregister Device to Another Store", viewModel.TitleText);
+        Assert.Equal("Submit Store Switch Reregistration", viewModel.RegisterButtonText);
 
+        Assert.Null(viewModel.SelectedStore);
+        Assert.False(viewModel.RegisterCommand.CanExecute(null));
+
+        viewModel.SelectedStore = Assert.Single(viewModel.Stores);
         await viewModel.RegisterCommand.ExecuteAsync(null);
 
         Assert.Equal("1002", workflow.LastLoadExcludedStoreCode);
@@ -428,3 +432,4 @@ public sealed class DeviceRegistrationTests
         }
     }
 }
+

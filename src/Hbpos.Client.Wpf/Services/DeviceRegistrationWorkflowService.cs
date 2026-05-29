@@ -1,3 +1,4 @@
+using Hbpos.Client.Wpf.Localization;
 using Hbpos.Client.Wpf.Models;
 using Hbpos.Contracts.Devices;
 
@@ -51,17 +52,12 @@ public sealed record DeviceRegistrationActionResult(
 public sealed class DeviceRegistrationWorkflowService(
     IDeviceApiClient deviceApiClient,
     ILocalDeviceRepository deviceRepository,
-    IDeviceFingerprintService fingerprintService) : IDeviceRegistrationWorkflowService
+    IDeviceFingerprintService fingerprintService,
+    ILocalizationService? localization = null) : IDeviceRegistrationWorkflowService
 {
     private const int PendingDeviceStatus = -1;
-    private const string LoadingStoresStatus = "Loading stores...";
-    private const string PendingApprovalStatus = "Device registration is pending approval.";
-    private const string EnabledStatus = "Device is enabled.";
-    private const string MissingAuthorizationStatus = "Device authorization code was not returned. Please verify again.";
-    private const string NoStoresStatus = "No active stores are available.";
-    private const string SelectStoreStatus = "Select a store and submit this register for approval.";
-    private const string NoReregisterStoresStatus = "No other active stores are available.";
-    private const string SelectReregisterStoreStatus = "Select a new store and submit device reregistration.";
+
+    public const string LoadingStoresMessage = "Loading stores...";
 
     public string GetHardwareId()
     {
@@ -87,7 +83,7 @@ public sealed class DeviceRegistrationWorkflowService(
                     ?? visibleStores.FirstOrDefault(),
                 cachedDevice.DeviceCode,
                 cachedDevice.DeviceStatus == PendingDeviceStatus,
-                cachedDevice.Message ?? PendingApprovalStatus);
+                cachedDevice.Message ?? T("deviceRegistration.status.pendingApproval", "Device registration is pending approval."));
         }
 
         return new DeviceRegistrationLoadResult(
@@ -96,8 +92,12 @@ public sealed class DeviceRegistrationWorkflowService(
             string.Empty,
             false,
             isReregisterMode
-                ? visibleStores.Length == 0 ? NoReregisterStoresStatus : SelectReregisterStoreStatus
-                : visibleStores.Length == 0 ? NoStoresStatus : SelectStoreStatus);
+                ? visibleStores.Length == 0
+                    ? T("deviceRegistration.status.noReregisterStores", "No other active stores are available.")
+                    : T("deviceRegistration.status.selectReregisterStore", "Select a new store and submit device reregistration.")
+                : visibleStores.Length == 0
+                    ? T("deviceRegistration.status.noStores", "No active stores are available.")
+                    : T("deviceRegistration.status.selectStore", "Select a store and submit this register for approval."));
     }
 
     public async Task<DeviceRegistrationActionResult> RegisterAsync(
@@ -174,9 +174,7 @@ public sealed class DeviceRegistrationWorkflowService(
             shouldRaiseReregistered);
     }
 
-    internal static string LoadingStoresMessage => LoadingStoresStatus;
-
-    private static DeviceRegistrationActionResult CreateActionResult(
+    private DeviceRegistrationActionResult CreateActionResult(
         string deviceCode,
         string storeCode,
         string storeName,
@@ -187,14 +185,18 @@ public sealed class DeviceRegistrationWorkflowService(
         string hardwareId,
         bool shouldRaiseReregistered)
     {
-        var statusMessage = message ?? (isAllowed ? EnabledStatus : PendingApprovalStatus);
+        var statusMessage = message ?? (isAllowed
+            ? T("deviceRegistration.status.enabled", "Device is enabled.")
+            : T("deviceRegistration.status.pendingApproval", "Device registration is pending approval."));
         var shouldRaiseActivated = false;
 
         if (isAllowed)
         {
             if (string.IsNullOrWhiteSpace(authorizationCode))
             {
-                statusMessage = MissingAuthorizationStatus;
+                statusMessage = T(
+                    "deviceRegistration.status.missingAuthorization",
+                    "Device authorization code was not returned. Please verify again.");
             }
             else
             {
@@ -212,6 +214,11 @@ public sealed class DeviceRegistrationWorkflowService(
             authorizationCode,
             shouldRaiseActivated,
             shouldRaiseReregistered);
+    }
+
+    private string T(string key, string fallback)
+    {
+        return localization?.T(key) ?? fallback;
     }
 
     private static bool IsAcceptedReregister(DeviceReregisterResponse response)

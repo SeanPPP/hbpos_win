@@ -1,4 +1,5 @@
 using System.Globalization;
+using Hbpos.Client.Wpf.Localization;
 using Hbpos.Client.Wpf.Models;
 using Hbpos.Contracts.Orders;
 using PCEFTPOS.EFTClient.IPInterface;
@@ -103,7 +104,9 @@ public sealed class LinklyEftClientAdapter(EFTClientIPAsync client) : ILinklyEft
     }
 }
 
-public sealed class LinklyTerminalClient(ILinklyEftClientFactory clientFactory) : ILinklyTerminalClient
+public sealed class LinklyTerminalClient(
+    ILinklyEftClientFactory clientFactory,
+    ILocalizationService? localization = null) : ILinklyTerminalClient
 {
     private const string ProcessorName = "ANZ";
     private const string Merchant = "00";
@@ -122,16 +125,21 @@ public sealed class LinklyTerminalClient(ILinklyEftClientFactory clientFactory) 
             var connected = await client.ConnectAsync(host, port, useSsl: false, useKeepAlive: false)
                 .WaitAsync(timeoutCts.Token);
             return connected
-                ? new LinklyConnectionTestResult(true, "Linkly EFT-Client connection succeeded.")
-                : new LinklyConnectionTestResult(false, "Linkly EFT-Client connection failed.");
+                ? new LinklyConnectionTestResult(true, T("linkly.local.test.success", "Linkly EFT-Client connection succeeded."))
+                : new LinklyConnectionTestResult(false, T("linkly.local.test.failed", "Linkly EFT-Client connection failed."));
         }
         catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
         {
-            return new LinklyConnectionTestResult(false, "Linkly EFT-Client connection timed out.");
+            return new LinklyConnectionTestResult(false, T("linkly.local.test.timeout", "Linkly EFT-Client connection timed out."));
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
-            return new LinklyConnectionTestResult(false, $"Linkly connection failed: {ex.Message}");
+            return new LinklyConnectionTestResult(
+                false,
+                string.Format(
+                    CultureInfo.CurrentCulture,
+                    T("linkly.local.test.exception", "Linkly connection failed: {0}"),
+                    ex.Message));
         }
         finally
         {
@@ -196,12 +204,12 @@ public sealed class LinklyTerminalClient(ILinklyEftClientFactory clientFactory) 
     {
         if (amount <= 0m)
         {
-            return new PaymentAuthorizationResult(false, null, "Card amount must be greater than zero.");
+            return new PaymentAuthorizationResult(false, null, T("linkly.local.amountMustBePositive", "Card amount must be greater than zero."));
         }
 
         if (cancellationToken.IsCancellationRequested)
         {
-            return new PaymentAuthorizationResult(false, null, CancelledMessage);
+            return new PaymentAuthorizationResult(false, null, T("linkly.local.cancelled", CancelledMessage));
         }
 
         using var timeoutCts = CreateTimeoutToken(settings.TerminalTimeout, cancellationToken);
@@ -217,12 +225,12 @@ public sealed class LinklyTerminalClient(ILinklyEftClientFactory clientFactory) 
                 .WaitAsync(timeoutCts.Token);
             if (!connected)
             {
-                return new PaymentAuthorizationResult(false, null, "ANZ Linkly EFT-Client connection failed.");
+                return new PaymentAuthorizationResult(false, null, T("linkly.local.connectionFailed", "ANZ Linkly EFT-Client connection failed."));
             }
 
             if (!await client.WriteRequestAsync(request).WaitAsync(timeoutCts.Token))
             {
-                return new PaymentAuthorizationResult(false, null, "ANZ Linkly transaction request could not be sent.");
+                return new PaymentAuthorizationResult(false, null, T("linkly.local.requestSendFailed", "ANZ Linkly transaction request could not be sent."));
             }
 
             transactionRequestSent = true;
@@ -241,13 +249,13 @@ public sealed class LinklyTerminalClient(ILinklyEftClientFactory clientFactory) 
                     receipts);
             }
 
-            return new PaymentAuthorizationResult(false, null, CancelledMessage);
+            return new PaymentAuthorizationResult(false, null, T("linkly.local.cancelled", CancelledMessage));
         }
         catch (Exception ex) when (ex is OperationCanceledException or ConnectionException)
         {
             var fallbackMessage = ex is OperationCanceledException
-                ? "ANZ Linkly transaction timed out."
-                : "ANZ Linkly connection was closed.";
+                ? T("linkly.local.timeout", "ANZ Linkly transaction timed out.")
+                : T("linkly.local.connectionClosed", "ANZ Linkly connection was closed.");
 
             if (!transactionRequestSent)
             {
@@ -264,7 +272,10 @@ public sealed class LinklyTerminalClient(ILinklyEftClientFactory clientFactory) 
         }
         catch (Exception ex)
         {
-            var fallbackMessage = $"ANZ Linkly transaction failed: {ex.Message}";
+            var fallbackMessage = string.Format(
+                CultureInfo.CurrentCulture,
+                T("linkly.local.transactionFailed", "ANZ Linkly transaction failed: {0}"),
+                ex.Message);
             if (transactionRequestSent)
             {
                 return await TryRecoverLastTransactionAsync(
@@ -292,7 +303,7 @@ public sealed class LinklyTerminalClient(ILinklyEftClientFactory clientFactory) 
         IReadOnlyList<string> capturedReceipts)
     {
         var receipts = new List<string>(capturedReceipts);
-        const string fallbackMessage = "ANZ Linkly cancellation outcome could not be confirmed.";
+        var fallbackMessage = T("linkly.local.cancelOutcomeUnknown", "ANZ Linkly cancellation outcome could not be confirmed.");
         using var cancelCts = CreateTimeoutToken(settings.TerminalTimeout, CancellationToken.None);
 
         try
@@ -343,7 +354,7 @@ public sealed class LinklyTerminalClient(ILinklyEftClientFactory clientFactory) 
     {
         if (cancellationToken.IsCancellationRequested)
         {
-            return new PaymentAuthorizationResult(false, null, CancelledMessage);
+            return new PaymentAuthorizationResult(false, null, T("linkly.local.cancelled", CancelledMessage));
         }
 
         using var timeoutCts = CreateTimeoutToken(settings.TerminalTimeout, cancellationToken);
@@ -387,7 +398,7 @@ public sealed class LinklyTerminalClient(ILinklyEftClientFactory clientFactory) 
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
-            return new PaymentAuthorizationResult(false, null, CancelledMessage);
+            return new PaymentAuthorizationResult(false, null, T("linkly.local.cancelled", CancelledMessage));
         }
         catch (Exception ex) when (ex is OperationCanceledException or ConnectionException)
         {
@@ -403,7 +414,7 @@ public sealed class LinklyTerminalClient(ILinklyEftClientFactory clientFactory) 
         }
     }
 
-    private static async Task<EFTTransactionResponse> ReadTransactionResponseAsync(
+    private async Task<EFTTransactionResponse> ReadTransactionResponseAsync(
         ILinklyEftClient client,
         ICollection<string> receipts,
         CancellationToken cancellationToken)
@@ -419,7 +430,7 @@ public sealed class LinklyTerminalClient(ILinklyEftClientFactory clientFactory) 
                 case EFTTransactionResponse transaction:
                     return transaction;
                 case null:
-                    throw new InvalidOperationException("ANZ Linkly returned an empty response.");
+                    throw new InvalidOperationException(T("linkly.local.emptyResponse", "ANZ Linkly returned an empty response."));
             }
         }
     }
@@ -441,7 +452,7 @@ public sealed class LinklyTerminalClient(ILinklyEftClientFactory clientFactory) 
         };
     }
 
-    private static PaymentAuthorizationResult ToAuthorizationResult(
+    private PaymentAuthorizationResult ToAuthorizationResult(
         EFTTransactionResponse response,
         decimal requestedAmount,
         string requestedTxnRef,
@@ -455,7 +466,7 @@ public sealed class LinklyTerminalClient(ILinklyEftClientFactory clientFactory) 
             : new PaymentAuthorizationResult(false, $"ANZ:{txnRef}", FormatResponseMessage(response.ResponseText, response.ResponseCode), amount, [transaction]);
     }
 
-    private static PaymentAuthorizationResult ToAuthorizationResult(
+    private PaymentAuthorizationResult ToAuthorizationResult(
         EFTGetLastTransactionResponse response,
         decimal requestedAmount,
         string requestedTxnRef,
@@ -602,16 +613,22 @@ public sealed class LinklyTerminalClient(ILinklyEftClientFactory clientFactory) 
         return receipts.Count == 0 ? null : string.Join(Environment.NewLine + Environment.NewLine, receipts);
     }
 
-    private static string FormatResponseMessage(string? responseText, string? responseCode)
+    private string FormatResponseMessage(string? responseText, string? responseCode)
     {
         var text = NormalizeOptional(responseText);
         var code = NormalizeOptional(responseCode);
         if (text is null && code is null)
         {
-            return "ANZ Linkly transaction was declined.";
+            return T("linkly.local.declined", "ANZ Linkly transaction was declined.");
         }
 
-        return code is null ? text! : $"{text ?? "ANZ Linkly transaction was declined."} ({code})";
+        return code is null ? text! : $"{text ?? T("linkly.local.declined", "ANZ Linkly transaction was declined.")} ({code})";
+    }
+
+    private string T(string key, string fallback)
+    {
+        var value = localization?.T(key);
+        return string.IsNullOrWhiteSpace(value) || value == $"[[{key}]]" ? fallback : value;
     }
 
     private static string Limit(string value, int maxLength)

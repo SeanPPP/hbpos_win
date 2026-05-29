@@ -1,6 +1,7 @@
 using System.Net.Http;
 using System.Net.Http.Json;
 using System.Text.Json;
+using Hbpos.Client.Wpf.Localization;
 using Hbpos.Client.Wpf.Models;
 using Hbpos.Contracts.Common;
 using Hbpos.Contracts.Vouchers;
@@ -23,7 +24,7 @@ public interface IVoucherApiClient : IVoucherTenderClient
         CancellationToken cancellationToken = default);
 }
 
-public sealed class VoucherApiClient(HttpClient httpClient) : IVoucherApiClient
+public sealed class VoucherApiClient(HttpClient httpClient, ILocalizationService? localization = null) : IVoucherApiClient
 {
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
 
@@ -61,13 +62,13 @@ public sealed class VoucherApiClient(HttpClient httpClient) : IVoucherApiClient
     {
         if (string.IsNullOrWhiteSpace(voucherCode))
         {
-            return new PaymentAuthorizationResult(false, null, "Voucher code is required.");
+            return new PaymentAuthorizationResult(false, null, T("payment.voucher.codeRequired", "Voucher code is required."));
         }
 
         var query = await QueryAsync(session.StoreCode, voucherCode.Trim(), cancellationToken);
         if (!query.Found || query.Voucher is null)
         {
-            return new PaymentAuthorizationResult(false, null, query.Message ?? "Voucher is unavailable.");
+            return new PaymentAuthorizationResult(false, null, query.Message ?? T("payment.voucher.status.unavailable", "Voucher is unavailable."));
         }
 
         var lockAmount = Math.Min(amount, query.Voucher.RemainingAmount);
@@ -91,17 +92,17 @@ public sealed class VoucherApiClient(HttpClient httpClient) : IVoucherApiClient
     {
         if (amount <= 0m)
         {
-            return new PaymentAuthorizationResult(false, null, "Voucher refund amount must be greater than zero.");
+            return new PaymentAuthorizationResult(false, null, T("payment.voucher.refundAmountMustBePositive", "Voucher refund amount must be greater than zero."));
         }
 
         if (string.IsNullOrWhiteSpace(orderReference))
         {
-            return new PaymentAuthorizationResult(false, null, "Voucher refund order reference is required.");
+            return new PaymentAuthorizationResult(false, null, T("payment.voucher.refundOrderReferenceRequired", "Voucher refund order reference is required."));
         }
 
         if (string.IsNullOrWhiteSpace(idempotencyKey))
         {
-            return new PaymentAuthorizationResult(false, null, "Voucher refund idempotency key is required.");
+            return new PaymentAuthorizationResult(false, null, T("payment.voucher.refundIdempotencyKeyRequired", "Voucher refund idempotency key is required."));
         }
 
         var issued = await IssueRefundVoucherAsync(
@@ -155,5 +156,10 @@ public sealed class VoucherApiClient(HttpClient httpClient) : IVoucherApiClient
         }
 
         return result.Data;
+    }
+
+    private string T(string key, string fallback)
+    {
+        return localization?.T(key) ?? fallback;
     }
 }

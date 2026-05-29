@@ -1,3 +1,5 @@
+using System.Globalization;
+using Hbpos.Client.Wpf.Localization;
 using Hbpos.Client.Wpf.Models;
 using Hbpos.Contracts.Catalog;
 using Hbpos.Contracts.Orders;
@@ -81,7 +83,8 @@ public sealed class ReceiptReturnsWorkflowService(
     ILocalOrderRepository localOrderRepository,
     IRemoteOrderHistoryService? remoteOrderHistoryService,
     LocalSellableItemIndex priceIndex,
-    PosCartService cart) : IReceiptReturnsWorkflowService
+    PosCartService cart,
+    ILocalizationService? localization = null) : IReceiptReturnsWorkflowService
 {
     public async Task<ReceiptReturnLookupResult> LookupOrderAsync(
         PosSessionState session,
@@ -91,7 +94,7 @@ public sealed class ReceiptReturnsWorkflowService(
         var query = NormalizeQuery(orderQuery);
         if (string.IsNullOrWhiteSpace(query))
         {
-            return new ReceiptReturnLookupResult(null, false, false, "Scan or enter an order number.");
+            return new ReceiptReturnLookupResult(null, false, false, T("returns.status.lookupPrompt", "Scan or enter an order number."));
         }
 
         if (session.IsOnline && remoteOrderHistoryService is not null)
@@ -108,7 +111,7 @@ public sealed class ReceiptReturnsWorkflowService(
                             MapRemote(context),
                             true,
                             false,
-                            "Loaded online order and return records.");
+                            T("returns.status.loadedOnline", "Loaded online order and return records."));
                     }
                 }
             }
@@ -116,11 +119,11 @@ public sealed class ReceiptReturnsWorkflowService(
             {
                 var fallback = await LookupLocalOrderAsync(session, query, cancellationToken);
                 return fallback.Order is null
-                    ? new ReceiptReturnLookupResult(null, false, true, $"Online order lookup failed: {ex.Message}")
+                    ? new ReceiptReturnLookupResult(null, false, true, Format("returns.status.lookupFailed", "Online order lookup failed: {0}", ex.Message))
                     : fallback with
                     {
                         ReturnRecordsMayBeStale = true,
-                        StatusMessage = $"Loaded local order; online return records may be stale. {ex.Message}"
+                        StatusMessage = Format("returns.status.loadedLocalStaleWithError", "Loaded local order; online return records may be stale. {0}", ex.Message)
                     };
             }
         }
@@ -135,15 +138,15 @@ public sealed class ReceiptReturnsWorkflowService(
         var query = NormalizeQuery(productQuery);
         if (string.IsNullOrWhiteSpace(query))
         {
-            return new ReceiptReturnProductLookupResult(null, "Scan a product barcode.");
+            return new ReceiptReturnProductLookupResult(null, T("returns.status.scanProduct", "Scan a product barcode."));
         }
 
         var exactMatches = priceIndex.FindExactMatches(session.StoreCode, query);
         var matches = exactMatches.Count > 0 ? exactMatches : priceIndex.Search(session.StoreCode, query, 8);
         var item = matches.FirstOrDefault();
         return item is null
-            ? new ReceiptReturnProductLookupResult(null, "Product was not found.")
-            : new ReceiptReturnProductLookupResult(item, $"Added no-receipt return item: {item.DisplayName}");
+            ? new ReceiptReturnProductLookupResult(null, T("returns.status.productNotFound", "Product was not found."))
+            : new ReceiptReturnProductLookupResult(item, Format("returns.status.addedNoReceipt", "Added no-receipt return item: {0}", item.DisplayName));
     }
 
     public IReadOnlyList<CartLine> AddReturnLinesToCart(
@@ -229,8 +232,25 @@ public sealed class ReceiptReturnsWorkflowService(
         }
 
         return order is null
-            ? new ReceiptReturnLookupResult(null, false, false, "Order was not found.")
-            : new ReceiptReturnLookupResult(MapLocal(order), false, true, "Loaded local order; return records may be stale.");
+            ? new ReceiptReturnLookupResult(null, false, false, T("returns.status.orderNotFound", "Order was not found."))
+            : new ReceiptReturnLookupResult(
+                MapLocal(order),
+                false,
+                true,
+                T("returns.status.loadedLocalStale", "Loaded local order; return records may be stale."));
+    }
+
+    private string T(string key, string fallback)
+    {
+        return localization?.T(key) ?? fallback;
+    }
+
+    private string Format(string key, string fallback, params object[] args)
+    {
+        return string.Format(
+            localization?.CurrentCulture ?? CultureInfo.CurrentCulture,
+            localization?.T(key) ?? fallback,
+            args);
     }
 
     private static ReceiptReturnOrder MapRemote(OrderReturnContextDto context)
@@ -281,53 +301,36 @@ public sealed class ReceiptReturnsWorkflowService(
                 line.Quantity,
                 line.UnitPrice,
                 line.ActualAmount,
-                ReturnedQuantity: 0m)).ToList(),
+                0m)).ToList(),
             [],
-            BuildLocalPaymentCapacities(order));
+            BuildPaymentCapacities(order));
     }
 
-    private static IReadOnlyList<OrderReturnPaymentCapacityDto> BuildLocalPaymentCapacities(LocalOrder order)
+    private static IReadOnlyList<OrderReturnPaymentCapacityDto> BuildPaymentCapacities(LocalOrder order)
     {
         return order.Payments
             .Where(payment => payment.Amount > 0m)
             .GroupBy(payment => new
             {
                 payment.Method,
-                Reference = payment.Method == PaymentMethodKind.Card
-                    ? NormalizeReference(payment.Reference)
-                    : null
+                payment.Reference
             })
             .Select(group => new OrderReturnPaymentCapacityDto(
                 group.Key.Method,
                 group.Sum(payment => payment.Amount),
                 0m,
                 group.Sum(payment => payment.Amount),
-                group.Key.Reference,
-                group
-                    .Where(payment => payment.Method == PaymentMethodKind.Card)
-                    .SelectMany(payment => payment.CardTransactions ?? [])
-                    .ToList(),
-                order.OrderGuid))
+                group.Key.Reference))
             .ToList();
     }
 
-    private static string? NormalizeReference(string? reference)
+    private static string NormalizeQuery(string? query)
     {
-        return string.IsNullOrWhiteSpace(reference) ? null : reference.Trim();
-    }
-
-    private static string NormalizeQuery(string value)
-    {
-        return value.Trim().TrimStart('#');
+        return query?.Trim() ?? string.Empty;
     }
 
     private static bool TryParseOrderGuid(string query, out Guid orderGuid)
     {
-        if (Guid.TryParse(query, out orderGuid))
-        {
-            return true;
-        }
-
-        return query.Length == 32 && Guid.TryParseExact(query, "N", out orderGuid);
+        return Guid.TryParse(query, out orderGuid);
     }
 }

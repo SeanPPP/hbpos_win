@@ -1,4 +1,4 @@
-using System.Collections.ObjectModel;
+﻿using System.Collections.ObjectModel;
 using System.Diagnostics;
 using System.Windows;
 using System.Windows.Threading;
@@ -12,6 +12,13 @@ using Hbpos.Contracts.Orders;
 using Microsoft.Extensions.DependencyInjection;
 
 namespace Hbpos.Client.Wpf.ViewModels;
+
+public sealed record DeviceReregistrationStartResult(bool Started, string StatusMessage)
+{
+    public static DeviceReregistrationStartResult StartedWith(string statusMessage) => new(true, statusMessage);
+
+    public static DeviceReregistrationStartResult Blocked(string statusMessage) => new(false, statusMessage);
+}
 
 public sealed partial class MainViewModel : ObservableObject
 {
@@ -50,6 +57,11 @@ public sealed partial class MainViewModel : ObservableObject
     private readonly IDeviceRegistrationWorkflowService _deviceRegistrationWorkflowService;
     private readonly ISpecialProductsWorkflowService _specialProductsWorkflowService;
     private readonly IReceiptReturnsWorkflowService _receiptReturnsWorkflowService;
+    private readonly IDailyCloseService _dailyCloseService;
+    private readonly IDailyClosePrintService _dailyClosePrintService;
+    private readonly ICashDrawerService _cashDrawerService;
+    private readonly IApplicationExitService _applicationExitService;
+    private readonly IConfirmationDialogService _confirmationDialogService;
     private readonly PosTerminalWorkflowFactory _posTerminalWorkflowFactory;
     private readonly DispatcherTimer _clockTimer = new() { Interval = TimeSpan.FromSeconds(1) };
     private readonly DispatcherTimer _connectivityTimer = new() { Interval = TimeSpan.FromSeconds(30) };
@@ -182,7 +194,12 @@ public sealed partial class MainViewModel : ObservableObject
         IReceiptPrintService? receiptPrintService = null,
         IReceiptPrinterSettingsStore? receiptPrinterSettingsStore = null,
         IReceiptTextFormatter? receiptTextFormatter = null,
-        IOrderUploadExecutionService? orderUploadExecutionService = null)
+        IOrderUploadExecutionService? orderUploadExecutionService = null,
+        IDailyCloseService? dailyCloseService = null,
+        IDailyClosePrintService? dailyClosePrintService = null,
+        ICashDrawerService? cashDrawerService = null,
+        IApplicationExitService? applicationExitService = null,
+        IConfirmationDialogService? confirmationDialogService = null)
         : this(
             priceIndex,
             cart,
@@ -214,12 +231,18 @@ public sealed partial class MainViewModel : ObservableObject
                 orderRepository,
                 null,
                 priceIndex,
-                cart),
+                cart,
+                localization),
             userFeedbackService: userFeedbackService ?? NoopUserFeedbackService.Instance,
-            receiptPrintService: receiptPrintService ?? NoopReceiptPrintService.Instance,
+            receiptPrintService: receiptPrintService ?? new NoopReceiptPrintService(localization),
             receiptPrinterSettingsStore: receiptPrinterSettingsStore,
             receiptTextFormatter: receiptTextFormatter ?? new ReceiptTextFormatter(),
-            orderUploadExecutionService: orderUploadExecutionService)
+            orderUploadExecutionService: orderUploadExecutionService,
+            dailyCloseService: dailyCloseService,
+            dailyClosePrintService: dailyClosePrintService,
+            cashDrawerService: cashDrawerService,
+            applicationExitService: applicationExitService,
+            confirmationDialogService: confirmationDialogService)
     {
     }
 
@@ -255,7 +278,12 @@ public sealed partial class MainViewModel : ObservableObject
         IReceiptPrintService? receiptPrintService = null,
         IReceiptPrinterSettingsStore? receiptPrinterSettingsStore = null,
         IReceiptTextFormatter? receiptTextFormatter = null,
-        IOrderUploadExecutionService? orderUploadExecutionService = null)
+        IOrderUploadExecutionService? orderUploadExecutionService = null,
+        IDailyCloseService? dailyCloseService = null,
+        IDailyClosePrintService? dailyClosePrintService = null,
+        ICashDrawerService? cashDrawerService = null,
+        IApplicationExitService? applicationExitService = null,
+        IConfirmationDialogService? confirmationDialogService = null)
     {
         _priceIndex = priceIndex;
         _cart = cart;
@@ -276,7 +304,7 @@ public sealed partial class MainViewModel : ObservableObject
         _rawScannerService = rawScannerService;
         _userFeedbackService = userFeedbackService ?? NoopUserFeedbackService.Instance;
         _receiptQueryService = receiptQueryService;
-        _receiptPrintService = receiptPrintService ?? NoopReceiptPrintService.Instance;
+        _receiptPrintService = receiptPrintService ?? new NoopReceiptPrintService(_localization);
         _receiptPrinterSettingsStore = receiptPrinterSettingsStore;
         _receiptTextFormatter = receiptTextFormatter ?? new ReceiptTextFormatter();
         _suspendedOrderService = suspendedOrderService;
@@ -292,7 +320,13 @@ public sealed partial class MainViewModel : ObservableObject
             _orderRepository,
             _remoteOrderHistoryService,
             _priceIndex,
-            _cart);
+            _cart,
+            _localization);
+        _dailyCloseService = dailyCloseService ?? NoopDailyCloseService.Instance;
+        _dailyClosePrintService = dailyClosePrintService ?? NoopDailyClosePrintService.Instance;
+        _cashDrawerService = cashDrawerService ?? new NoopCashDrawerService(_localization);
+        _applicationExitService = applicationExitService ?? new WpfApplicationExitService();
+        _confirmationDialogService = confirmationDialogService ?? new WpfConfirmationDialogService();
         _posTerminalWorkflowFactory = posTerminalWorkflowFactory;
 
         PaymentSuccess = new PaymentSuccessViewModel(
@@ -307,6 +341,7 @@ public sealed partial class MainViewModel : ObservableObject
         ShowReturnsCommand = new RelayCommand(ShowReturns);
         ShowPaymentSuccessCommand = new AsyncRelayCommand(ShowPaymentSuccessLatestAsync);
         ShowHistoryCommand = new AsyncRelayCommand(ShowHistoryAsync);
+        ShowDailyCloseCommand = new AsyncRelayCommand(ShowDailyCloseAsync);
         ShowCustomerDisplayCommand = new RelayCommand(ShowCustomerDisplay);
         ShowSettingsCommand = new AsyncRelayCommand(ShowSettingsAsync);
         ToggleSyncCenterCommand = new AsyncRelayCommand(ToggleSyncCenterAsync);
@@ -344,6 +379,8 @@ public sealed partial class MainViewModel : ObservableObject
 
     public TransactionHistoryViewModel? TransactionHistory { get; private set; }
 
+    public DailyCloseViewModel? DailyClose { get; private set; }
+
     public CustomerDisplayViewModel CustomerDisplay { get; } = new();
 
     public DeviceRegistrationViewModel? DeviceRegistration { get; private set; }
@@ -374,6 +411,8 @@ public sealed partial class MainViewModel : ObservableObject
     public IAsyncRelayCommand ShowPaymentSuccessCommand { get; }
 
     public IAsyncRelayCommand ShowHistoryCommand { get; }
+
+    public IAsyncRelayCommand ShowDailyCloseCommand { get; }
 
     public IRelayCommand ShowCustomerDisplayCommand { get; }
 
@@ -459,7 +498,7 @@ public sealed partial class MainViewModel : ObservableObject
         if (DeviceRegistration is not null)
         {
             DeviceRegistration.IsBusy = true;
-            DeviceRegistration.StatusMessage = "正在加载本地商品...";
+            DeviceRegistration.StatusMessage = _localization.T("startup.stage.loadingProducts");
         }
 
         Session = Session with
@@ -512,16 +551,19 @@ public sealed partial class MainViewModel : ObservableObject
             onHoldOrderAsync: SuspendCurrentOrderAsync,
             onRecallOrderAsync: ShowSuspendedHistoryAsync,
             onOpenHistoryAsync: ShowHistoryAsync,
+            onOpenDailyCloseAsync: ShowDailyCloseAsync,
             onOpenSettingsAsync: ShowSettingsAsync,
             onOpenCustomerDisplay: ShowCustomerDisplay,
             syncCatalogAsync: SyncCatalogAndReloadAsync,
             resetCatalogAsync: ResetCatalogAndReloadAsync,
             refreshOnlineAsync: RefreshOnlineStateAsync,
             rawScannerService: _rawScannerService,
-            onReregisterDeviceAsync: BeginDeviceReregistrationAsync,
+            onReregisterDeviceAsync: BeginDeviceReregistrationFromPosAsync,
             workflowService: posWorkflowService,
             onOpenReturns: ShowReturns,
-            onPrintLastReceiptAsync: PrintLatestReceiptAsync);
+            onPrintLastReceiptAsync: PrintLatestReceiptAsync,
+            onOpenCashDrawerAsync: OpenCashDrawerAsync,
+            onExitApplicationAsync: ExitApplicationAsync);
         SpecialProducts = new SpecialProductsViewModel(
             _priceIndex,
             _cart,
@@ -539,7 +581,8 @@ public sealed partial class MainViewModel : ObservableObject
             Session,
             ShowPos,
             line => PosTerminal?.RevealCartLine(line),
-            _rawScannerService);
+            _rawScannerService,
+            _localization);
         if (cachedItems.Count > 0)
         {
             PosTerminal.LoadMatches(cachedItems);
@@ -808,6 +851,11 @@ public sealed partial class MainViewModel : ObservableObject
             return "shell.page.history";
         }
 
+        if (ReferenceEquals(CurrentScreen, DailyClose))
+        {
+            return "shell.page.dailyClose";
+        }
+
         if (ReferenceEquals(CurrentScreen, Settings))
         {
             return "shell.page.settings";
@@ -833,7 +881,7 @@ public sealed partial class MainViewModel : ObservableObject
 
     private DeviceRegistrationViewModel CreateDeviceRegistrationViewModel(AppStartupOptions startupOptions)
     {
-        var viewModel = new DeviceRegistrationViewModel(_deviceRegistrationWorkflowService);
+        var viewModel = new DeviceRegistrationViewModel(_deviceRegistrationWorkflowService, _localization);
         viewModel.DeviceActivatedAsync += (_, args) => ActivateDeviceAsync(args, startupOptions);
         viewModel.DeviceReregistered += (_, _) => ApplyDeviceReregistered();
         viewModel.CancelRequested += (_, _) => CancelDeviceReregistration();
@@ -889,6 +937,11 @@ public sealed partial class MainViewModel : ObservableObject
         {
             TransactionHistory.Session = Session;
         }
+
+        if (DailyClose is not null)
+        {
+            DailyClose.Session = Session;
+        }
     }
 
     private void BeginInitialCatalogSync()
@@ -920,7 +973,8 @@ public sealed partial class MainViewModel : ObservableObject
                 _cart,
                 _cashPaymentWorkflowService,
                 Session,
-                _localization);
+                _localization,
+                ShowPos);
             CashPayment.PaymentCompleted += OnPaymentCompleted;
             CashPayment.PropertyChanged += OnCashPaymentPropertyChanged;
         }
@@ -1001,11 +1055,11 @@ public sealed partial class MainViewModel : ObservableObject
         catch (OperationCanceledException)
         {
             ConsoleLog.Write("CatalogSync", $"initial sync canceled or timed out after seconds={InitialCatalogSyncTimeout.TotalSeconds:0}");
-            StatusMessage = "Catalog sync timed out. POS remains available; use Settings > Data Download to retry.";
+            StatusMessage = _localization.T("main.catalogSync.timedOut");
         }
         catch (Exception ex)
         {
-            StatusMessage = $"Catalog sync failed: {ex.Message}";
+            StatusMessage = string.Format(_localization.CurrentCulture, _localization.T("main.catalogSync.failed"), ex.Message);
         }
     }
 
@@ -1115,27 +1169,32 @@ public sealed partial class MainViewModel : ObservableObject
         _customerDisplayPrewarmed = true;
     }
 
-    private async Task BeginDeviceReregistrationAsync()
+    private async Task BeginDeviceReregistrationFromPosAsync()
+    {
+        await BeginDeviceReregistrationAsync();
+    }
+
+    private async Task<DeviceReregistrationStartResult> BeginDeviceReregistrationAsync()
     {
         if (_startupOptions?.PreviewMode == true)
         {
-            StatusMessage = "Preview mode does not support device reregistration.";
-            return;
+            StatusMessage = _localization.T("main.reregister.previewUnsupported");
+            return DeviceReregistrationStartResult.Blocked(StatusMessage);
         }
 
         if (!_cart.IsEmpty)
         {
-            StatusMessage = "请先完成或清空当前购物车后再重新注册设备。";
-            return;
+            StatusMessage = _localization.T("main.reregister.cartNotEmpty");
+            return DeviceReregistrationStartResult.Blocked(StatusMessage);
         }
 
         var syncSnapshot = await _shellSyncCenterService.GetSnapshotAsync();
         var overview = syncSnapshot.Overview;
         if (overview.PendingCount > 0 || overview.FailedCount > 0 || overview.SyncingCount > 0)
         {
-            StatusMessage = "存在待同步、失败或同步中的订单，请先处理同步后再重新注册设备。";
+            StatusMessage = _localization.T("main.reregister.syncPending");
             ApplySyncCenterSnapshot(syncSnapshot);
-            return;
+            return DeviceReregistrationStartResult.Blocked(StatusMessage);
         }
 
         var startupOptions = _startupOptions ?? new AppStartupOptions([], false, null, null);
@@ -1145,8 +1204,10 @@ public sealed partial class MainViewModel : ObservableObject
         ClearCashPaymentCache();
         DeviceRegistration.PrepareReregister(Session.StoreCode);
         IsDeviceReregistrationDialogOpen = true;
+        // 弹窗打开后立即加载可切换分店，避免用户首次看到空列表。
         _deviceRegistrationStoreLoadTask = DeviceRegistration.LoadStoresAsync(null);
         await _deviceRegistrationStoreLoadTask;
+        return DeviceReregistrationStartResult.StartedWith(DeviceRegistration.StatusMessage);
     }
 
     private void ApplyDeviceReregistered()
@@ -1167,7 +1228,7 @@ public sealed partial class MainViewModel : ObservableObject
         _lastCompletedOrder = null;
         _cart.Clear();
         SetCustomerDisplayWindowMode(CustomerDisplayWindowMode.Closed, Application.Current?.MainWindow);
-        StatusMessage = "设备重新注册申请已提交，旧注册信息已禁用，请等待审批后重新检查。";
+        StatusMessage = _localization.T("main.reregister.submitted");
     }
 
     private void CancelDeviceReregistration()
@@ -1187,7 +1248,7 @@ public sealed partial class MainViewModel : ObservableObject
         {
             ShowPos();
         }
-        StatusMessage = "已取消重新注册设备。";
+        StatusMessage = _localization.T("main.reregister.cancelled");
     }
 
     private void OnCartChanged(object? sender, EventArgs e)
@@ -1292,6 +1353,15 @@ public sealed partial class MainViewModel : ObservableObject
         CurrentScreen = PaymentSuccess;
 
         ShowCashPaymentCommand.NotifyCanExecuteChanged();
+        if (ContainsCashPayment(e.Order))
+        {
+            var cashDrawerResult = await OpenCashDrawerAsync();
+            if (!cashDrawerResult.Succeeded)
+            {
+                StatusMessage = cashDrawerResult.Message;
+            }
+        }
+
         if (ContainsCardPayment(e.Order))
         {
             await PrintReceiptAsync(ReceiptQueryService.CreateReceipt(e.Order), ReceiptPrintReason.CardAuto);
@@ -1319,11 +1389,24 @@ public sealed partial class MainViewModel : ObservableObject
         CurrentScreen = TransactionHistory;
     }
 
+    private async Task ShowDailyCloseAsync()
+    {
+        DailyClose ??= new DailyCloseViewModel(
+            _dailyCloseService,
+            _dailyClosePrintService,
+            Session,
+            _localization,
+            ShowPos);
+        DailyClose.Session = Session;
+        await DailyClose.LoadAsync();
+        CurrentScreen = DailyClose;
+    }
+
     private async Task ShowSettingsAsync()
     {
         if (_cardTerminalSetupService is null)
         {
-            StatusMessage = "Settings services are not configured.";
+            StatusMessage = _localization.T("main.settingsUnavailable");
             return;
         }
 
@@ -1357,7 +1440,7 @@ public sealed partial class MainViewModel : ObservableObject
     {
         if (_suspendedOrderService is null)
         {
-            StatusMessage = "挂单服务不可用。";
+            StatusMessage = _localization.T("main.suspendedUnavailable");
             return;
         }
 
@@ -1366,7 +1449,7 @@ public sealed partial class MainViewModel : ObservableObject
             var suspended = await _suspendedOrderService.SuspendCurrentOrderAsync(Session);
             PosTerminal?.RefreshCart();
             CashPayment?.RefreshCart();
-            StatusMessage = $"已挂单 #{suspended.SuspendedOrderGuid.ToString("N")[..8].ToUpperInvariant()}";
+            StatusMessage = string.Format(_localization.CurrentCulture, _localization.T("main.suspendedSaved"), suspended.SuspendedOrderGuid.ToString("N")[..8].ToUpperInvariant());
         }
         catch (Exception ex)
         {
@@ -1404,6 +1487,30 @@ public sealed partial class MainViewModel : ObservableObject
 
         ApplyReceiptPrintStatus(result);
         return result;
+    }
+
+    private async Task<ReceiptPrintResult> OpenCashDrawerAsync()
+    {
+        try
+        {
+            return await _cashDrawerService.OpenAsync();
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            return new ReceiptPrintResult(false, ex.Message);
+        }
+    }
+
+    private Task ExitApplicationAsync()
+    {
+        if (!_confirmationDialogService.ConfirmExitApplication())
+        {
+            return Task.CompletedTask;
+        }
+
+        SetCustomerDisplayWindowMode(CustomerDisplayWindowMode.Closed, Application.Current?.MainWindow);
+        _applicationExitService.Exit();
+        return Task.CompletedTask;
     }
 
     private async Task PrintPaymentSuccessReceiptAsync()
@@ -1473,12 +1580,17 @@ public sealed partial class MainViewModel : ObservableObject
         return order.Payments.Any(payment => payment.Method == PaymentMethodKind.Card);
     }
 
+    private static bool ContainsCashPayment(LocalOrder order)
+    {
+        return order.Payments.Any(payment => payment.Method == PaymentMethodKind.Cash);
+    }
+
     private Task OnSuspendedOrderRecalledAsync()
     {
         PosTerminal?.RefreshCart();
         CashPayment?.RefreshCart();
         ShowPos();
-        StatusMessage = "挂单已取回。";
+        StatusMessage = _localization.T("main.suspendedRecalled");
         return Task.CompletedTask;
     }
 
@@ -1640,7 +1752,7 @@ public sealed partial class MainViewModel : ObservableObject
     private async Task ResetScannerBindingAsync()
     {
         await _rawScannerService.ResetBindingAsync();
-        StatusMessage = "扫码枪绑定已清除，请在收银页扫描一次重新学习。";
+        StatusMessage = _localization.T("main.scannerBindingReset");
     }
 
     private void ResetForNewTransaction()

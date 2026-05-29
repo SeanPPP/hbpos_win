@@ -14,7 +14,9 @@ public sealed record LocalOrder(
     decimal DiscountAmount,
     decimal ActualAmount,
     IReadOnlyList<LocalOrderLine> Lines,
-    IReadOnlyList<LocalPayment> Payments);
+    IReadOnlyList<LocalPayment> Payments,
+    decimal? TenderedAmount = null,
+    decimal? ChangeAmount = null);
 
 public sealed record LocalOrderLine(
     Guid OrderLineGuid,

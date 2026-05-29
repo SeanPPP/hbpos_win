@@ -18,6 +18,12 @@
   <data name="AppName" xml:space="preserve"><value>Apex Retail Pro</value></data>
   <data name="startup.title" xml:space="preserve"><value>HB POS</value></data>
   <data name="startup.loading" xml:space="preserve"><value>Preparing point of sale...</value></data>
+  <data name="startup.stage.starting" xml:space="preserve"><value>Starting...</value></data>
+  <data name="startup.stage.initializingServices" xml:space="preserve"><value>Initializing services...</value></data>
+  <data name="startup.stage.startingLocalComponents" xml:space="preserve"><value>Starting local components...</value></data>
+  <data name="startup.stage.loadingProducts" xml:space="preserve"><value>Loading local products...</value></data>
+  <data name="startup.stage.preparingMainWindow" xml:space="preserve"><value>Preparing main screen...</value></data>
+  <data name="startup.stage.completed" xml:space="preserve"><value>Startup complete</value></data>
   <data name="Backspace" xml:space="preserve"><value>Back</value></data>
   <data name="Barcode" xml:space="preserve"><value>Barcode</value></data>
   <data name="Cancel" xml:space="preserve"><value>Cancel</value></data>
@@ -95,6 +101,7 @@
 
   <data name="common.cancel" xml:space="preserve"><value>Cancel</value></data>
   <data name="common.load" xml:space="preserve"><value>Load</value></data>
+  <data name="common.space" xml:space="preserve"><value>Space</value></data>
   <data name="common.status" xml:space="preserve"><value>Status</value></data>
 
   <data name="pos.terminal.title" xml:space="preserve"><value>POS Terminal</value></data>
@@ -138,6 +145,7 @@
   <data name="pos.status.added" xml:space="preserve"><value>Added {0}</value></data>
   <data name="pos.status.scannerResult" xml:space="preserve"><value>Scan {0}: {1}</value></data>
   <data name="pos.status.cartCleared" xml:space="preserve"><value>Cart cleared.</value></data>
+  <data name="pos.status.catalogSyncSkipped" xml:space="preserve"><value>Offline: catalog sync skipped.</value></data>
   <data name="cart.status.zeroPriceItem" xml:space="preserve"><value>Cart contains a zero-price item. Update the price before checkout.</value></data>
   <data name="cart.status.quantityMustBeInteger" xml:space="preserve"><value>Item quantity must be a positive integer.</value></data>
   <data name="pos.status.selectCartLine" xml:space="preserve"><value>Select a cart line first.</value></data>
@@ -180,9 +188,24 @@
   <data name="payment.voucher.status.notConfigured" xml:space="preserve"><value>Voucher service is not configured.</value></data>
   <data name="payment.voucher.status.unavailable" xml:space="preserve"><value>Voucher is not available.</value></data>
   <data name="payment.voucher.status.failed" xml:space="preserve"><value>Voucher payment failed.</value></data>
+  <data name="payment.voucher.codeRequired" xml:space="preserve"><value>Voucher code is required.</value></data>
+  <data name="payment.voucher.refundAmountMustBePositive" xml:space="preserve"><value>Voucher refund amount must be greater than zero.</value></data>
+  <data name="payment.voucher.refundOrderReferenceRequired" xml:space="preserve"><value>Voucher refund order reference is required.</value></data>
+  <data name="payment.voucher.refundIdempotencyKeyRequired" xml:space="preserve"><value>Voucher refund idempotency key is required.</value></data>
   <data name="payment.card.notConfigured" xml:space="preserve"><value>Card terminal not configured</value></data>
   <data name="payment.card.status.notConfigured" xml:space="preserve"><value>Card terminal is not configured.</value></data>
   <data name="payment.card.status.failed" xml:space="preserve"><value>Card payment failed.</value></data>
+  <data name="payment.card.amountMustBePositive" xml:space="preserve"><value>Card amount must be greater than zero.</value></data>
+  <data name="payment.card.linklyUnavailable" xml:space="preserve"><value>ANZ Linkly terminal adapter is unavailable.</value></data>
+  <data name="payment.card.squareConfigIncomplete" xml:space="preserve"><value>Square terminal configuration is incomplete.</value></data>
+  <data name="payment.card.squareMissingCheckoutId" xml:space="preserve"><value>Square checkout did not return an id.</value></data>
+  <data name="payment.card.squareAmountMismatch" xml:space="preserve"><value>Square authorized amount did not match the requested amount.</value></data>
+  <data name="payment.card.squareCanceled" xml:space="preserve"><value>Square checkout was canceled.</value></data>
+  <data name="payment.card.squareUnexpectedStatus" xml:space="preserve"><value>Square checkout entered unexpected status '{0}'.</value></data>
+  <data name="payment.card.squareCommunicationFailed" xml:space="preserve"><value>Square terminal communication failed.</value></data>
+  <data name="payment.card.squareInvalidResponse" xml:space="preserve"><value>Square terminal returned an invalid response.</value></data>
+  <data name="payment.card.squareRefundMissingReference" xml:space="preserve"><value>Square refund requires an original Square payment reference.</value></data>
+  <data name="payment.card.squareRefundStatus" xml:space="preserve"><value>Square refund status is {0}.</value></data>
 
   <data name="success.subtitle" xml:space="preserve"><value>The transaction has been processed successfully.</value></data>
   <data name="success.totalPaid" xml:space="preserve"><value>Total Amount Paid</value></data>
@@ -190,6 +213,8 @@
   <data name="success.digitalReceipt" xml:space="preserve"><value>Digital Receipt</value></data>
   <data name="success.email" xml:space="preserve"><value>Send via email</value></data>
   <data name="success.sms" xml:space="preserve"><value>Send via SMS</value></data>
+  <data name="success.emailPlaceholder" xml:space="preserve"><value>customer@example.com</value></data>
+  <data name="success.smsPlaceholder" xml:space="preserve"><value>+1 (555) 000-0000</value></data>
   <data name="success.printReceipt" xml:space="preserve"><value>Print Receipt</value></data>
   <data name="success.newTransaction" xml:space="preserve"><value>New Transaction</value></data>
   <data name="success.receiptPreview" xml:space="preserve"><value>Receipt Preview</value></data>
@@ -206,8 +231,26 @@
   <data name="history.reprint" xml:space="preserve"><value>Reprint</value></data>
   <data name="history.refund" xml:space="preserve"><value>Refund</value></data>
   <data name="receipt.print.printing" xml:space="preserve"><value>Printing receipt...</value></data>
+  <data name="receipt.print.noReceiptFound" xml:space="preserve"><value>No receipt found.</value></data>
   <data name="receipt.print.success" xml:space="preserve"><value>Receipt printed.</value></data>
   <data name="receipt.print.failed" xml:space="preserve"><value>Receipt print failed: {0}</value></data>
+  <data name="receipt.drawer.notConfigured" xml:space="preserve"><value>Cash drawer is not configured.</value></data>
+  <data name="receipt.drawer.openFailed" xml:space="preserve"><value>Cash drawer could not be opened.</value></data>
+  <data name="receipt.printer.notConfigured" xml:space="preserve"><value>Receipt printer is not configured.</value></data>
+  <data name="receipt.printer.initFailed" xml:space="preserve"><value>Printer could not be initialized.</value></data>
+  <data name="receipt.printer.portOpenFailed" xml:space="preserve"><value>Printer port could not be opened.</value></data>
+  <data name="receipt.printer.lineSpacingFailed" xml:space="preserve"><value>Printer line spacing could not be set.</value></data>
+  <data name="receipt.printer.barcodeFailed" xml:space="preserve"><value>Printer barcode could not be printed.</value></data>
+  <data name="receipt.printer.qrCodeFailed" xml:space="preserve"><value>Printer QR code could not be printed.</value></data>
+  <data name="receipt.printer.textFailed" xml:space="preserve"><value>Printer text could not be printed.</value></data>
+  <data name="receipt.printer.cutPaperFailed" xml:space="preserve"><value>Printer paper could not be cut.</value></data>
+  <data name="receipt.printer.statusReadFailed" xml:space="preserve"><value>Printer status could not be read.</value></data>
+  <data name="receipt.printer.coverOpen" xml:space="preserve"><value>Printer cover is open.</value></data>
+  <data name="receipt.printer.outOfPaper" xml:space="preserve"><value>Printer is out of paper.</value></data>
+  <data name="receipt.printer.error" xml:space="preserve"><value>Printer is reporting an error.</value></data>
+  <data name="receipt.printer.notReady" xml:space="preserve"><value>Printer is not ready. Status: {0}.</value></data>
+  <data name="cashDrawer.opening" xml:space="preserve"><value>Opening cash drawer...</value></data>
+  <data name="cashDrawer.opened" xml:space="preserve"><value>Cash drawer opened.</value></data>
 
   <data name="customer.totalToPay" xml:space="preserve"><value>Total To Pay</value></data>
   <data name="customer.itemQuantity" xml:space="preserve"><value>Item Quantity</value></data>
@@ -283,6 +326,12 @@
   <data name="specialProducts.empty" xml:space="preserve"><value>No special products cached for this store.</value></data>
   <data name="specialProducts.search.empty" xml:space="preserve"><value>No matching non-special products.</value></data>
   <data name="specialProducts.status.ready" xml:space="preserve"><value>Special products ready.</value></data>
+  <data name="pos.catalogSync.starting" xml:space="preserve"><value>Syncing catalog...</value></data>
+  <data name="pos.catalogSync.completed" xml:space="preserve"><value>Catalog sync completed.</value></data>
+  <data name="pos.catalogSync.failed" xml:space="preserve"><value>Catalog sync failed</value></data>
+  <data name="pos.catalogReset.starting" xml:space="preserve"><value>Resetting catalog...</value></data>
+  <data name="pos.catalogReset.completed" xml:space="preserve"><value>Catalog reset completed.</value></data>
+  <data name="pos.catalogReset.failed" xml:space="preserve"><value>Catalog reset failed</value></data>
   <data name="specialProducts.status.loaded" xml:space="preserve"><value>Loaded {0} special products from local cache.</value></data>
   <data name="specialProducts.status.loadFailed" xml:space="preserve"><value>Failed to load special products: {0}</value></data>
   <data name="specialProducts.status.noSearchResults" xml:space="preserve"><value>No matching non-special products.</value></data>
@@ -318,8 +367,6 @@
   <data name="payment.quickCash" xml:space="preserve"><value>Quick Cash</value></data>
   <data name="payment.method" xml:space="preserve"><value>Payment Method</value></data>
   <data name="payment.appliedTenders" xml:space="preserve"><value>Applied Tenders</value></data>
-  <data name="payment.addTender" xml:space="preserve"><value>Add Tender</value></data>
-  <data name="payment.refund.addTender" xml:space="preserve"><value>Add Refund</value></data>
   <data name="payment.confirm" xml:space="preserve"><value>Complete Payment</value></data>
   <data name="payment.refund.confirm" xml:space="preserve"><value>Complete Refund</value></data>
   <data name="payment.zeroSettlement.confirm" xml:space="preserve"><value>Complete Zero Settlement</value></data>
@@ -336,6 +383,7 @@
   <data name="payment.status.cardTenderAdded" xml:space="preserve"><value>Card tender approved.</value></data>
   <data name="payment.status.voucherTenderAdded" xml:space="preserve"><value>Voucher tender added.</value></data>
   <data name="payment.status.tenderRemoved" xml:space="preserve"><value>Tender removed.</value></data>
+  <data name="payment.status.removeTendersBeforeBack" xml:space="preserve"><value>Remove added tenders or complete the payment before returning to POS.</value></data>
   <data name="payment.status.cardExceedsRemaining" xml:space="preserve"><value>Card tender cannot exceed the remaining amount.</value></data>
   <data name="payment.status.voucherExceedsRemaining" xml:space="preserve"><value>Voucher tender cannot exceed the remaining amount.</value></data>
   <data name="payment.status.cardDeclined" xml:space="preserve"><value>Card tender was not approved.</value></data>
@@ -364,16 +412,148 @@
   <data name="shell.page.returns" xml:space="preserve"><value>Returns</value></data>
   <data name="shell.page.paymentSuccess" xml:space="preserve"><value>Payment Success</value></data>
   <data name="shell.page.history" xml:space="preserve"><value>History</value></data>
+  <data name="shell.page.dailyClose" xml:space="preserve"><value>Daily Close</value></data>
   <data name="shell.page.settings" xml:space="preserve"><value>Settings</value></data>
   <data name="shell.page.customerDisplay" xml:space="preserve"><value>Customer Display</value></data>
   <data name="shell.page.deviceRegistration" xml:space="preserve"><value>Device Registration</value></data>
   <data name="pos.terminal.actions.history" xml:space="preserve"><value>History</value></data>
+  <data name="pos.terminal.actions.dailyClose" xml:space="preserve"><value>Daily Close</value></data>
   <data name="pos.terminal.actions.settings" xml:space="preserve"><value>Settings</value></data>
   <data name="pos.terminal.actions.customerDisplay" xml:space="preserve"><value>Customer Display</value></data>
   <data name="pos.terminal.actions.printLastReceipt" xml:space="preserve"><value>Last Receipt</value></data>
+  <data name="pos.terminal.actions.openCashDrawer" xml:space="preserve"><value>Open Drawer</value></data>
+  <data name="pos.terminal.actions.exitApplication" xml:space="preserve"><value>Exit</value></data>
   <data name="history.source.local" xml:space="preserve"><value>Local</value></data>
   <data name="history.source.online" xml:space="preserve"><value>Online</value></data>
   <data name="history.payment.suspended" xml:space="preserve"><value>Suspended</value></data>
   <data name="history.status.pendingRecall" xml:space="preserve"><value>Pending recall</value></data>
   <data name="suspended.recall" xml:space="preserve"><value>Recall Suspended</value></data>
+  <data name="dailyClose.tab.count" xml:space="preserve"><value>Daily Close Count</value></data>
+  <data name="dailyClose.tab.history" xml:space="preserve"><value>History Query</value></data>
+  <data name="dailyClose.history.title" xml:space="preserve"><value>Daily Close History</value></data>
+  <data name="dailyClose.history.load" xml:space="preserve"><value>Load History</value></data>
+  <data name="dailyClose.cashCounted" xml:space="preserve"><value>Cash Counted</value></data>
+  <data name="dailyClose.cashDifference" xml:space="preserve"><value>Cash Difference</value></data>
+  <data name="dailyClose.receiptPreview" xml:space="preserve"><value>Daily Close Preview</value></data>
+  <data name="dailyClose.cashDetail" xml:space="preserve"><value>Cash Count Detail</value></data>
+  <data name="dailyClose.notes" xml:space="preserve"><value>Notes</value></data>
+  <data name="dailyClose.coins" xml:space="preserve"><value>Coins</value></data>
+  <data name="dailyClose.denomination" xml:space="preserve"><value>Denomination</value></data>
+  <data name="dailyClose.quantity" xml:space="preserve"><value>Quantity</value></data>
+  <data name="dailyClose.subtotal" xml:space="preserve"><value>Subtotal</value></data>
+  <data name="dailyClose.reprint" xml:space="preserve"><value>Reprint Daily Close</value></data>
+  <data name="deviceRegistration.title" xml:space="preserve"><value>Device Registration</value></data>
+  <data name="deviceRegistration.title.reregister" xml:space="preserve"><value>Reregister Device to Another Store</value></data>
+  <data name="deviceRegistration.submit" xml:space="preserve"><value>Submit Registration</value></data>
+  <data name="deviceRegistration.submit.switch" xml:space="preserve"><value>Submit Store Switch Registration</value></data>
+  <data name="deviceRegistration.submit.reregister" xml:space="preserve"><value>Submit Store Switch Reregistration</value></data>
+  <data name="deviceRegistration.store" xml:space="preserve"><value>Store</value></data>
+  <data name="deviceRegistration.hardwareId" xml:space="preserve"><value>Hardware ID</value></data>
+  <data name="deviceRegistration.deviceCode" xml:space="preserve"><value>Device Code</value></data>
+  <data name="deviceRegistration.verify" xml:space="preserve"><value>Check Again</value></data>
+  <data name="deviceRegistration.reregister.subtitle" xml:space="preserve"><value>Select the store to switch this device registration to.</value></data>
+  <data name="deviceRegistration.status.loadingStores" xml:space="preserve"><value>Loading stores...</value></data>
+  <data name="deviceRegistration.status.pendingApproval" xml:space="preserve"><value>Pending approval</value></data>
+  <data name="deviceRegistration.status.enabled" xml:space="preserve"><value>Device is enabled.</value></data>
+  <data name="deviceRegistration.status.missingAuthorization" xml:space="preserve"><value>Device is active but missing authorization details. Please contact support.</value></data>
+  <data name="deviceRegistration.status.noStores" xml:space="preserve"><value>No stores available for registration.</value></data>
+  <data name="deviceRegistration.status.selectStore" xml:space="preserve"><value>Select a store and submit this register for approval.</value></data>
+  <data name="deviceRegistration.status.noReregisterStores" xml:space="preserve"><value>No other stores are available for device reregistration.</value></data>
+  <data name="deviceRegistration.status.selectReregisterStore" xml:space="preserve"><value>Select a new store and submit device reregistration.</value></data>
+  <data name="deviceRegistration.status.submitting" xml:space="preserve"><value>Submitting device registration...</value></data>
+  <data name="deviceRegistration.status.submittingReregister" xml:space="preserve"><value>Submitting device reregistration...</value></data>
+  <data name="deviceRegistration.status.checkingApproval" xml:space="preserve"><value>Checking device approval...</value></data>
+  <data name="deviceRegistration.status.switchStore" xml:space="preserve"><value>Select a new store to switch this pending registration.</value></data>
+  <data name="returns.status.default" xml:space="preserve"><value>Scan order number to start a receipt return.</value></data>
+  <data name="returns.status.noReceiptMode" xml:space="preserve"><value>No-receipt return enabled. Scan a product to add it.</value></data>
+  <data name="returns.status.receiptMode" xml:space="preserve"><value>Receipt return mode enabled. Scan an order number.</value></data>
+  <data name="returns.status.lookupPrompt" xml:space="preserve"><value>Scan order number to start a receipt return.</value></data>
+  <data name="returns.status.loadedOnline" xml:space="preserve"><value>Loaded order {0} from online order history.</value></data>
+  <data name="returns.status.lookupFailed" xml:space="preserve"><value>Order lookup failed: {0}</value></data>
+  <data name="returns.status.loadedLocalStaleWithError" xml:space="preserve"><value>Loaded local order {0}; online lookup failed. {1}</value></data>
+  <data name="returns.status.scanProduct" xml:space="preserve"><value>Scan a product code to add a no-receipt return line.</value></data>
+  <data name="returns.status.productNotFound" xml:space="preserve"><value>Product {0} was not found in the local catalog.</value></data>
+  <data name="returns.status.addedNoReceipt" xml:space="preserve"><value>Added {0} for no-receipt return.</value></data>
+  <data name="returns.status.orderNotFound" xml:space="preserve"><value>Order {0} was not found.</value></data>
+  <data name="returns.status.loadedLocalStale" xml:space="preserve"><value>Loaded local order {0}; online order history is not available.</value></data>
+  <data name="returns.status.addedReceiptLine" xml:space="preserve"><value>Added {0} to refund cart.</value></data>
+  <data name="returns.orderSummary.none" xml:space="preserve"><value>No order loaded</value></data>
+  <data name="returns.orderSummary.format" xml:space="preserve"><value>Order {0}  {1} items  Refund {2:C2}</value></data>
+  <data name="returns.priceSource.receipt" xml:space="preserve"><value>Receipt return</value></data>
+  <data name="main.catalogSync.timedOut" xml:space="preserve"><value>Catalog sync timed out. Using the local catalog for now.</value></data>
+  <data name="main.catalogSync.failed" xml:space="preserve"><value>Catalog sync failed: {0}</value></data>
+  <data name="main.settingsUnavailable" xml:space="preserve"><value>Settings service is not available.</value></data>
+  <data name="main.reregister.previewUnsupported" xml:space="preserve"><value>Device reregistration is unavailable in preview mode.</value></data>
+  <data name="main.reregister.cartNotEmpty" xml:space="preserve"><value>Clear the current cart before changing store registration.</value></data>
+  <data name="main.reregister.syncPending" xml:space="preserve"><value>Complete pending order sync before changing store registration.</value></data>
+  <data name="main.reregister.submitted" xml:space="preserve"><value>Store switch submitted. Re-register this device to continue.</value></data>
+  <data name="main.reregister.cancelled" xml:space="preserve"><value>Device reregistration cancelled.</value></data>
+  <data name="main.suspendedUnavailable" xml:space="preserve"><value>Suspended order service is not available.</value></data>
+  <data name="main.suspendedSaved" xml:space="preserve"><value>Suspended order {0} saved.</value></data>
+  <data name="main.suspendedRecalled" xml:space="preserve"><value>Suspended order recalled.</value></data>
+  <data name="main.scannerBindingReset" xml:space="preserve"><value>Scanner binding reset. Trigger the scanner again to bind the current device.</value></data>
+  <data name="settings.linklyCloud.unavailable" xml:space="preserve"><value>Linkly Cloud setup is unavailable.</value></data>
+  <data name="settings.linklyCloud.pairCodeRequired" xml:space="preserve"><value>Pair code is required.</value></data>
+  <data name="settings.linklyCloud.vendorIdMissing" xml:space="preserve"><value>Linkly POS vendor id is not configured.</value></data>
+  <data name="settings.linklyCloud.vendorIdInvalid" xml:space="preserve"><value>Linkly POS vendor id must be a UUID v4.</value></data>
+  <data name="settings.linklyCloud.paired" xml:space="preserve"><value>Linkly Cloud terminal paired.</value></data>
+  <data name="dailyClose.status.ready" xml:space="preserve"><value>Ready to review daily close totals.</value></data>
+  <data name="dailyClose.status.refreshing" xml:space="preserve"><value>Refreshing daily close summary...</value></data>
+  <data name="dailyClose.status.refreshed" xml:space="preserve"><value>Daily close summary refreshed.</value></data>
+  <data name="dailyClose.status.saving" xml:space="preserve"><value>Saving and printing daily close...</value></data>
+  <data name="dailyClose.status.savedPrinted" xml:space="preserve"><value>Daily close saved and receipt printed.</value></data>
+  <data name="dailyClose.status.savedPrintFailed" xml:space="preserve"><value>Daily close saved, but printing failed: {0}</value></data>
+  <data name="dailyClose.status.historyLoading" xml:space="preserve"><value>Loading daily close history...</value></data>
+  <data name="dailyClose.status.historyEmpty" xml:space="preserve"><value>No daily close history found for the selected date.</value></data>
+  <data name="dailyClose.status.historyLoaded" xml:space="preserve"><value>Loaded {0} daily close records.</value></data>
+  <data name="dailyClose.status.reprinting" xml:space="preserve"><value>Reprinting daily close receipt...</value></data>
+  <data name="dailyClose.status.reprintPrinted" xml:space="preserve"><value>Daily close receipt reprinted.</value></data>
+  <data name="dailyClose.status.reprintFailed" xml:space="preserve"><value>Daily close reprint failed: {0}</value></data>
+  <data name="dailyClose.status.dateChanged" xml:space="preserve"><value>Business date changed to {0:d}.</value></data>
+  <data name="dailyClose.businessDate" xml:space="preserve"><value>Business Date</value></data>
+  <data name="dailyClose.title" xml:space="preserve"><value>Daily Settlement</value></data>
+  <data name="dailyClose.refresh" xml:space="preserve"><value>Refresh</value></data>
+  <data name="dailyClose.saveFinalize" xml:space="preserve"><value>Save &amp; Finalize</value></data>
+  <data name="dailyClose.cashCounter" xml:space="preserve"><value>Cash Counter</value></data>
+  <data name="dailyClose.apply" xml:space="preserve"><value>Apply</value></data>
+  <data name="dailyClose.noteTotal" xml:space="preserve"><value>Note Total</value></data>
+  <data name="dailyClose.coinTotal" xml:space="preserve"><value>Coin Total</value></data>
+  <data name="dailyClose.reportTitle" xml:space="preserve"><value>Z-Report</value></data>
+  <data name="dailyClose.systemTotals" xml:space="preserve"><value>System Totals</value></data>
+  <data name="dailyClose.method" xml:space="preserve"><value>Method</value></data>
+  <data name="dailyClose.sales" xml:space="preserve"><value>Sales</value></data>
+  <data name="dailyClose.refund" xml:space="preserve"><value>Refund</value></data>
+  <data name="dailyClose.net" xml:space="preserve"><value>Net</value></data>
+  <data name="dailyClose.totalNetSales" xml:space="preserve"><value>Total Net Sales</value></data>
+  <data name="dailyClose.expectedCash" xml:space="preserve"><value>Expected Cash</value></data>
+  <data name="dailyClose.overShort" xml:space="preserve"><value>Over / Short</value></data>
+  <data name="dailyClose.refundAmount" xml:space="preserve"><value>Refund Amount</value></data>
+  <data name="dailyClose.returnQty" xml:space="preserve"><value>Return Qty</value></data>
+  <data name="dailyClose.orders" xml:space="preserve"><value>Orders</value></data>
+  <data name="linkly.local.test.success" xml:space="preserve"><value>Linkly EFT-Client connection succeeded.</value></data>
+  <data name="linkly.local.test.failed" xml:space="preserve"><value>Linkly EFT-Client connection failed.</value></data>
+  <data name="linkly.local.test.timeout" xml:space="preserve"><value>Linkly EFT-Client connection timed out.</value></data>
+  <data name="linkly.local.test.exception" xml:space="preserve"><value>Linkly connection failed: {0}</value></data>
+  <data name="linkly.local.amountMustBePositive" xml:space="preserve"><value>Card amount must be greater than zero.</value></data>
+  <data name="linkly.local.cancelled" xml:space="preserve"><value>ANZ Linkly transaction was cancelled.</value></data>
+  <data name="linkly.local.connectionFailed" xml:space="preserve"><value>ANZ Linkly EFT-Client connection failed.</value></data>
+  <data name="linkly.local.requestSendFailed" xml:space="preserve"><value>ANZ Linkly transaction request could not be sent.</value></data>
+  <data name="linkly.local.timeout" xml:space="preserve"><value>ANZ Linkly transaction timed out.</value></data>
+  <data name="linkly.local.connectionClosed" xml:space="preserve"><value>ANZ Linkly connection was closed.</value></data>
+  <data name="linkly.local.transactionFailed" xml:space="preserve"><value>ANZ Linkly transaction failed: {0}</value></data>
+  <data name="linkly.local.cancelOutcomeUnknown" xml:space="preserve"><value>ANZ Linkly cancellation outcome could not be confirmed.</value></data>
+  <data name="linkly.local.emptyResponse" xml:space="preserve"><value>ANZ Linkly returned an empty response.</value></data>
+  <data name="linkly.local.declined" xml:space="preserve"><value>ANZ Linkly transaction was declined.</value></data>
+  <data name="linkly.cloud.test.success" xml:space="preserve"><value>Linkly Cloud connection succeeded.</value></data>
+  <data name="linkly.cloud.test.failed" xml:space="preserve"><value>Linkly Cloud status check failed.</value></data>
+  <data name="linkly.cloud.pairingInvalid" xml:space="preserve"><value>Linkly Cloud pairing is invalid. Pair the terminal again.</value></data>
+  <data name="linkly.cloud.refundMissingReference" xml:space="preserve"><value>Linkly Cloud refund requires an original RFN reference.</value></data>
+  <data name="linkly.cloud.amountMustBePositive" xml:space="preserve"><value>Card amount must be greater than zero.</value></data>
+  <data name="linkly.cloud.notPaired" xml:space="preserve"><value>Linkly Cloud terminal is not paired.</value></data>
+  <data name="linkly.cloud.vendorIdMissing" xml:space="preserve"><value>Linkly POS vendor id is not configured.</value></data>
+  <data name="linkly.cloud.notSubmitted" xml:space="preserve"><value>Linkly Cloud transaction was not submitted. Retry the payment.</value></data>
+  <data name="linkly.cloud.timeout" xml:space="preserve"><value>Linkly Cloud transaction timed out.</value></data>
+  <data name="linkly.cloud.invalidResponse" xml:space="preserve"><value>Linkly Cloud returned an invalid response.</value></data>
+  <data name="linkly.cloud.communicationFailed" xml:space="preserve"><value>Linkly Cloud communication failed.</value></data>
+  <data name="linkly.cloud.declined" xml:space="preserve"><value>ANZ Linkly Cloud transaction was declined.</value></data>
 </root>

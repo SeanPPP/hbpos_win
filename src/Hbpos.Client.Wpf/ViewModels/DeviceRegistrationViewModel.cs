@@ -1,6 +1,7 @@
 using System.Collections.ObjectModel;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
+using Hbpos.Client.Wpf.Localization;
 using Hbpos.Client.Wpf.Models;
 using Hbpos.Client.Wpf.Services;
 
@@ -9,7 +10,9 @@ namespace Hbpos.Client.Wpf.ViewModels;
 public sealed partial class DeviceRegistrationViewModel : ObservableObject
 {
     private const int PendingDeviceStatus = -1;
+
     private readonly IDeviceRegistrationWorkflowService _workflowService;
+    private readonly ILocalizationService? _localization;
     private string? _excludedStoreCode;
     private PendingRegistrationState? _pendingRegistration;
 
@@ -40,14 +43,22 @@ public sealed partial class DeviceRegistrationViewModel : ObservableObject
     public DeviceRegistrationViewModel(
         IDeviceApiClient deviceApiClient,
         ILocalDeviceRepository deviceRepository,
-        IDeviceFingerprintService fingerprintService)
-        : this(new DeviceRegistrationWorkflowService(deviceApiClient, deviceRepository, fingerprintService))
+        IDeviceFingerprintService fingerprintService,
+        ILocalizationService? localization = null)
+        : this(new DeviceRegistrationWorkflowService(deviceApiClient, deviceRepository, fingerprintService, localization), localization)
     {
     }
 
-    public DeviceRegistrationViewModel(IDeviceRegistrationWorkflowService workflowService)
+    public DeviceRegistrationViewModel(
+        IDeviceRegistrationWorkflowService workflowService,
+        ILocalizationService? localization = null)
     {
         _workflowService = workflowService;
+        _localization = localization;
+        if (_localization is not null)
+        {
+            _localization.CultureChanged += (_, _) => RaiseLocalizedProperties();
+        }
 
         RegisterCommand = new AsyncRelayCommand(RegisterAsync, CanRegister);
         VerifyCommand = new AsyncRelayCommand(VerifyAsync, CanVerify);
@@ -62,13 +73,15 @@ public sealed partial class DeviceRegistrationViewModel : ObservableObject
 
     public IRelayCommand CancelCommand { get; }
 
-    public string TitleText => IsReregisterMode ? "更换分店重新注册" : "设备注册";
+    public string TitleText => IsReregisterMode
+        ? T("deviceRegistration.title.reregister", "Reregister Device to Another Store")
+        : T("deviceRegistration.title", "Device Registration");
 
     public string RegisterButtonText => IsReregisterMode
-        ? "提交更换分店注册"
+        ? T("deviceRegistration.submit.reregister", "Submit Store Switch Reregistration")
         : IsPendingRegistrationStoreSwitch
-            ? "提交切换分店注册"
-            : "提交申请";
+            ? T("deviceRegistration.submit.switch", "Submit Store Switch Registration")
+            : T("deviceRegistration.submit", "Submit Registration");
 
     private bool IsPendingRegistrationStoreSwitch =>
         !IsReregisterMode &&
@@ -118,7 +131,7 @@ public sealed partial class DeviceRegistrationViewModel : ObservableObject
             HasPendingRegistration = false;
         }
 
-        StatusMessage = DeviceRegistrationWorkflowService.LoadingStoresMessage;
+        StatusMessage = T("deviceRegistration.status.loadingStores", DeviceRegistrationWorkflowService.LoadingStoresMessage);
         NotifyCommandState();
     }
 
@@ -133,14 +146,14 @@ public sealed partial class DeviceRegistrationViewModel : ObservableObject
         SelectedStore = null;
         DeviceCode = string.Empty;
         HasPendingRegistration = false;
-        StatusMessage = DeviceRegistrationWorkflowService.LoadingStoresMessage;
+        StatusMessage = T("deviceRegistration.status.loadingStores", DeviceRegistrationWorkflowService.LoadingStoresMessage);
         NotifyCommandState();
     }
 
     public async Task LoadStoresAsync(LocalDeviceCache? cachedDevice, CancellationToken cancellationToken = default)
     {
         IsBusy = true;
-        StatusMessage = DeviceRegistrationWorkflowService.LoadingStoresMessage;
+        StatusMessage = T("deviceRegistration.status.loadingStores", DeviceRegistrationWorkflowService.LoadingStoresMessage);
 
         try
         {
@@ -161,8 +174,7 @@ public sealed partial class DeviceRegistrationViewModel : ObservableObject
 
     partial void OnIsReregisterModeChanged(bool value)
     {
-        OnPropertyChanged(nameof(TitleText));
-        OnPropertyChanged(nameof(RegisterButtonText));
+        RaiseLocalizedProperties();
     }
 
     partial void OnSelectedStoreChanged(StoreSelectionItem? value)
@@ -203,7 +215,7 @@ public sealed partial class DeviceRegistrationViewModel : ObservableObject
         IsBusy = true;
         try
         {
-            StatusMessage = "Submitting device registration...";
+            StatusMessage = T("deviceRegistration.status.submitting", "Submitting device registration...");
             var result = await _workflowService.RegisterAsync(SelectedStore, HardwareId);
             await ApplyActionResultAsync(result, clearDeviceCodeWhenRejected: true);
         }
@@ -227,7 +239,7 @@ public sealed partial class DeviceRegistrationViewModel : ObservableObject
         IsBusy = true;
         try
         {
-            StatusMessage = "Submitting device reregistration...";
+            StatusMessage = T("deviceRegistration.status.submittingReregister", "Submitting device reregistration...");
             var result = await _workflowService.ReregisterAsync(SelectedStore, HardwareId);
             await ApplyActionResultAsync(result);
         }
@@ -251,7 +263,7 @@ public sealed partial class DeviceRegistrationViewModel : ObservableObject
         IsBusy = true;
         try
         {
-            StatusMessage = "Checking device approval...";
+            StatusMessage = T("deviceRegistration.status.checkingApproval", "Checking device approval...");
             var result = await _workflowService.VerifyAsync(SelectedStore, DeviceCode, HardwareId);
             await ApplyActionResultAsync(result);
         }
@@ -285,7 +297,8 @@ public sealed partial class DeviceRegistrationViewModel : ObservableObject
                 string.IsNullOrWhiteSpace(_pendingRegistration?.StatusMessage) ? result.StatusMessage : _pendingRegistration.StatusMessage);
         }
 
-        SelectedStore = result.SelectedStore;
+        // 重新注册必须由收银员手动选择目标分店，避免默认选中后误提交。
+        SelectedStore = IsReregisterMode ? null : result.SelectedStore;
         NotifyCommandState();
     }
 
@@ -373,7 +386,9 @@ public sealed partial class DeviceRegistrationViewModel : ObservableObject
 
         DeviceCode = string.Empty;
         HasPendingRegistration = false;
-        StatusMessage = "已选择不同分店，请提交新的注册申请以切换分店。";
+        StatusMessage = T(
+            "deviceRegistration.status.switchStore",
+            "A different store is selected. Submit a new registration request to switch stores.");
     }
 
     private void NotifyCommandState()
@@ -381,6 +396,17 @@ public sealed partial class DeviceRegistrationViewModel : ObservableObject
         RegisterCommand.NotifyCanExecuteChanged();
         VerifyCommand.NotifyCanExecuteChanged();
         CancelCommand.NotifyCanExecuteChanged();
+    }
+
+    private void RaiseLocalizedProperties()
+    {
+        OnPropertyChanged(nameof(TitleText));
+        OnPropertyChanged(nameof(RegisterButtonText));
+    }
+
+    private string T(string key, string fallback)
+    {
+        return _localization?.T(key) ?? fallback;
     }
 
     private void Cancel()

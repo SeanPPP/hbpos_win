@@ -63,7 +63,7 @@ public sealed class ReceiptReturnsViewModelTests
         Assert.Empty(viewModel.OrderLines);
         Assert.Empty(viewModel.PendingLines);
         Assert.False(viewModel.ReturnRecordsMayBeStale);
-        Assert.Equal("No receipt loaded", viewModel.OrderSummaryText);
+        Assert.Equal("No order loaded", viewModel.OrderSummaryText);
         Assert.Equal("Scan an order number to start a receipt return.", viewModel.StatusMessage);
     }
 

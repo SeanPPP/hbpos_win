@@ -13,6 +13,7 @@ public partial class PaymentViewModel : ObservableObject
     private readonly PosCartService _cart;
     private readonly ICashPaymentWorkflowService _workflowService;
     private readonly ILocalizationService? _localization;
+    private readonly Action? _onBackToPos;
     private string _statusKey = "payment.status.ready";
     private string? _statusTextOverride;
     private Guid? _pendingVoucherUploadOrderGuid;
@@ -65,12 +66,14 @@ public partial class PaymentViewModel : ObservableObject
         ILocalOrderRepository orderRepository,
         ISyncQueueRepository syncQueueRepository,
         PosSessionState session,
-        ILocalizationService? localization = null)
+        ILocalizationService? localization = null,
+        Action? onBackToPos = null)
         : this(
             cart,
             new CashPaymentWorkflowService(checkout, orderRepository, syncQueueRepository),
             session,
-            localization)
+            localization,
+            onBackToPos)
     {
     }
 
@@ -78,12 +81,14 @@ public partial class PaymentViewModel : ObservableObject
         PosCartService cart,
         ICashPaymentWorkflowService workflowService,
         PosSessionState session,
-        ILocalizationService? localization = null)
+        ILocalizationService? localization = null,
+        Action? onBackToPos = null)
     {
         _cart = cart;
         _workflowService = workflowService;
         _session = session;
         _localization = localization;
+        _onBackToPos = onBackToPos;
         if (_localization is not null)
         {
             _localization.CultureChanged += (_, _) => RaiseLocalizedProperties();
@@ -100,6 +105,7 @@ public partial class PaymentViewModel : ObservableObject
         RemoveTenderCommand = new RelayCommand<PaymentTender>(RemoveTender, CanRemoveTender);
         ConfirmPaymentCommand = new AsyncRelayCommand(ConfirmPaymentAsync, CanConfirmPayment);
         CancelCommand = new RelayCommand(CancelPayment, CanCancelPayment);
+        BackToPosCommand = new RelayCommand(BackToPos, CanBackToPos);
 
         RefreshCart();
     }
@@ -125,6 +131,8 @@ public partial class PaymentViewModel : ObservableObject
     public IAsyncRelayCommand ConfirmPaymentCommand { get; }
 
     public IRelayCommand CancelCommand { get; }
+
+    public IRelayCommand BackToPosCommand { get; }
 
     public event EventHandler<PaymentCompletedEventArgs>? PaymentCompleted;
 
@@ -278,7 +286,6 @@ public partial class PaymentViewModel : ObservableObject
         _statusTextOverride = null;
         SelectedPaymentMethod = PaymentMethodKind.Cash;
         RefreshCart();
-        SyncTenderAmountToRemaining(force: true);
         if (!HasBlockingCartIssue())
         {
             SetStatus(GetReadyStatusKey());
@@ -497,6 +504,13 @@ public partial class PaymentViewModel : ObservableObject
         RecalculateTenderSummary();
         SetStatus(result.StatusKey);
         NotifyPaymentCommandStates();
+        if (method == PaymentMethodKind.Card &&
+            IsPaymentMode &&
+            !cardPaymentWasManuallyCancelled &&
+            IsSettlementComplete())
+        {
+            await CompletePaymentFromTendersAsync();
+        }
     }
 
     private void RemoveTender(PaymentTender? tender)
@@ -558,6 +572,11 @@ public partial class PaymentViewModel : ObservableObject
             return;
         }
 
+        await CompletePaymentFromTendersAsync();
+    }
+
+    private async Task CompletePaymentFromTendersAsync()
+    {
         var cashTenderedAmount = PaymentTenders
             .Where(tender => tender.Method == PaymentMethodKind.Cash)
             .Sum(tender => tender.Amount);
@@ -740,11 +759,11 @@ public partial class PaymentViewModel : ObservableObject
     {
         return
         [
-            new QuickCashOption(5m, "$5", "#FFC15AA1", "White"),
-            new QuickCashOption(10m, "$10", "#FF2E6BB8", "White"),
-            new QuickCashOption(20m, "$20", "#FFE45858", "White"),
+            new QuickCashOption(100m, "$100", "#FF2F9E6D", "White"),
             new QuickCashOption(50m, "$50", "#FFF2C94C", "#FF2E1500"),
-            new QuickCashOption(100m, "$100", "#FF2F9E6D", "White")
+            new QuickCashOption(20m, "$20", "#FFE45858", "White"),
+            new QuickCashOption(10m, "$10", "#FF2E6BB8", "White"),
+            new QuickCashOption(5m, "$5", "#FFC15AA1", "White")
         ];
     }
 
@@ -802,6 +821,25 @@ public partial class PaymentViewModel : ObservableObject
     private bool HasTenderForMethod(PaymentMethodKind method)
     {
         return PaymentTenders.Any(tender => tender.Method == method);
+    }
+
+    private void BackToPos()
+    {
+        if (PaymentTenders.Count > 0)
+        {
+            SetStatus("payment.status.removeTendersBeforeBack");
+            NotifyPaymentCommandStates();
+            return;
+        }
+
+        _onBackToPos?.Invoke();
+    }
+
+    private bool CanBackToPos()
+    {
+        return !IsPaymentInteractionLocked &&
+            !IsCardPaymentInProgress &&
+            !_awaitingLateCardResultAfterManualCancel;
     }
 
     private void CancelPayment()
@@ -1152,6 +1190,7 @@ public partial class PaymentViewModel : ObservableObject
         RemoveTenderCommand.NotifyCanExecuteChanged();
         ConfirmPaymentCommand.NotifyCanExecuteChanged();
         CancelCommand.NotifyCanExecuteChanged();
+        BackToPosCommand.NotifyCanExecuteChanged();
         OnPropertyChanged(nameof(IsCancelPaymentVisible));
         OnPropertyChanged(nameof(IsConfirmPaymentVisible));
     }

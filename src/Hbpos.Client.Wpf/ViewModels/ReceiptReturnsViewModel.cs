@@ -1,6 +1,8 @@
 using System.Collections.ObjectModel;
+using System.Globalization;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
+using Hbpos.Client.Wpf.Localization;
 using Hbpos.Client.Wpf.Models;
 using Hbpos.Client.Wpf.Services;
 using Hbpos.Contracts.Catalog;
@@ -10,11 +12,13 @@ namespace Hbpos.Client.Wpf.ViewModels;
 public sealed partial class ReceiptReturnsViewModel : ObservableObject, IScannerInputTarget, IDisposable
 {
     public const string PageId = "ReceiptReturns";
+
     private const string DefaultStatusMessage = "Scan an order number to start a receipt return.";
-    private const string DefaultOrderSummaryText = "No receipt loaded";
+    private const string DefaultOrderSummaryText = "No order loaded";
 
     private readonly IReceiptReturnsWorkflowService _workflowService;
     private readonly IRawScannerService? _rawScannerService;
+    private readonly ILocalizationService? _localization;
     private readonly Action _onBack;
     private readonly Action<CartLine>? _onReturnLineAdded;
     private ReceiptReturnOrder? _currentOrder;
@@ -32,10 +36,10 @@ public sealed partial class ReceiptReturnsViewModel : ObservableObject, IScanner
     private bool _isBusy;
 
     [ObservableProperty]
-    private string _statusMessage = DefaultStatusMessage;
+    private string _statusMessage = string.Empty;
 
     [ObservableProperty]
-    private string _orderSummaryText = DefaultOrderSummaryText;
+    private string _orderSummaryText = string.Empty;
 
     [ObservableProperty]
     private bool _returnRecordsMayBeStale;
@@ -45,13 +49,19 @@ public sealed partial class ReceiptReturnsViewModel : ObservableObject, IScanner
         PosSessionState session,
         Action onBack,
         Action<CartLine>? onReturnLineAdded = null,
-        IRawScannerService? rawScannerService = null)
+        IRawScannerService? rawScannerService = null,
+        ILocalizationService? localization = null)
     {
         _workflowService = workflowService;
         _session = session;
         _onBack = onBack;
         _onReturnLineAdded = onReturnLineAdded;
         _rawScannerService = rawScannerService;
+        _localization = localization;
+        if (_localization is not null)
+        {
+            _localization.CultureChanged += (_, _) => RefreshLocalizedState();
+        }
 
         LookupCommand = new AsyncRelayCommand(LookupAsync, () => !IsBusy && !string.IsNullOrWhiteSpace(ScanText));
         AddReceiptLineCommand = new RelayCommand<ReceiptReturnOrderLineViewModel>(AddReceiptLine, CanAddReceiptLine);
@@ -61,6 +71,8 @@ public sealed partial class ReceiptReturnsViewModel : ObservableObject, IScanner
         ClearCommand = new RelayCommand(ClearSelection);
 
         _rawScannerService?.Subscribe(PageId, OnRawBarcodeScanned);
+        StatusMessage = T("returns.status.default", DefaultStatusMessage);
+        OrderSummaryText = T("returns.orderSummary.none", DefaultOrderSummaryText);
     }
 
     public string ScannerPageId => PageId;
@@ -95,7 +107,7 @@ public sealed partial class ReceiptReturnsViewModel : ObservableObject, IScanner
         ScanText = string.Empty;
         IsNoReceiptMode = false;
         ClearSelection();
-        StatusMessage = DefaultStatusMessage;
+        StatusMessage = T("returns.status.default", DefaultStatusMessage);
     }
 
     public bool ProcessScannerBarcode(string barcode, string devicePath, string source)
@@ -127,8 +139,8 @@ public sealed partial class ReceiptReturnsViewModel : ObservableObject, IScanner
     {
         ClearSelection();
         StatusMessage = value
-            ? "No-receipt return is on. Scan products to add them to the return area."
-            : "Receipt return is on. Scan an order number.";
+            ? T("returns.status.noReceiptMode", "No-receipt return is on. Scan products to add them to the return area.")
+            : T("returns.status.receiptMode", "Receipt return is on. Scan an order number.");
     }
 
     private async Task LookupAsync()
@@ -167,16 +179,24 @@ public sealed partial class ReceiptReturnsViewModel : ObservableObject, IScanner
         if (result.Order is null)
         {
             _currentOrder = null;
-            OrderSummaryText = DefaultOrderSummaryText;
+            OrderSummaryText = T("returns.orderSummary.none", DefaultOrderSummaryText);
             OnPendingLinesChanged();
             return;
         }
 
         _currentOrder = result.Order;
-        OrderSummaryText = $"#{result.Order.OrderGuid.ToString("N")[..8].ToUpperInvariant()}  {result.Order.SoldAt.ToLocalTime():yyyy-MM-dd HH:mm}  {result.Order.CashierName}";
+        OrderSummaryText = Format(
+            "returns.orderSummary.format",
+            "#{0}  {1:yyyy-MM-dd HH:mm}  {2}",
+            result.Order.OrderGuid.ToString("N")[..8].ToUpperInvariant(),
+            result.Order.SoldAt.ToLocalTime(),
+            result.Order.CashierName);
         foreach (var line in result.Order.Lines)
         {
-            OrderLines.Add(new ReceiptReturnOrderLineViewModel(result.Order, line));
+            OrderLines.Add(new ReceiptReturnOrderLineViewModel(
+                result.Order,
+                line,
+                T("returns.priceSource.receipt", "Receipt return")));
         }
 
         OnPendingLinesChanged();
@@ -241,7 +261,10 @@ public sealed partial class ReceiptReturnsViewModel : ObservableObject, IScanner
             line.OrderGuid,
             line.OrderLineGuid));
         line.PendingQuantity += 1m;
-        StatusMessage = $"Added return item: {line.DisplayName}";
+        StatusMessage = Format(
+            "returns.status.addedReceiptLine",
+            "Added return item: {0}",
+            line.DisplayName);
         RefreshCommandStates();
     }
 
@@ -309,7 +332,7 @@ public sealed partial class ReceiptReturnsViewModel : ObservableObject, IScanner
         PendingLines.Clear();
         _currentOrder = null;
         ReturnRecordsMayBeStale = false;
-        OrderSummaryText = DefaultOrderSummaryText;
+        OrderSummaryText = T("returns.orderSummary.none", DefaultOrderSummaryText);
         OnPendingLinesChanged();
         RefreshCommandStates();
     }
@@ -328,72 +351,104 @@ public sealed partial class ReceiptReturnsViewModel : ObservableObject, IScanner
         ConfirmToCartCommand.NotifyCanExecuteChanged();
     }
 
+    private void RefreshLocalizedState()
+    {
+        if (_currentOrder is null)
+        {
+            OrderSummaryText = T("returns.orderSummary.none", DefaultOrderSummaryText);
+        }
+        else
+        {
+            OrderSummaryText = Format(
+                "returns.orderSummary.format",
+                "#{0}  {1:yyyy-MM-dd HH:mm}  {2}",
+                _currentOrder.OrderGuid.ToString("N")[..8].ToUpperInvariant(),
+                _currentOrder.SoldAt.ToLocalTime(),
+                _currentOrder.CashierName);
+        }
+
+        if (string.Equals(StatusMessage, DefaultStatusMessage, StringComparison.Ordinal) ||
+            string.Equals(StatusMessage, T("returns.status.default", DefaultStatusMessage), StringComparison.Ordinal))
+        {
+            StatusMessage = T("returns.status.default", DefaultStatusMessage);
+        }
+    }
+
     private void OnRawBarcodeScanned(RawBarcodeScannedEventArgs args)
     {
         ProcessScannerBarcode(args.Barcode, args.DevicePath, "raw");
+    }
+
+    private string T(string key, string fallback)
+    {
+        return _localization?.T(key) ?? fallback;
+    }
+
+    private string Format(string key, string fallback, params object[] args)
+    {
+        return string.Format(
+            _localization?.CurrentCulture ?? CultureInfo.CurrentCulture,
+            _localization?.T(key) ?? fallback,
+            args);
     }
 }
 
 public sealed partial class ReceiptReturnOrderLineViewModel : ObservableObject
 {
-    private readonly ReceiptReturnOrderLine _line;
-
-    [ObservableProperty]
-    private decimal _pendingQuantity;
-
-    public ReceiptReturnOrderLineViewModel(ReceiptReturnOrder order, ReceiptReturnOrderLine line)
+    public ReceiptReturnOrderLineViewModel(
+        ReceiptReturnOrder order,
+        ReceiptReturnOrderLine line,
+        string priceSourceLabel)
     {
-        _line = line;
         OrderGuid = order.OrderGuid;
+        OrderLineGuid = line.OrderLineGuid;
         StoreCode = order.StoreCode;
-        DeviceCode = order.DeviceCode;
+        ProductCode = line.ProductCode;
+        ReferenceCode = line.ReferenceCode;
+        DisplayName = line.DisplayName;
+        LookupCode = line.LookupCode;
+        ItemNumber = line.ItemNumber;
+        OriginalQuantity = line.OriginalQuantity;
+        ReturnedQuantity = line.ReturnedQuantity;
+        ReturnUnitAmount = line.ReturnUnitAmount;
+        PriceSource = PriceSourceKind.ProductBase;
+        PriceSourceLabel = priceSourceLabel;
     }
 
     public Guid OrderGuid { get; }
 
+    public Guid OrderLineGuid { get; }
+
     public string StoreCode { get; }
 
-    public string DeviceCode { get; }
+    public string ProductCode { get; }
 
-    public Guid OrderLineGuid => _line.OrderLineGuid;
+    public string? ReferenceCode { get; }
 
-    public string ProductCode => _line.ProductCode;
+    public string DisplayName { get; }
 
-    public string? ReferenceCode => _line.ReferenceCode;
+    public string LookupCode { get; }
 
-    public string DisplayName => _line.DisplayName;
+    public string? ItemNumber { get; }
 
-    public string LookupCode => _line.LookupCode;
+    public decimal OriginalQuantity { get; }
 
-    public string? ItemNumber => _line.ItemNumber;
+    public decimal ReturnedQuantity { get; }
 
-    public decimal OriginalQuantity => _line.OriginalQuantity;
+    public decimal ReturnUnitAmount { get; }
 
-    public decimal ReturnedQuantity => _line.ReturnedQuantity;
+    public PriceSourceKind PriceSource { get; }
 
-    public decimal AvailableQuantity => _line.AvailableQuantity;
+    public string PriceSourceLabel { get; }
 
-    public decimal AvailableRemaining => Math.Max(0m, AvailableQuantity - PendingQuantity);
+    [ObservableProperty]
+    private decimal _pendingQuantity;
 
-    public decimal UnitPrice => _line.UnitPrice;
-
-    public decimal ReturnUnitAmount => _line.ReturnUnitAmount;
-
-    public PriceSourceKind PriceSource => PriceSourceKind.StoreRetailPrice;
-
-    public string PriceSourceLabel => PriceSourceKind.StoreRetailPrice.ToString();
-
-    partial void OnPendingQuantityChanged(decimal value)
-    {
-        OnPropertyChanged(nameof(AvailableRemaining));
-    }
+    public decimal AvailableRemaining => Math.Max(0m, OriginalQuantity - ReturnedQuantity - PendingQuantity);
 }
 
 public sealed partial class PendingReturnLineViewModel : ObservableObject
 {
-    [ObservableProperty]
-    private decimal _quantity;
-
     public PendingReturnLineViewModel(
         string returnSourceKey,
         ReceiptReturnOrderLineViewModel? receiptLine,
@@ -420,7 +475,7 @@ public sealed partial class PendingReturnLineViewModel : ObservableObject
         LookupCode = lookupCode;
         ItemNumber = itemNumber;
         ProductImage = productImage;
-        Quantity = quantity;
+        _quantity = quantity;
         UnitPrice = unitPrice;
         PriceSource = priceSource;
         PriceSourceLabel = priceSourceLabel;
@@ -446,6 +501,9 @@ public sealed partial class PendingReturnLineViewModel : ObservableObject
 
     public string? ProductImage { get; }
 
+    [ObservableProperty]
+    private decimal _quantity;
+
     public decimal UnitPrice { get; }
 
     public PriceSourceKind PriceSource { get; }
@@ -460,6 +518,7 @@ public sealed partial class PendingReturnLineViewModel : ObservableObject
 
     public PendingReturnLine ToPendingReturnLine()
     {
+        // 将界面里的可编辑数量映射回工作流模型，保持服务层只接收纯业务数据。
         return new PendingReturnLine(
             StoreCode,
             ProductCode,
@@ -475,10 +534,5 @@ public sealed partial class PendingReturnLineViewModel : ObservableObject
             ReturnSourceKey,
             OriginalOrderGuid,
             OriginalOrderLineGuid);
-    }
-
-    partial void OnQuantityChanged(decimal value)
-    {
-        OnPropertyChanged(nameof(NegativeSubtotal));
     }
 }

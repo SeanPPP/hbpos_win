@@ -1,6 +1,7 @@
 using System.Globalization;
 using System.Runtime.InteropServices;
 using System.Text;
+using Hbpos.Client.Wpf.Localization;
 using Hbpos.Client.Wpf.Models;
 
 namespace Hbpos.Client.Wpf.Services;
@@ -125,6 +126,10 @@ public interface IReceiptPrinterDriver
     Task<ReceiptPrinterDriverResult> TestAsync(
         ReceiptPrinterSettings settings,
         CancellationToken cancellationToken = default);
+
+    Task<ReceiptPrinterDriverResult> OpenCashDrawerAsync(
+        ReceiptPrinterSettings settings,
+        CancellationToken cancellationToken = default);
 }
 
 public interface IReceiptPrintService
@@ -144,6 +149,11 @@ public interface IReceiptPrintService
         CancellationToken cancellationToken = default);
 
     Task<ReceiptPrintResult> TestPrinterAsync(CancellationToken cancellationToken = default);
+}
+
+public interface ICashDrawerService
+{
+    Task<ReceiptPrintResult> OpenAsync(CancellationToken cancellationToken = default);
 }
 
 public sealed class ReceiptPrinterSettingsStore(ILocalAppSettingsRepository settingsRepository) : IReceiptPrinterSettingsStore
@@ -479,7 +489,8 @@ public sealed class ReceiptPrintService(
     IReceiptQueryService receiptQueryService,
     IReceiptPrinterSettingsStore settingsStore,
     IReceiptTextFormatter formatter,
-    IReceiptPrinterDriver driver) : IReceiptPrintService, IDisposable
+    IReceiptPrinterDriver driver,
+    ILocalizationService? localization = null) : IReceiptPrintService, IDisposable
 {
     private readonly SemaphoreSlim _printLock = new(1, 1);
 
@@ -489,7 +500,7 @@ public sealed class ReceiptPrintService(
     {
         var receipt = await receiptQueryService.GetLatestReceiptAsync(cancellationToken);
         return receipt is null
-            ? new ReceiptPrintResult(false, "No receipt found.")
+            ? new ReceiptPrintResult(false, T("receipt.print.noReceiptFound", "No receipt found."))
             : await PrintReceiptAsync(receipt, reason, cancellationToken);
     }
 
@@ -500,7 +511,7 @@ public sealed class ReceiptPrintService(
     {
         var receipt = await receiptQueryService.GetReceiptAsync(orderGuid, cancellationToken);
         return receipt is null
-            ? new ReceiptPrintResult(false, "No receipt found.", orderGuid)
+            ? new ReceiptPrintResult(false, T("receipt.print.noReceiptFound", "No receipt found."), orderGuid)
             : await PrintReceiptAsync(receipt, reason, cancellationToken);
     }
 
@@ -517,7 +528,7 @@ public sealed class ReceiptPrintService(
             var result = await driver.PrintAsync(document, settings, cancellationToken);
             return new ReceiptPrintResult(
                 result.Succeeded,
-                result.Succeeded ? "Receipt printed." : result.Message,
+                result.Succeeded ? T("receipt.print.success", "Receipt printed.") : result.Message,
                 receipt.OrderGuid);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
@@ -553,21 +564,53 @@ public sealed class ReceiptPrintService(
     {
         _printLock.Dispose();
     }
+
+    private string T(string key, string fallback)
+    {
+        return localization?.T(key) ?? fallback;
+    }
 }
 
-public sealed class NoopReceiptPrintService : IReceiptPrintService
+public sealed class CashDrawerService(
+    IReceiptPrinterSettingsStore settingsStore,
+    IReceiptPrinterDriver driver,
+    ILocalizationService? localization = null) : ICashDrawerService
 {
-    public static NoopReceiptPrintService Instance { get; } = new();
-
-    private NoopReceiptPrintService()
+    public async Task<ReceiptPrintResult> OpenAsync(CancellationToken cancellationToken = default)
     {
+        try
+        {
+            var settings = await settingsStore.LoadAsync(cancellationToken);
+            var result = await driver.OpenCashDrawerAsync(settings, cancellationToken);
+            return new ReceiptPrintResult(result.Succeeded, result.Message);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            return new ReceiptPrintResult(false, ex.Message);
+        }
     }
 
+    private string T(string key, string fallback)
+    {
+        return localization?.T(key) ?? fallback;
+    }
+}
+
+public sealed class NoopCashDrawerService(ILocalizationService? localization = null) : ICashDrawerService
+{
+    public Task<ReceiptPrintResult> OpenAsync(CancellationToken cancellationToken = default)
+    {
+        return Task.FromResult(new ReceiptPrintResult(false, localization?.T("receipt.drawer.notConfigured") ?? "Cash drawer is not configured."));
+    }
+}
+
+public sealed class NoopReceiptPrintService(ILocalizationService? localization = null) : IReceiptPrintService
+{
     public Task<ReceiptPrintResult> PrintLatestReceiptAsync(
         ReceiptPrintReason reason = ReceiptPrintReason.LastReceipt,
         CancellationToken cancellationToken = default)
     {
-        return Task.FromResult(new ReceiptPrintResult(false, "Receipt printer is not configured."));
+        return Task.FromResult(new ReceiptPrintResult(false, localization?.T("receipt.printer.notConfigured") ?? "Receipt printer is not configured."));
     }
 
     public Task<ReceiptPrintResult> PrintReceiptAsync(
@@ -575,7 +618,7 @@ public sealed class NoopReceiptPrintService : IReceiptPrintService
         ReceiptPrintReason reason = ReceiptPrintReason.Manual,
         CancellationToken cancellationToken = default)
     {
-        return Task.FromResult(new ReceiptPrintResult(false, "Receipt printer is not configured.", orderGuid));
+        return Task.FromResult(new ReceiptPrintResult(false, localization?.T("receipt.printer.notConfigured") ?? "Receipt printer is not configured.", orderGuid));
     }
 
     public Task<ReceiptPrintResult> PrintReceiptAsync(
@@ -583,17 +626,21 @@ public sealed class NoopReceiptPrintService : IReceiptPrintService
         ReceiptPrintReason reason = ReceiptPrintReason.Manual,
         CancellationToken cancellationToken = default)
     {
-        return Task.FromResult(new ReceiptPrintResult(false, "Receipt printer is not configured.", receipt.OrderGuid));
+        return Task.FromResult(new ReceiptPrintResult(false, localization?.T("receipt.printer.notConfigured") ?? "Receipt printer is not configured.", receipt.OrderGuid));
     }
 
     public Task<ReceiptPrintResult> TestPrinterAsync(CancellationToken cancellationToken = default)
     {
-        return Task.FromResult(new ReceiptPrintResult(false, "Receipt printer is not configured."));
+        return Task.FromResult(new ReceiptPrintResult(false, localization?.T("receipt.printer.notConfigured") ?? "Receipt printer is not configured."));
     }
 }
 
-public sealed class XpReceiptPrinterDriver : IReceiptPrinterDriver, IDisposable
+public sealed class XpReceiptPrinterDriver(ILocalizationService? localization = null) : IReceiptPrinterDriver, IDisposable
 {
+    private const int CashDrawerPinMode = 0;
+    private const int CashDrawerOnTime = 25;
+    private const int CashDrawerOffTime = 250;
+
     private readonly SemaphoreSlim _printerLock = new(1, 1);
     private bool _disposed;
 
@@ -627,6 +674,21 @@ public sealed class XpReceiptPrinterDriver : IReceiptPrinterDriver, IDisposable
         return await PrintAsync(document, settings, cancellationToken);
     }
 
+    public async Task<ReceiptPrinterDriverResult> OpenCashDrawerAsync(
+        ReceiptPrinterSettings settings,
+        CancellationToken cancellationToken = default)
+    {
+        await _printerLock.WaitAsync(cancellationToken);
+        try
+        {
+            return await Task.Run(() => OpenCashDrawerCore(settings), cancellationToken);
+        }
+        finally
+        {
+            _printerLock.Release();
+        }
+    }
+
     public void Dispose()
     {
         if (_disposed)
@@ -638,12 +700,12 @@ public sealed class XpReceiptPrinterDriver : IReceiptPrinterDriver, IDisposable
         _disposed = true;
     }
 
-    private static ReceiptPrinterDriverResult PrintCore(ReceiptPrintDocument document, ReceiptPrinterSettings settings)
+    private ReceiptPrinterDriverResult PrintCore(ReceiptPrintDocument document, ReceiptPrinterSettings settings)
     {
         var printer = InitPrinter(string.Empty);
         if (printer == IntPtr.Zero)
         {
-            return new ReceiptPrinterDriverResult(false, "Printer could not be initialized.");
+            return new ReceiptPrinterDriverResult(false, T("receipt.printer.initFailed", "Printer could not be initialized."));
         }
 
         var opened = false;
@@ -654,17 +716,17 @@ public sealed class XpReceiptPrinterDriver : IReceiptPrinterDriver, IDisposable
                 : settings.PrinterPort.Trim());
             if (openResult != 0)
             {
-                return new ReceiptPrinterDriverResult(false, "Printer port could not be opened.");
+                return new ReceiptPrinterDriverResult(false, T("receipt.printer.portOpenFailed", "Printer port could not be opened."));
             }
 
             opened = true;
-            var initializeResult = GetSdkFailure(PrinterInitialize(printer), "Printer could not be initialized.");
+            var initializeResult = GetSdkFailure(PrinterInitialize(printer), T("receipt.printer.initFailed", "Printer could not be initialized."));
             if (initializeResult is not null)
             {
                 return initializeResult;
             }
 
-            var lineSpaceResult = GetSdkFailure(SetTextLineSpace(printer, 30), "Printer line spacing could not be set.");
+            var lineSpaceResult = GetSdkFailure(SetTextLineSpace(printer, 30), T("receipt.printer.lineSpacingFailed", "Printer line spacing could not be set."));
             if (lineSpaceResult is not null)
             {
                 return lineSpaceResult;
@@ -683,7 +745,7 @@ public sealed class XpReceiptPrinterDriver : IReceiptPrinterDriver, IDisposable
                     case ReceiptPrintElementKind.Barcode:
                         var barcodeResult = GetSdkFailure(
                             PrintBarCode(printer, 8, element.Text, 2, 100, (int)ReceiptPrintAlignment.Center, 2),
-                            "Printer barcode could not be printed.");
+                            T("receipt.printer.barcodeFailed", "Printer barcode could not be printed."));
                         if (barcodeResult is not null)
                         {
                             return barcodeResult;
@@ -693,7 +755,7 @@ public sealed class XpReceiptPrinterDriver : IReceiptPrinterDriver, IDisposable
                     case ReceiptPrintElementKind.QrCode:
                         var qrResult = GetSdkFailure(
                             PrintSymbol(printer, 49, element.Text, 48, 7, 7, (int)ReceiptPrintAlignment.Center),
-                            "Printer QR code could not be printed.");
+                            T("receipt.printer.qrCodeFailed", "Printer QR code could not be printed."));
                         if (qrResult is not null)
                         {
                             return qrResult;
@@ -703,7 +765,7 @@ public sealed class XpReceiptPrinterDriver : IReceiptPrinterDriver, IDisposable
                     default:
                         var textResult = GetSdkFailure(
                             PrintText(printer, element.Text + "\r\n", (int)element.Alignment, element.IsEmphasized ? 1 : 0),
-                            "Printer text could not be printed.");
+                            T("receipt.printer.textFailed", "Printer text could not be printed."));
                         if (textResult is not null)
                         {
                             return textResult;
@@ -715,13 +777,13 @@ public sealed class XpReceiptPrinterDriver : IReceiptPrinterDriver, IDisposable
 
             var cutResult = GetSdkFailure(
                 CutPaperWithDistance(printer, Math.Max(1, settings.CutDistance)),
-                "Printer paper could not be cut.");
+                T("receipt.printer.cutPaperFailed", "Printer paper could not be cut."));
             if (cutResult is not null)
             {
                 return cutResult;
             }
 
-            return new ReceiptPrinterDriverResult(true, "Receipt printed.");
+            return new ReceiptPrinterDriverResult(true, T("receipt.print.success", "Receipt printed."));
         }
         finally
         {
@@ -734,18 +796,72 @@ public sealed class XpReceiptPrinterDriver : IReceiptPrinterDriver, IDisposable
         }
     }
 
-    private static ReceiptPrinterDriverResult? GetSdkFailure(int result, string message)
+    private ReceiptPrinterDriverResult OpenCashDrawerCore(ReceiptPrinterSettings settings)
+    {
+        var printer = InitPrinter(string.Empty);
+        if (printer == IntPtr.Zero)
+        {
+            return new ReceiptPrinterDriverResult(false, T("receipt.printer.initFailed", "Printer could not be initialized."));
+        }
+
+        var opened = false;
+        try
+        {
+            var openResult = OpenPort(printer, string.IsNullOrWhiteSpace(settings.PrinterPort)
+                ? ReceiptPrinterSettings.DefaultPrinterPort
+                : settings.PrinterPort.Trim());
+            if (openResult != 0)
+            {
+                return new ReceiptPrinterDriverResult(false, T("receipt.printer.portOpenFailed", "Printer port could not be opened."));
+            }
+
+            opened = true;
+            var initializeResult = GetSdkFailure(PrinterInitialize(printer), T("receipt.printer.initFailed", "Printer could not be initialized."));
+            if (initializeResult is not null)
+            {
+                return initializeResult;
+            }
+
+            var statusResult = GetPrinterNotReadyResult(printer);
+            if (statusResult is not null)
+            {
+                return statusResult;
+            }
+
+            // 通过打印机 DK 钱箱口发送脉冲，不打印小票。
+            var drawerResult = GetSdkFailure(
+                OpenCashDrawer(printer, CashDrawerPinMode, CashDrawerOnTime, CashDrawerOffTime),
+                T("receipt.drawer.openFailed", "Cash drawer could not be opened."));
+            if (drawerResult is not null)
+            {
+                return drawerResult;
+            }
+
+            return new ReceiptPrinterDriverResult(true, T("cashDrawer.opened", "Cash drawer opened."));
+        }
+        finally
+        {
+            if (opened)
+            {
+                ClosePort(printer);
+            }
+
+            ReleasePrinter(printer);
+        }
+    }
+
+    private ReceiptPrinterDriverResult? GetSdkFailure(int result, string message)
     {
         return result == 0 ? null : new ReceiptPrinterDriverResult(false, $"{message} SDK result: {result}.");
     }
 
-    private static ReceiptPrinterDriverResult? GetPrinterNotReadyResult(IntPtr printer)
+    private ReceiptPrinterDriverResult? GetPrinterNotReadyResult(IntPtr printer)
     {
         var status = 2;
         var result = GetPrinterState(printer, ref status);
         if (result != 0)
         {
-            return new ReceiptPrinterDriverResult(false, "Printer status could not be read.");
+            return new ReceiptPrinterDriverResult(false, T("receipt.printer.statusReadFailed", "Printer status could not be read."));
         }
 
         if (status == 0x12)
@@ -755,20 +871,30 @@ public sealed class XpReceiptPrinterDriver : IReceiptPrinterDriver, IDisposable
 
         if ((status & 0b100) > 0)
         {
-            return new ReceiptPrinterDriverResult(false, "Printer cover is open.");
+            return new ReceiptPrinterDriverResult(false, T("receipt.printer.coverOpen", "Printer cover is open."));
         }
 
         if ((status & 0b100000) > 0)
         {
-            return new ReceiptPrinterDriverResult(false, "Printer is out of paper.");
+            return new ReceiptPrinterDriverResult(false, T("receipt.printer.outOfPaper", "Printer is out of paper."));
         }
 
         if ((status & 0b1000000) > 0)
         {
-            return new ReceiptPrinterDriverResult(false, "Printer is reporting an error.");
+            return new ReceiptPrinterDriverResult(false, T("receipt.printer.error", "Printer is reporting an error."));
         }
 
-        return new ReceiptPrinterDriverResult(false, $"Printer is not ready. Status: {status}.");
+        return new ReceiptPrinterDriverResult(
+            false,
+            string.Format(
+                localization?.CurrentCulture ?? CultureInfo.CurrentCulture,
+                T("receipt.printer.notReady", "Printer is not ready. Status: {0}."),
+                status));
+    }
+
+    private string T(string key, string fallback)
+    {
+        return localization?.T(key) ?? fallback;
     }
 
     [DllImport("printer.sdk.dll", CallingConvention = CallingConvention.StdCall, CharSet = CharSet.Auto)]
@@ -803,4 +929,7 @@ public sealed class XpReceiptPrinterDriver : IReceiptPrinterDriver, IDisposable
 
     [DllImport("printer.sdk.dll", CallingConvention = CallingConvention.StdCall, CharSet = CharSet.Ansi)]
     private static extern int CutPaperWithDistance(IntPtr intPtr, int distance);
+
+    [DllImport("printer.sdk.dll", CallingConvention = CallingConvention.StdCall, CharSet = CharSet.Ansi)]
+    private static extern int OpenCashDrawer(IntPtr intPtr, int pinMode, int onTime, int offTime);
 }

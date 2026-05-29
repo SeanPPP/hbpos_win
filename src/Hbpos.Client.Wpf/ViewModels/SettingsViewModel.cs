@@ -23,7 +23,7 @@ public sealed partial class SettingsViewModel : ObservableObject
     private readonly ILocalizationService? _localization;
     private readonly Func<CancellationToken, Task>? _downloadCatalogAsync;
     private readonly Func<CancellationToken, Task>? _resetCatalogAsync;
-    private readonly Func<Task>? _reregisterDeviceAsync;
+    private readonly Func<Task<DeviceReregistrationStartResult>>? _reregisterDeviceAsync;
     private readonly Action? _returnToPos;
     private readonly IReceiptPrinterSettingsStore? _receiptPrinterSettingsStore;
     private readonly IReceiptPrintService? _receiptPrintService;
@@ -121,7 +121,7 @@ public sealed partial class SettingsViewModel : ObservableObject
         ILocalizationService? localization = null,
         Func<CancellationToken, Task>? downloadCatalogAsync = null,
         Func<CancellationToken, Task>? resetCatalogAsync = null,
-        Func<Task>? reregisterDeviceAsync = null,
+        Func<Task<DeviceReregistrationStartResult>>? reregisterDeviceAsync = null,
         Action? returnToPos = null,
         IReceiptPrinterSettingsStore? receiptPrinterSettingsStore = null,
         IReceiptPrintService? receiptPrintService = null)
@@ -656,7 +656,12 @@ public sealed partial class SettingsViewModel : ObservableObject
         await RunBusyAsync(async () =>
         {
             SetStatus("settings.status.reregisterStarting");
-            await _reregisterDeviceAsync();
+            var result = await _reregisterDeviceAsync();
+            // 设置页不切换屏幕，启动被拦截时需要把原因留在当前页状态栏。
+            if (!result.Started && !string.IsNullOrWhiteSpace(result.StatusMessage))
+            {
+                SetStatusOverride(result.StatusMessage);
+            }
         });
     }
 

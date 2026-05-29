@@ -33,9 +33,12 @@ public sealed partial class PosTerminalViewModel : ObservableObject, IScannerInp
     private readonly Func<Task>? _onHoldOrderAsync;
     private readonly Func<Task>? _onRecallOrderAsync;
     private readonly Func<Task>? _onOpenHistoryAsync;
+    private readonly Func<Task>? _onOpenDailyCloseAsync;
     private readonly Func<Task>? _onOpenSettingsAsync;
     private readonly Action? _onOpenCustomerDisplay;
     private readonly Func<Task<ReceiptPrintResult>>? _onPrintLastReceiptAsync;
+    private readonly Func<Task<ReceiptPrintResult>>? _onOpenCashDrawerAsync;
+    private readonly Func<Task>? _onExitApplicationAsync;
     private readonly Func<Task>? _onReregisterDeviceAsync;
     private readonly ILocalizationService? _localization;
     private readonly IUserFeedbackService _userFeedbackService;
@@ -99,10 +102,13 @@ public sealed partial class PosTerminalViewModel : ObservableObject, IScannerInp
         Func<Task>? onHoldOrderAsync = null,
         Func<Task>? onRecallOrderAsync = null,
         Func<Task>? onOpenHistoryAsync = null,
+        Func<Task>? onOpenDailyCloseAsync = null,
         Func<Task>? onOpenSettingsAsync = null,
         Action? onOpenCustomerDisplay = null,
         Action? onOpenReturns = null,
-        Func<Task<ReceiptPrintResult>>? onPrintLastReceiptAsync = null)
+        Func<Task<ReceiptPrintResult>>? onPrintLastReceiptAsync = null,
+        Func<Task<ReceiptPrintResult>>? onOpenCashDrawerAsync = null,
+        Func<Task>? onExitApplicationAsync = null)
     {
         _priceIndex = priceIndex;
         _cart = cart;
@@ -114,9 +120,12 @@ public sealed partial class PosTerminalViewModel : ObservableObject, IScannerInp
         _onHoldOrderAsync = onHoldOrderAsync;
         _onRecallOrderAsync = onRecallOrderAsync;
         _onOpenHistoryAsync = onOpenHistoryAsync;
+        _onOpenDailyCloseAsync = onOpenDailyCloseAsync;
         _onOpenSettingsAsync = onOpenSettingsAsync;
         _onOpenCustomerDisplay = onOpenCustomerDisplay;
         _onPrintLastReceiptAsync = onPrintLastReceiptAsync;
+        _onOpenCashDrawerAsync = onOpenCashDrawerAsync;
+        _onExitApplicationAsync = onExitApplicationAsync;
         _onReregisterDeviceAsync = onReregisterDeviceAsync;
         _localization = localization;
         _userFeedbackService = userFeedbackService ?? NoopUserFeedbackService.Instance;
@@ -156,9 +165,12 @@ public sealed partial class PosTerminalViewModel : ObservableObject, IScannerInp
         HoldOrderCommand = new AsyncRelayCommand(HoldOrderAsync, () => !_cart.IsEmpty);
         RecallOrderCommand = new AsyncRelayCommand(RecallOrderAsync);
         OpenHistoryCommand = new AsyncRelayCommand(OpenHistoryAsync);
+        OpenDailyCloseCommand = new AsyncRelayCommand(OpenDailyCloseAsync);
         OpenSettingsCommand = new AsyncRelayCommand(OpenSettingsAsync);
         OpenCustomerDisplayCommand = new RelayCommand(OpenCustomerDisplay);
         PrintLastReceiptCommand = new AsyncRelayCommand(PrintLastReceiptAsync, () => _onPrintLastReceiptAsync is not null);
+        OpenCashDrawerCommand = new AsyncRelayCommand(OpenCashDrawerAsync, () => _onOpenCashDrawerAsync is not null);
+        ExitApplicationCommand = new AsyncRelayCommand(ExitApplicationAsync, () => _onExitApplicationAsync is not null);
         SyncCommand = new AsyncRelayCommand(SyncAsync);
         ResetCatalogCommand = new AsyncRelayCommand(ResetCatalogAsync);
         ReregisterDeviceCommand = new AsyncRelayCommand(ReregisterDeviceAsync);
@@ -214,11 +226,17 @@ public sealed partial class PosTerminalViewModel : ObservableObject, IScannerInp
 
     public IAsyncRelayCommand OpenHistoryCommand { get; }
 
+    public IAsyncRelayCommand OpenDailyCloseCommand { get; }
+
     public IAsyncRelayCommand OpenSettingsCommand { get; }
 
     public IRelayCommand OpenCustomerDisplayCommand { get; }
 
     public IAsyncRelayCommand PrintLastReceiptCommand { get; }
+
+    public IAsyncRelayCommand OpenCashDrawerCommand { get; }
+
+    public IAsyncRelayCommand ExitApplicationCommand { get; }
 
     public IAsyncRelayCommand SyncCommand { get; }
 
@@ -250,11 +268,17 @@ public sealed partial class PosTerminalViewModel : ObservableObject, IScannerInp
 
     public string HistoryText => T("pos.terminal.actions.history");
 
+    public string DailyCloseText => T("pos.terminal.actions.dailyClose");
+
     public string SettingsText => T("pos.terminal.actions.settings");
 
     public string CustomerDisplayText => T("pos.terminal.actions.customerDisplay");
 
     public string PrintLastReceiptText => T("pos.terminal.actions.printLastReceipt");
+
+    public string OpenCashDrawerText => T("pos.terminal.actions.openCashDrawer");
+
+    public string ExitApplicationText => T("pos.terminal.actions.exitApplication");
 
     public string MemberText => T("pos.terminal.actions.member");
 
@@ -842,6 +866,14 @@ public sealed partial class PosTerminalViewModel : ObservableObject, IScannerInp
         }
     }
 
+    private async Task OpenDailyCloseAsync()
+    {
+        if (_onOpenDailyCloseAsync is not null)
+        {
+            await _onOpenDailyCloseAsync();
+        }
+    }
+
     private async Task OpenSettingsAsync()
     {
         if (_onOpenSettingsAsync is not null)
@@ -870,6 +902,29 @@ public sealed partial class PosTerminalViewModel : ObservableObject, IScannerInp
             result.Succeeded ? null : UserFeedbackCue.OperationError);
     }
 
+    private async Task OpenCashDrawerAsync()
+    {
+        if (_onOpenCashDrawerAsync is null)
+        {
+            return;
+        }
+
+        SetStatusText(T("cashDrawer.opening"));
+        var result = await _onOpenCashDrawerAsync();
+        SetStatusText(
+            result.Succeeded ? T("cashDrawer.opened") : result.Message,
+            result.Succeeded ? StatusFeedbackKind.Success : StatusFeedbackKind.Error,
+            result.Succeeded ? null : UserFeedbackCue.OperationError);
+    }
+
+    private async Task ExitApplicationAsync()
+    {
+        if (_onExitApplicationAsync is not null)
+        {
+            await _onExitApplicationAsync();
+        }
+    }
+
     private async Task ReregisterDeviceAsync()
     {
         if (_onReregisterDeviceAsync is not null)
@@ -882,18 +937,18 @@ public sealed partial class PosTerminalViewModel : ObservableObject, IScannerInp
     {
         await RunCatalogDownloadAsync(
             _syncCatalogAsync,
-            "Syncing catalog...",
-            "Catalog sync completed.",
-            "Catalog sync failed");
+            T("pos.catalogSync.starting", "Syncing catalog..."),
+            T("pos.catalogSync.completed", "Catalog sync completed."),
+            T("pos.catalogSync.failed", "Catalog sync failed"));
     }
 
     private async Task ResetCatalogAsync()
     {
         await RunCatalogDownloadAsync(
             _resetCatalogAsync,
-            "Resetting catalog...",
-            "Catalog reset completed.",
-            "Catalog reset failed");
+            T("pos.catalogReset.starting", "Resetting catalog..."),
+            T("pos.catalogReset.completed", "Catalog reset completed."),
+            T("pos.catalogReset.failed", "Catalog reset failed"));
     }
 
     private async Task RunCatalogDownloadAsync(
@@ -910,7 +965,7 @@ public sealed partial class PosTerminalViewModel : ObservableObject, IScannerInp
 
         if (!Session.IsOnline)
         {
-            SetStatusText("Offline: catalog sync skipped.");
+            SetStatusText(T("pos.status.catalogSyncSkipped", "Offline: catalog sync skipped."));
             return;
         }
 
@@ -1081,6 +1136,12 @@ public sealed partial class PosTerminalViewModel : ObservableObject, IScannerInp
         return _localization?.T(key) ?? key;
     }
 
+    private string T(string key, string fallback)
+    {
+        var value = _localization?.T(key);
+        return string.IsNullOrWhiteSpace(value) || value == key ? fallback : value;
+    }
+
     private string Format(string key, params object[] args)
     {
         var template = T(key);
@@ -1102,9 +1163,12 @@ public sealed partial class PosTerminalViewModel : ObservableObject, IScannerInp
         OnPropertyChanged(nameof(HoldOrderText));
         OnPropertyChanged(nameof(RecallOrderText));
         OnPropertyChanged(nameof(HistoryText));
+        OnPropertyChanged(nameof(DailyCloseText));
         OnPropertyChanged(nameof(SettingsText));
         OnPropertyChanged(nameof(CustomerDisplayText));
         OnPropertyChanged(nameof(PrintLastReceiptText));
+        OnPropertyChanged(nameof(OpenCashDrawerText));
+        OnPropertyChanged(nameof(ExitApplicationText));
         OnPropertyChanged(nameof(MemberText));
         OnPropertyChanged(nameof(SyncText));
         OnPropertyChanged(nameof(CatalogResetText));

@@ -1,4 +1,4 @@
-using System.Collections.Concurrent;
+﻿using System.Collections.Concurrent;
 using System.Windows;
 using System.Globalization;
 using System.Reflection;
@@ -177,14 +177,18 @@ public sealed class MainViewModelScannerTests
         await viewModel.ResetScannerBindingCommand.ExecuteAsync(null);
 
         Assert.Equal(1, scanner.ResetCount);
-        Assert.Equal("扫码枪绑定已清除，请在收银页扫描一次重新学习。", viewModel.StatusMessage);
+        Assert.Equal("Scanner binding reset. Trigger the scanner again to bind the current device.", viewModel.StatusMessage);
     }
 
     [Fact]
     public async Task Card_payment_completion_auto_prints_receipt_after_success_screen()
     {
         var printService = new RecordingReceiptPrintService();
-        var viewModel = CreateAuthorizedMainViewModel(new FakeCustomerDisplayWindowService(), printService);
+        var cashDrawerService = new RecordingCashDrawerService();
+        var viewModel = CreateAuthorizedMainViewModel(
+            new FakeCustomerDisplayWindowService(),
+            printService,
+            cashDrawerService: cashDrawerService);
         await viewModel.InitializeAsync(new AppStartupOptions([], false, null, null));
         var order = CreateReceiptPrintOrder(PaymentMethodKind.Card);
 
@@ -194,21 +198,148 @@ public sealed class MainViewModelScannerTests
         var call = Assert.Single(printService.Calls);
         Assert.Equal(order.OrderGuid, call.OrderGuid);
         Assert.Equal(ReceiptPrintReason.CardAuto, call.Reason);
+        Assert.Equal(0, cashDrawerService.OpenCallCount);
     }
 
     [Fact]
     public async Task Cash_payment_completion_does_not_auto_print_receipt()
     {
         var printService = new RecordingReceiptPrintService();
-        var viewModel = CreateAuthorizedMainViewModel(new FakeCustomerDisplayWindowService(), printService);
+        var cashDrawerService = new RecordingCashDrawerService();
+        var viewModel = CreateAuthorizedMainViewModel(
+            new FakeCustomerDisplayWindowService(),
+            printService,
+            cashDrawerService: cashDrawerService);
         await viewModel.InitializeAsync(new AppStartupOptions([], false, null, null));
         var order = CreateReceiptPrintOrder(PaymentMethodKind.Cash);
 
         InvokePaymentCompleted(viewModel, order);
 
-        await WaitUntilAsync(() => ReferenceEquals(viewModel.PaymentSuccess, viewModel.CurrentScreen));
+        await WaitUntilAsync(() => ReferenceEquals(viewModel.PaymentSuccess, viewModel.CurrentScreen) && cashDrawerService.OpenCallCount == 1);
         await Task.Delay(50);
         Assert.Empty(printService.Calls);
+        Assert.Equal(1, cashDrawerService.OpenCallCount);
+    }
+
+    [Fact]
+    public async Task Mixed_cash_card_payment_completion_opens_cash_drawer_and_auto_prints_receipt()
+    {
+        var printService = new RecordingReceiptPrintService();
+        var cashDrawerService = new RecordingCashDrawerService();
+        var viewModel = CreateAuthorizedMainViewModel(
+            new FakeCustomerDisplayWindowService(),
+            printService,
+            cashDrawerService: cashDrawerService);
+        await viewModel.InitializeAsync(new AppStartupOptions([], false, null, null));
+        var order = CreateReceiptPrintOrder(PaymentMethodKind.Cash, PaymentMethodKind.Card);
+
+        InvokePaymentCompleted(viewModel, order);
+
+        await WaitUntilAsync(() =>
+            ReferenceEquals(viewModel.PaymentSuccess, viewModel.CurrentScreen) &&
+            cashDrawerService.OpenCallCount == 1 &&
+            printService.Calls.Count == 1);
+
+        Assert.Equal(1, cashDrawerService.OpenCallCount);
+        var call = Assert.Single(printService.Calls);
+        Assert.Equal(order.OrderGuid, call.OrderGuid);
+        Assert.Equal(ReceiptPrintReason.CardAuto, call.Reason);
+    }
+
+    [Fact]
+    public async Task Full_card_tender_auto_completes_payment_and_opens_success_screen()
+    {
+        var cart = new PosCartService();
+        cart.AddItem(CreateItem("1042", "SKU-AUTO-CARD", "930AUTO"));
+        var checkout = new CashCheckoutService();
+        var orderRepository = new FakeLocalOrderRepository();
+        var syncQueue = new FakeSyncQueueRepository();
+        var viewModel = CreateAuthorizedMainViewModelWithPaymentWorkflow(
+            cart,
+            checkout,
+            orderRepository,
+            syncQueue,
+            new ApprovedCardTerminalClient("CARD-AUTO"));
+
+        await viewModel.InitializeAsync(new AppStartupOptions([], false, null, null));
+        viewModel.ShowCashPaymentCommand.Execute(null);
+
+        await viewModel.CashPayment!.SelectCardCommand.ExecuteAsync(null);
+
+        await WaitUntilAsync(() => ReferenceEquals(viewModel.PaymentSuccess, viewModel.CurrentScreen));
+        Assert.Empty(cart.Lines);
+        Assert.Empty(viewModel.CashPayment.PaymentTenders);
+    }
+
+    [Fact]
+    public async Task Partial_card_tender_stays_on_payment_screen_and_blocks_back_to_pos()
+    {
+        var cart = new PosCartService();
+        cart.AddItem(CreateItem("1042", "SKU-PARTIAL-CARD", "930PART"));
+        var checkout = new CashCheckoutService();
+        var orderRepository = new FakeLocalOrderRepository();
+        var syncQueue = new FakeSyncQueueRepository();
+        var viewModel = CreateAuthorizedMainViewModelWithPaymentWorkflow(
+            cart,
+            checkout,
+            orderRepository,
+            syncQueue,
+            new ApprovedCardTerminalClient("CARD-PART"));
+
+        await viewModel.InitializeAsync(new AppStartupOptions([], false, null, null));
+        viewModel.ShowCashPaymentCommand.Execute(null);
+        var payment = viewModel.CashPayment!;
+        payment.TenderAmountText = "5";
+
+        await payment.SelectCardCommand.ExecuteAsync(null);
+        payment.BackToPosCommand.Execute(null);
+
+        Assert.Same(payment, viewModel.CurrentScreen);
+        Assert.Single(payment.PaymentTenders);
+        Assert.Equal("Remove added tenders or complete the payment before returning to POS.", payment.StatusMessage);
+    }
+
+    [Fact]
+    public async Task Cash_refund_completion_opens_cash_drawer()
+    {
+        var cashDrawerService = new RecordingCashDrawerService();
+        var viewModel = CreateAuthorizedMainViewModel(
+            new FakeCustomerDisplayWindowService(),
+            cashDrawerService: cashDrawerService);
+        await viewModel.InitializeAsync(new AppStartupOptions([], false, null, null));
+        var order = CreateReceiptPrintOrder(PaymentMethodKind.Cash) with
+        {
+            TotalAmount = -10m,
+            ActualAmount = -10m,
+            Payments = [new LocalPayment(Guid.NewGuid(), PaymentMethodKind.Cash, -10m, null)]
+        };
+
+        InvokePaymentCompleted(viewModel, order);
+
+        await WaitUntilAsync(() => ReferenceEquals(viewModel.PaymentSuccess, viewModel.CurrentScreen) && cashDrawerService.OpenCallCount == 1);
+
+        Assert.Equal(1, cashDrawerService.OpenCallCount);
+    }
+
+    [Fact]
+    public async Task Cash_payment_completion_shows_cash_drawer_failure_without_leaving_success_screen()
+    {
+        var cashDrawerService = new RecordingCashDrawerService
+        {
+            Result = new ReceiptPrintResult(false, "drawer offline")
+        };
+        var viewModel = CreateAuthorizedMainViewModel(
+            new FakeCustomerDisplayWindowService(),
+            cashDrawerService: cashDrawerService);
+        await viewModel.InitializeAsync(new AppStartupOptions([], false, null, null));
+        var order = CreateReceiptPrintOrder(PaymentMethodKind.Cash);
+
+        InvokePaymentCompleted(viewModel, order);
+
+        await WaitUntilAsync(() => ReferenceEquals(viewModel.PaymentSuccess, viewModel.CurrentScreen) && cashDrawerService.OpenCallCount == 1);
+
+        Assert.Equal(1, cashDrawerService.OpenCallCount);
+        Assert.Equal("drawer offline", viewModel.StatusMessage);
     }
 
     [Fact]
@@ -240,6 +371,60 @@ public sealed class MainViewModelScannerTests
         var call = Assert.Single(printService.Calls);
         Assert.Null(call.OrderGuid);
         Assert.Equal(ReceiptPrintReason.LastReceipt, call.Reason);
+    }
+
+    [Fact]
+    public async Task Pos_terminal_open_cash_drawer_command_uses_cash_drawer_service()
+    {
+        var cashDrawerService = new RecordingCashDrawerService();
+        var viewModel = CreateAuthorizedMainViewModel(
+            new FakeCustomerDisplayWindowService(),
+            cashDrawerService: cashDrawerService);
+        await viewModel.InitializeAsync(new AppStartupOptions([], false, null, null));
+
+        await viewModel.PosTerminal!.OpenCashDrawerCommand.ExecuteAsync(null);
+
+        Assert.Equal(1, cashDrawerService.OpenCallCount);
+        Assert.Equal("Cash drawer opened.", viewModel.PosTerminal.StatusMessage);
+    }
+
+    [Fact]
+    public async Task Pos_terminal_exit_application_command_confirms_closes_customer_display_and_exits()
+    {
+        var customerDisplayWindow = new FakeCustomerDisplayWindowService();
+        var exitService = new RecordingApplicationExitService();
+        var confirmationDialog = new FakeConfirmationDialogService { ConfirmExitApplicationResult = true };
+        var viewModel = CreateAuthorizedMainViewModel(
+            customerDisplayWindow,
+            applicationExitService: exitService,
+            confirmationDialogService: confirmationDialog);
+        await viewModel.InitializeAsync(new AppStartupOptions([], false, null, null));
+
+        await viewModel.PosTerminal!.ExitApplicationCommand.ExecuteAsync(null);
+
+        Assert.Equal(1, confirmationDialog.ConfirmExitApplicationCallCount);
+        Assert.Equal(1, exitService.ExitCallCount);
+        Assert.Equal(CustomerDisplayWindowMode.Closed, customerDisplayWindow.LastSetMode);
+    }
+
+    [Fact]
+    public async Task Pos_terminal_exit_application_command_does_not_exit_when_cancelled()
+    {
+        var customerDisplayWindow = new FakeCustomerDisplayWindowService();
+        var exitService = new RecordingApplicationExitService();
+        var confirmationDialog = new FakeConfirmationDialogService { ConfirmExitApplicationResult = false };
+        var viewModel = CreateAuthorizedMainViewModel(
+            customerDisplayWindow,
+            applicationExitService: exitService,
+            confirmationDialogService: confirmationDialog);
+        await viewModel.InitializeAsync(new AppStartupOptions([], false, null, null));
+        var setModeCallCount = customerDisplayWindow.SetModeCallCount;
+
+        await viewModel.PosTerminal!.ExitApplicationCommand.ExecuteAsync(null);
+
+        Assert.Equal(1, confirmationDialog.ConfirmExitApplicationCallCount);
+        Assert.Equal(0, exitService.ExitCallCount);
+        Assert.Equal(setModeCallCount, customerDisplayWindow.SetModeCallCount);
     }
 
     [Fact]
@@ -676,7 +861,7 @@ public sealed class MainViewModelScannerTests
         Assert.Empty(returns.PendingLines);
         Assert.Empty(returns.OrderLines);
         Assert.False(returns.ReturnRecordsMayBeStale);
-        Assert.Equal("No receipt loaded", returns.OrderSummaryText);
+        Assert.Equal("No order loaded", returns.OrderSummaryText);
     }
 
     [Fact]
@@ -1002,8 +1187,12 @@ public sealed class MainViewModelScannerTests
         Assert.False(viewModel.IsFallbackScreenActive);
         Assert.Empty(firstPaymentScreen.PaymentTenders);
         Assert.True(firstPaymentScreen.IsCashSelected);
-        Assert.Equal("9.90", firstPaymentScreen.TenderAmountText);
+        Assert.Equal(string.Empty, firstPaymentScreen.TenderAmountText);
         Assert.Null(scanner.ActivePageId);
+
+        firstPaymentScreen.BackToPosCommand.Execute(null);
+
+        Assert.Same(viewModel.PosTerminal, viewModel.CurrentScreen);
     }
 
     [Fact]
@@ -1042,6 +1231,53 @@ public sealed class MainViewModelScannerTests
         Assert.NotNull(viewModel.DeviceRegistration);
         Assert.Same(viewModel.PosTerminal, viewModel.CurrentScreen);
         Assert.False(viewModel.IsCashPaymentScreenActive);
+    }
+
+    [Fact]
+    public async Task Settings_ReregisterDeviceCommand_OpensDialogAndLoadsStores()
+    {
+        var deviceApi = new FakeDeviceApiClient
+        {
+            Stores =
+            [
+                new StoreSelectionItem("1042", "Old Store", true),
+                new StoreSelectionItem("2042", "New Store", true)
+            ]
+        };
+        var viewModel = CreateAuthorizedMainViewModelWithSettings(deviceApiClient: deviceApi);
+
+        await viewModel.InitializeAsync(new AppStartupOptions([], false, null, null));
+        await viewModel.ShowSettingsCommand.ExecuteAsync(null);
+        var settings = Assert.IsType<SettingsViewModel>(viewModel.CurrentScreen);
+
+        await settings.ReregisterDeviceCommand.ExecuteAsync(null);
+
+        Assert.True(viewModel.IsDeviceReregistrationDialogOpen);
+        Assert.NotNull(viewModel.DeviceRegistration);
+        Assert.Same(settings, viewModel.CurrentScreen);
+        Assert.Equal(1, deviceApi.GetStoresCallCount);
+        Assert.DoesNotContain(viewModel.DeviceRegistration.Stores, store => store.StoreCode == "1042");
+        var store = Assert.Single(viewModel.DeviceRegistration.Stores);
+        Assert.Equal("2042", store.StoreCode);
+        Assert.Null(viewModel.DeviceRegistration.SelectedStore);
+    }
+
+    [Fact]
+    public async Task Settings_ReregisterDeviceCommand_WhenSyncPending_ShowsBlockedReason()
+    {
+        var syncQueue = new FakeSyncQueueRepository { Overview = new SyncQueueOverview(1, 0, 0, null) };
+        var viewModel = CreateAuthorizedMainViewModelWithSettings(syncQueueRepository: syncQueue);
+
+        await viewModel.InitializeAsync(new AppStartupOptions([], false, null, null));
+        await viewModel.ShowSettingsCommand.ExecuteAsync(null);
+        var settings = Assert.IsType<SettingsViewModel>(viewModel.CurrentScreen);
+
+        await settings.ReregisterDeviceCommand.ExecuteAsync(null);
+
+        Assert.False(viewModel.IsDeviceReregistrationDialogOpen);
+        Assert.Null(viewModel.DeviceRegistration);
+        Assert.Same(settings, viewModel.CurrentScreen);
+        Assert.Contains("pending order sync", settings.StatusMessage, StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact]
@@ -1402,7 +1638,7 @@ public sealed class MainViewModelScannerTests
         await viewModel.PosTerminal!.ReregisterDeviceCommand.ExecuteAsync(null);
 
         Assert.Same(viewModel.PosTerminal, viewModel.CurrentScreen);
-        Assert.Contains("待同步", viewModel.StatusMessage, StringComparison.Ordinal);
+        Assert.Contains("pending order sync", viewModel.StatusMessage, StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact]
@@ -1560,6 +1796,7 @@ public sealed class MainViewModelScannerTests
         Assert.NotNull(authorizationState.Current);
 
         await viewModel.PosTerminal!.ReregisterDeviceCommand.ExecuteAsync(null);
+        viewModel.DeviceRegistration!.SelectedStore = viewModel.DeviceRegistration.Stores.Single(store => store.StoreCode == "2042");
         await viewModel.DeviceRegistration!.RegisterCommand.ExecuteAsync(null);
 
         Assert.Null(authorizationState.Current);
@@ -1617,7 +1854,10 @@ public sealed class MainViewModelScannerTests
         FakeCustomerDisplayWindowService customerDisplayWindow,
         IReceiptPrintService? receiptPrintService = null,
         FakeSyncQueueRepository? syncQueueRepository = null,
-        IOrderUploadExecutionService? orderUploadExecutionService = null)
+        IOrderUploadExecutionService? orderUploadExecutionService = null,
+        ICashDrawerService? cashDrawerService = null,
+        IApplicationExitService? applicationExitService = null,
+        IConfirmationDialogService? confirmationDialogService = null)
     {
         return new MainViewModel(
             new LocalSellableItemIndex(),
@@ -1640,7 +1880,105 @@ public sealed class MainViewModelScannerTests
             customerDisplayWindow,
             new FakeRawScannerService(),
             receiptPrintService: receiptPrintService,
-            orderUploadExecutionService: orderUploadExecutionService);
+            orderUploadExecutionService: orderUploadExecutionService,
+            cashDrawerService: cashDrawerService,
+            applicationExitService: applicationExitService,
+            confirmationDialogService: confirmationDialogService);
+    }
+
+    private static MainViewModel CreateAuthorizedMainViewModelWithPaymentWorkflow(
+        PosCartService cart,
+        CashCheckoutService checkout,
+        ILocalOrderRepository orderRepository,
+        ISyncQueueRepository syncQueue,
+        ICardTerminalClient cardTerminalClient)
+    {
+        var priceIndex = new LocalSellableItemIndex();
+        var catalogRepository = new FakeCatalogRepository();
+        var localization = new LocalizationService();
+        var workflow = new CashPaymentWorkflowService(
+            checkout,
+            orderRepository,
+            syncQueue,
+            cardTerminalClient: cardTerminalClient);
+
+        return new MainViewModel(
+            priceIndex,
+            cart,
+            checkout,
+            new FakeLocalSchemaService(),
+            new ShellCultureService(localization, new FakeSettingsRepository()),
+            new ShellCatalogService(priceIndex, catalogRepository, new FakeCatalogSyncService()),
+            catalogRepository,
+            new FakeRemoteLookupRefreshService(),
+            new FakeSpecialProductService(),
+            new FakeConnectivityApiClient(),
+            new MainShellStartupService(
+                new FakeLocalDeviceRepository { Latest = CreateAllowedDevice("1042") },
+                new FakeDeviceFingerprintService(),
+                new DeviceAuthorizationState()),
+            orderRepository,
+            new ShellSyncCenterService(syncQueue),
+            localization,
+            new CustomerDisplayOrchestrator(new FakeCustomerDisplayWindowService()),
+            new FakeRawScannerService(),
+            new ReceiptQueryService(orderRepository),
+            workflow,
+            new DeviceRegistrationWorkflowService(
+                new FakeDeviceApiClient(),
+                new FakeLocalDeviceRepository { Latest = CreateAllowedDevice("1042") },
+                new FakeDeviceFingerprintService()),
+            new SpecialProductsWorkflowService(priceIndex, cart, catalogRepository, new FakeSpecialProductService()),
+            (remoteLookupRefreshAsync, reloadCatalogAsync) => new PosTerminalWorkflowService(
+                priceIndex,
+                cart,
+                remoteLookupRefreshAsync,
+                reloadCatalogAsync));
+    }
+
+    private static MainViewModel CreateAuthorizedMainViewModelWithSettings(
+        FakeDeviceApiClient? deviceApiClient = null,
+        FakeSyncQueueRepository? syncQueueRepository = null)
+    {
+        var settingsRepository = new FakeSettingsRepository();
+        var catalogRepository = new FakeCatalogRepository();
+        var orderRepository = new FakeLocalOrderRepository();
+        var deviceRepository = new FakeLocalDeviceRepository { Latest = CreateAllowedDevice("1042") };
+        var fingerprintService = new FakeDeviceFingerprintService();
+        var deviceApi = deviceApiClient ?? new FakeDeviceApiClient();
+        var localization = new LocalizationService();
+        var cart = new PosCartService();
+        var priceIndex = new LocalSellableItemIndex();
+        var checkout = new CashCheckoutService();
+        var syncQueue = syncQueueRepository ?? new FakeSyncQueueRepository();
+
+        return new MainViewModel(
+            priceIndex,
+            cart,
+            checkout,
+            new FakeLocalSchemaService(),
+            new ShellCultureService(localization, settingsRepository),
+            new ShellCatalogService(priceIndex, catalogRepository, new FakeCatalogSyncService()),
+            catalogRepository,
+            new FakeRemoteLookupRefreshService(),
+            new FakeSpecialProductService(),
+            new FakeConnectivityApiClient(),
+            new MainShellStartupService(deviceRepository, fingerprintService, new DeviceAuthorizationState()),
+            orderRepository,
+            new ShellSyncCenterService(syncQueue),
+            localization,
+            new CustomerDisplayOrchestrator(new FakeCustomerDisplayWindowService()),
+            new FakeRawScannerService(),
+            new ReceiptQueryService(orderRepository),
+            new CashPaymentWorkflowService(checkout, orderRepository, syncQueue),
+            new DeviceRegistrationWorkflowService(deviceApi, deviceRepository, fingerprintService),
+            new SpecialProductsWorkflowService(priceIndex, cart, catalogRepository, new FakeSpecialProductService()),
+            (remoteLookupRefreshAsync, reloadCatalogAsync) => new PosTerminalWorkflowService(
+                priceIndex,
+                cart,
+                remoteLookupRefreshAsync,
+                reloadCatalogAsync),
+            cardTerminalSetupService: new FakeCardTerminalSetupService());
     }
 
     private static SyncQueueListItem CreateSyncQueueItem(Guid entityId, string status, string? errorMessage = null)
@@ -1655,9 +1993,11 @@ public sealed class MainViewModelScannerTests
             12.30m);
     }
 
-    private static LocalOrder CreateReceiptPrintOrder(PaymentMethodKind paymentMethod)
+    private static LocalOrder CreateReceiptPrintOrder(params PaymentMethodKind[] paymentMethods)
     {
         var orderGuid = Guid.NewGuid();
+        var methods = paymentMethods.Length == 0 ? [PaymentMethodKind.Cash] : paymentMethods;
+        var paymentAmount = decimal.Round(10m / methods.Length, 2, MidpointRounding.AwayFromZero);
         return new LocalOrder(
             orderGuid,
             "1042",
@@ -1682,11 +2022,11 @@ public sealed class MainViewModelScannerTests
                     10m,
                     PriceSourceKind.StoreRetailPrice)
             ],
-            [
-                new LocalPayment(
+            methods
+                .Select(paymentMethod => new LocalPayment(
                     Guid.NewGuid(),
                     paymentMethod,
-                    10m,
+                    paymentAmount,
                     paymentMethod == PaymentMethodKind.Card ? "CARD-123" : null,
                     paymentMethod == PaymentMethodKind.Card
                         ? [
@@ -1702,11 +2042,11 @@ public sealed class MainViewModelScannerTests
                                 "APPROVED",
                                 "123456",
                                 DateTimeOffset.UtcNow,
-                                10m,
+                                paymentAmount,
                                 "APPROVED CARD RECEIPT")
                         ]
-                        : null)
-            ]);
+                        : null))
+                .ToArray());
     }
 
     private static void InvokePaymentCompleted(MainViewModel viewModel, LocalOrder order)
@@ -1871,6 +2211,137 @@ public sealed class MainViewModelScannerTests
         public Task DeleteValueAsync(string key, CancellationToken cancellationToken = default)
         {
             return Task.CompletedTask;
+        }
+    }
+
+    private sealed class FakeCardTerminalSetupService : ICardTerminalSetupService
+    {
+        public Task<CardTerminalConfiguration> LoadConfigurationAsync(CancellationToken cancellationToken = default)
+        {
+            return Task.FromResult(CardTerminalConfiguration.Default);
+        }
+
+        public Task<string?> GetSquareAccessTokenAsync(CancellationToken cancellationToken = default)
+        {
+            return Task.FromResult<string?>(null);
+        }
+
+        public Task<IReadOnlyList<SquareLocationOption>> ListSquareLocationsAsync(
+            string? accessToken,
+            CardTerminalEnvironment environment,
+            CancellationToken cancellationToken = default)
+        {
+            return Task.FromResult<IReadOnlyList<SquareLocationOption>>([]);
+        }
+
+        public Task<IReadOnlyList<SquareDeviceOption>> ListSquareDevicesAsync(
+            string? accessToken,
+            CardTerminalEnvironment environment,
+            string locationId,
+            CancellationToken cancellationToken = default)
+        {
+            return Task.FromResult<IReadOnlyList<SquareDeviceOption>>([]);
+        }
+
+        public Task<IReadOnlyList<SquareDeviceCodeOption>> ListSquareDeviceCodesAsync(
+            string? accessToken,
+            CardTerminalEnvironment environment,
+            string locationId,
+            CancellationToken cancellationToken = default)
+        {
+            return Task.FromResult<IReadOnlyList<SquareDeviceCodeOption>>([]);
+        }
+
+        public Task<SquareDeviceCodeOption> CreateSquareDeviceCodeAsync(
+            string? accessToken,
+            CardTerminalEnvironment environment,
+            string locationId,
+            string name,
+            CancellationToken cancellationToken = default)
+        {
+            throw new NotSupportedException();
+        }
+
+        public Task<SquareDeviceCodeOption> GetSquareDeviceCodeAsync(
+            string? accessToken,
+            CardTerminalEnvironment environment,
+            string deviceCodeId,
+            CancellationToken cancellationToken = default)
+        {
+            throw new NotSupportedException();
+        }
+
+        public Task SaveSquareAsync(
+            CardTerminalConfiguration configuration,
+            string? squareAccessToken,
+            CancellationToken cancellationToken = default)
+        {
+            return Task.CompletedTask;
+        }
+
+        public Task SaveLinklyAsync(
+            CardTerminalConfiguration configuration,
+            CancellationToken cancellationToken = default)
+        {
+            return Task.CompletedTask;
+        }
+
+        public Task<LinklyConnectionTestResult> TestLinklyConnectionAsync(
+            string host,
+            int port,
+            TimeSpan timeout,
+            CancellationToken cancellationToken = default)
+        {
+            return Task.FromResult(new LinklyConnectionTestResult(false, "not tested"));
+        }
+
+        public Task<LinklyConnectionTestResult> PairLinklyCloudAsync(
+            CardTerminalEnvironment environment,
+            string pairCode,
+            CancellationToken cancellationToken = default)
+        {
+            return Task.FromResult(new LinklyConnectionTestResult(false, "not tested"));
+        }
+
+        public Task<LinklyConnectionTestResult> TestLinklyCloudConnectionAsync(
+            CardTerminalEnvironment environment,
+            CancellationToken cancellationToken = default)
+        {
+            return Task.FromResult(new LinklyConnectionTestResult(false, "not tested"));
+        }
+
+        public Task<bool> HasLinklyCloudSecretAsync(
+            CardTerminalEnvironment environment,
+            CancellationToken cancellationToken = default)
+        {
+            return Task.FromResult(false);
+        }
+
+        public Task SaveLinklyCloudAsync(
+            CardTerminalConfiguration configuration,
+            CancellationToken cancellationToken = default)
+        {
+            return Task.CompletedTask;
+        }
+    }
+
+    private sealed class ApprovedCardTerminalClient(string reference) : ICardTerminalClient
+    {
+        public Task<PaymentAuthorizationResult> AuthorizeAsync(
+            decimal amount,
+            PosSessionState session,
+            CancellationToken cancellationToken = default)
+        {
+            return Task.FromResult(new PaymentAuthorizationResult(true, reference, AuthorizedAmount: amount));
+        }
+
+        public Task<PaymentAuthorizationResult> RefundAsync(
+            decimal amount,
+            PosSessionState session,
+            string? originalReference,
+            CancellationToken cancellationToken = default)
+        {
+            return Task.FromResult(new PaymentAuthorizationResult(true, $"REFUND:{originalReference}", AuthorizedAmount: amount));
         }
     }
 
@@ -2181,6 +2652,42 @@ public sealed class MainViewModelScannerTests
         {
             Calls.Add(new ReceiptPrintCall(null, ReceiptPrintReason.Test));
             return Task.FromResult(new ReceiptPrintResult(true, "tested"));
+        }
+    }
+
+    private sealed class RecordingCashDrawerService : ICashDrawerService
+    {
+        public int OpenCallCount { get; private set; }
+
+        public ReceiptPrintResult Result { get; init; } = new(true, "Cash drawer opened.");
+
+        public Task<ReceiptPrintResult> OpenAsync(CancellationToken cancellationToken = default)
+        {
+            OpenCallCount++;
+            return Task.FromResult(Result);
+        }
+    }
+
+    private sealed class RecordingApplicationExitService : IApplicationExitService
+    {
+        public int ExitCallCount { get; private set; }
+
+        public void Exit()
+        {
+            ExitCallCount++;
+        }
+    }
+
+    private sealed class FakeConfirmationDialogService : IConfirmationDialogService
+    {
+        public bool ConfirmExitApplicationResult { get; init; }
+
+        public int ConfirmExitApplicationCallCount { get; private set; }
+
+        public bool ConfirmExitApplication()
+        {
+            ConfirmExitApplicationCallCount++;
+            return ConfirmExitApplicationResult;
         }
     }
 
