@@ -97,7 +97,6 @@ public partial class PaymentViewModel : ObservableObject
             () => CanAddTender(PaymentMethodKind.Card, allowDefaultAmount: true),
             AsyncRelayCommandOptions.AllowConcurrentExecutions);
         SelectVoucherCommand = new AsyncRelayCommand(() => AddTenderByMethodAsync(PaymentMethodKind.Voucher), () => CanAddTender(PaymentMethodKind.Voucher, allowDefaultAmount: true));
-        AddTenderCommand = new AsyncRelayCommand(AddTenderAsync, CanAddTender);
         RemoveTenderCommand = new RelayCommand<PaymentTender>(RemoveTender, CanRemoveTender);
         ConfirmPaymentCommand = new AsyncRelayCommand(ConfirmPaymentAsync, CanConfirmPayment);
         CancelCommand = new RelayCommand(CancelPayment, CanCancelPayment);
@@ -121,8 +120,6 @@ public partial class PaymentViewModel : ObservableObject
 
     public IAsyncRelayCommand SelectVoucherCommand { get; }
 
-    public IAsyncRelayCommand AddTenderCommand { get; }
-
     public IRelayCommand<PaymentTender> RemoveTenderCommand { get; }
 
     public IAsyncRelayCommand ConfirmPaymentCommand { get; }
@@ -130,7 +127,6 @@ public partial class PaymentViewModel : ObservableObject
     public IRelayCommand CancelCommand { get; }
 
     public event EventHandler<PaymentCompletedEventArgs>? PaymentCompleted;
-
 
     public string ScreenTitleText => T(GetScreenTitleKey());
 
@@ -149,8 +145,6 @@ public partial class PaymentViewModel : ObservableObject
     public string PaymentMethodText => T("payment.method");
 
     public string AppliedTendersText => T("payment.appliedTenders");
-
-    public string AddTenderText => T(GetAddTenderKey());
 
     public string ConfirmPaymentText => T(GetConfirmPaymentKey());
 
@@ -218,7 +212,6 @@ public partial class PaymentViewModel : ObservableObject
 
     partial void OnSelectedPaymentMethodChanged(PaymentMethodKind value)
     {
-        AddTenderCommand.NotifyCanExecuteChanged();
         SelectCashCommand.NotifyCanExecuteChanged();
         SelectCardCommand.NotifyCanExecuteChanged();
         SelectVoucherCommand.NotifyCanExecuteChanged();
@@ -251,7 +244,6 @@ public partial class PaymentViewModel : ObservableObject
     {
         OnPropertyChanged(nameof(ScreenTitleText));
         OnPropertyChanged(nameof(RemainingAmountText));
-        OnPropertyChanged(nameof(AddTenderText));
         OnPropertyChanged(nameof(ConfirmPaymentText));
         OnPropertyChanged(nameof(NoTendersText));
         OnPropertyChanged(nameof(CashMethodText));
@@ -343,11 +335,6 @@ public partial class PaymentViewModel : ObservableObject
 
         TenderAmountText = option.Amount.ToString("0.00");
         await AddTenderByMethodAsync(PaymentMethodKind.Cash);
-    }
-
-    private async Task AddTenderAsync()
-    {
-        await AddTenderByMethodAsync(SelectedPaymentMethod);
     }
 
     private async Task AddTenderByMethodAsync(PaymentMethodKind method)
@@ -633,11 +620,6 @@ public partial class PaymentViewModel : ObservableObject
         RefreshCart();
         SetStatus("payment.status.completed");
         PaymentCompleted?.Invoke(this, new PaymentCompletedEventArgs(result.Order, result.TenderedAmount, result.ChangeAmount));
-    }
-
-    private bool CanAddTender()
-    {
-        return CanAddTender(SelectedPaymentMethod, allowDefaultAmount: false);
     }
 
     private bool CanAddTender(PaymentMethodKind method, bool allowDefaultAmount)
@@ -1113,11 +1095,6 @@ public partial class PaymentViewModel : ObservableObject
         return IsRefundMode ? "payment.refund.remaining" : "payment.remaining";
     }
 
-    private string GetAddTenderKey()
-    {
-        return IsRefundMode ? "payment.refund.addTender" : "payment.addTender";
-    }
-
     private string GetConfirmPaymentKey()
     {
         return PaymentMode switch
@@ -1168,7 +1145,6 @@ public partial class PaymentViewModel : ObservableObject
     private void NotifyPaymentCommandStates()
     {
         NumberInputCommand.NotifyCanExecuteChanged();
-        AddTenderCommand.NotifyCanExecuteChanged();
         SelectCashCommand.NotifyCanExecuteChanged();
         SelectCardCommand.NotifyCanExecuteChanged();
         SelectVoucherCommand.NotifyCanExecuteChanged();
@@ -1202,7 +1178,6 @@ public partial class PaymentViewModel : ObservableObject
         OnPropertyChanged(nameof(QuickCashText));
         OnPropertyChanged(nameof(PaymentMethodText));
         OnPropertyChanged(nameof(AppliedTendersText));
-        OnPropertyChanged(nameof(AddTenderText));
         OnPropertyChanged(nameof(ConfirmPaymentText));
         OnPropertyChanged(nameof(NoTendersText));
         OnPropertyChanged(nameof(CashMethodText));

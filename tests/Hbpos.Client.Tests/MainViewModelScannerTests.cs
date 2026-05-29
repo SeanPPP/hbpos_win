@@ -983,7 +983,7 @@ public sealed class MainViewModelScannerTests
         viewModel.ShowCashPaymentCommand.Execute(null);
         var firstPaymentScreen = viewModel.CashPayment!;
         firstPaymentScreen.TenderAmountText = "5";
-        await firstPaymentScreen.AddTenderCommand.ExecuteAsync(null);
+        await firstPaymentScreen.SelectCashCommand.ExecuteAsync(null);
 
         Assert.Same(firstPaymentScreen, viewModel.CurrentScreen);
         Assert.Same(firstPaymentScreen, viewModel.CachedCashPaymentScreen);

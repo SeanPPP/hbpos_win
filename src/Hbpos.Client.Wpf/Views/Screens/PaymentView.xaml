@@ -42,6 +42,18 @@
             </Style.Triggers>
         </Style>
 
+        <Style x:Key="PaymentKeypadNumberTextStyle" TargetType="TextBlock">
+            <Setter Property="HorizontalAlignment" Value="Center" />
+            <Setter Property="VerticalAlignment" Value="Center" />
+            <Setter Property="FontSize" Value="44" />
+            <Setter Property="FontWeight" Value="Black" />
+            <Setter Property="TextAlignment" Value="Center" />
+        </Style>
+
+        <Style x:Key="PaymentKeypadFunctionTextStyle" TargetType="TextBlock" BasedOn="{StaticResource PaymentKeypadNumberTextStyle}">
+            <Setter Property="FontSize" Value="26" />
+        </Style>
+
         <Style x:Key="CashMethodButtonStyle" TargetType="Button" BasedOn="{StaticResource PosPaymentMethodButtonStyle}">
             <Setter Property="Background" Value="White" />
             <Setter Property="BorderBrush" Value="#FFE2E2E6" />
@@ -98,7 +110,17 @@
 
             <Border Grid.Row="0" Padding="20,16" Background="{StaticResource PosScreenBackgroundBrush}">
                 <StackPanel>
-                    <StackPanel Orientation="Horizontal">
+                    <Button Command="{Binding DataContext.ShowPosCommand, RelativeSource={RelativeSource AncestorType=ContentControl}}"
+                            Style="{StaticResource PosSecondaryButtonStyle}"
+                            HorizontalAlignment="Left"
+                            MinHeight="38"
+                            Padding="14,0">
+                        <StackPanel Orientation="Horizontal">
+                            <materialDesign:PackIcon Kind="ArrowLeft" Width="16" Height="16" Margin="0,0,6,0" />
+                            <TextBlock Text="{loc:Loc shell.backToPos}" FontWeight="Bold" />
+                        </StackPanel>
+                    </Button>
+                    <StackPanel Orientation="Horizontal" Margin="0,6,0,0">
                         <Border Padding="8,3" Background="#1A0056D2" CornerRadius="4">
                             <TextBlock FontSize="10" FontWeight="Bold" Foreground="{StaticResource PosPrimaryBrush}">
                                 <Run Text="{Binding CartLines.Count, Mode=OneWay}" />
@@ -280,19 +302,53 @@
                         </Style.Triggers>
                     </Style>
                 </UniformGrid.Style>
-                <Button Content="1" Command="{Binding NumberInputCommand}" CommandParameter="1" Style="{StaticResource PosNumberButtonStyle}" />
-                <Button Content="2" Command="{Binding NumberInputCommand}" CommandParameter="2" Style="{StaticResource PosNumberButtonStyle}" />
-                <Button Content="3" Command="{Binding NumberInputCommand}" CommandParameter="3" Style="{StaticResource PosNumberButtonStyle}" />
-                <Button Content="4" Command="{Binding NumberInputCommand}" CommandParameter="4" Style="{StaticResource PosNumberButtonStyle}" />
-                <Button Content="5" Command="{Binding NumberInputCommand}" CommandParameter="5" Style="{StaticResource PosNumberButtonStyle}" />
-                <Button Content="6" Command="{Binding NumberInputCommand}" CommandParameter="6" Style="{StaticResource PosNumberButtonStyle}" />
-                <Button Content="7" Command="{Binding NumberInputCommand}" CommandParameter="7" Style="{StaticResource PosNumberButtonStyle}" />
-                <Button Content="8" Command="{Binding NumberInputCommand}" CommandParameter="8" Style="{StaticResource PosNumberButtonStyle}" />
-                <Button Content="9" Command="{Binding NumberInputCommand}" CommandParameter="9" Style="{StaticResource PosNumberButtonStyle}" />
-                <Button Content="." Command="{Binding NumberInputCommand}" CommandParameter="." Style="{StaticResource PosNumberButtonStyle}" />
-                <Button Content="0" Command="{Binding NumberInputCommand}" CommandParameter="0" Style="{StaticResource PosNumberButtonStyle}" />
-                <Button Content="{loc:Loc Clear}" Command="{Binding NumberInputCommand}" CommandParameter="Clear" Style="{StaticResource PosNumberButtonStyle}" Background="#FFE7E8EB" />
-                <Button Content="{loc:Loc Backspace}" Command="{Binding NumberInputCommand}" CommandParameter="Back" Style="{StaticResource PosNumberButtonStyle}" />
+                <Button Command="{Binding NumberInputCommand}" CommandParameter="1" Style="{StaticResource PosNumberButtonStyle}">
+                    <TextBlock Text="1" Style="{StaticResource PaymentKeypadNumberTextStyle}" />
+                </Button>
+                <Button Command="{Binding NumberInputCommand}" CommandParameter="2" Style="{StaticResource PosNumberButtonStyle}">
+                    <TextBlock Text="2" Style="{StaticResource PaymentKeypadNumberTextStyle}" />
+                </Button>
+                <Button Command="{Binding NumberInputCommand}" CommandParameter="3" Style="{StaticResource PosNumberButtonStyle}">
+                    <TextBlock Text="3" Style="{StaticResource PaymentKeypadNumberTextStyle}" />
+                </Button>
+                <Button Command="{Binding NumberInputCommand}" CommandParameter="4" Style="{StaticResource PosNumberButtonStyle}">
+                    <TextBlock Text="4" Style="{StaticResource PaymentKeypadNumberTextStyle}" />
+                </Button>
+                <Button Command="{Binding NumberInputCommand}" CommandParameter="5" Style="{StaticResource PosNumberButtonStyle}">
+                    <TextBlock Text="5" Style="{StaticResource PaymentKeypadNumberTextStyle}" />
+                </Button>
+                <Button Command="{Binding NumberInputCommand}" CommandParameter="6" Style="{StaticResource PosNumberButtonStyle}">
+                    <TextBlock Text="6" Style="{StaticResource PaymentKeypadNumberTextStyle}" />
+                </Button>
+                <Button Command="{Binding NumberInputCommand}" CommandParameter="7" Style="{StaticResource PosNumberButtonStyle}">
+                    <TextBlock Text="7" Style="{StaticResource PaymentKeypadNumberTextStyle}" />
+                </Button>
+                <Button Command="{Binding NumberInputCommand}" CommandParameter="8" Style="{StaticResource PosNumberButtonStyle}">
+                    <TextBlock Text="8" Style="{StaticResource PaymentKeypadNumberTextStyle}" />
+                </Button>
+                <Button Command="{Binding NumberInputCommand}" CommandParameter="9" Style="{StaticResource PosNumberButtonStyle}">
+                    <TextBlock Text="9" Style="{StaticResource PaymentKeypadNumberTextStyle}" />
+                </Button>
+                <Button Command="{Binding NumberInputCommand}" CommandParameter="." Style="{StaticResource PosNumberButtonStyle}">
+                    <TextBlock Text="." Style="{StaticResource PaymentKeypadNumberTextStyle}" />
+                </Button>
+                <Button Command="{Binding NumberInputCommand}" CommandParameter="0" Style="{StaticResource PosNumberButtonStyle}">
+                    <TextBlock Text="0" Style="{StaticResource PaymentKeypadNumberTextStyle}" />
+                </Button>
+                <Button Command="{Binding NumberInputCommand}"
+                        CommandParameter="Clear"
+                        Style="{StaticResource PosNumberButtonStyle}"
+                        Background="#FFFFDAD6"
+                        BorderBrush="#FFFFB4AB"
+                        Foreground="#FFBA1A1A">
+                    <TextBlock Text="{loc:Loc Clear}" Style="{StaticResource PaymentKeypadFunctionTextStyle}" />
+                </Button>
+                <Button Command="{Binding NumberInputCommand}" CommandParameter="Back" Style="{StaticResource PosNumberButtonStyle}">
+                    <materialDesign:PackIcon Kind="BackspaceOutline"
+                                             Width="34"
+                                             Height="34"
+                                             Foreground="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}" />
+                </Button>
             </UniformGrid>
 
             <Grid Grid.Row="4" Margin="16,0,16,18">

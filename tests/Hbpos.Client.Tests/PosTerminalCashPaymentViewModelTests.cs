@@ -1520,7 +1520,7 @@ public sealed class PosTerminalCashPaymentViewModelTests
             Session);
 
         viewModel.TenderAmountText = "10";
-        await viewModel.AddTenderCommand.ExecuteAsync(null);
+        await viewModel.SelectCashCommand.ExecuteAsync(null);
 
         Assert.Equal(2.2m, viewModel.ChangeDue);
         Assert.True(viewModel.ConfirmPaymentCommand.CanExecute(null));
@@ -1556,7 +1556,7 @@ public sealed class PosTerminalCashPaymentViewModelTests
             new InMemorySyncQueueRepository(),
             Session);
         viewModel.TenderAmountText = "10";
-        await viewModel.AddTenderCommand.ExecuteAsync(null);
+        await viewModel.SelectCashCommand.ExecuteAsync(null);
 
         cart.UpdateLineFromRemote(CreateItem("SKU-108", "Rice", "930108", PriceSourceKind.StoreRetailPrice, 8m));
         viewModel.RefreshCart();
@@ -1653,7 +1653,7 @@ public sealed class PosTerminalCashPaymentViewModelTests
         Assert.True(viewModel.IsRefundMode);
         Assert.Equal("7.80", viewModel.TenderAmountText);
         Assert.Equal(7.82m, viewModel.RemainingAmount);
-        Assert.True(viewModel.AddTenderCommand.CanExecute(null));
+        Assert.True(viewModel.SelectCashCommand.CanExecute(null));
 
         await viewModel.SelectCashCommand.ExecuteAsync(null);
 
@@ -1871,7 +1871,6 @@ public sealed class PosTerminalCashPaymentViewModelTests
 
         Assert.Equal(PaymentEntryMode.ZeroSettlement, viewModel.PaymentMode);
         Assert.True(viewModel.IsZeroSettlementMode);
-        Assert.False(viewModel.AddTenderCommand.CanExecute(null));
         Assert.False(viewModel.SelectCashCommand.CanExecute(null));
         Assert.True(viewModel.ConfirmPaymentCommand.CanExecute(null));
         Assert.Empty(viewModel.PaymentTenders);
@@ -1902,7 +1901,7 @@ public sealed class PosTerminalCashPaymentViewModelTests
 
             await schema.InitializeAsync();
             viewModel.TenderAmountText = "5";
-            await viewModel.AddTenderCommand.ExecuteAsync(null);
+            await viewModel.SelectCashCommand.ExecuteAsync(null);
             await viewModel.ConfirmPaymentCommand.ExecuteAsync(null);
 
             Assert.NotNull(completed);
@@ -1936,7 +1935,7 @@ public sealed class PosTerminalCashPaymentViewModelTests
         viewModel.TenderAmountText = "10";
         viewModel.SelectedPaymentMethod = PaymentMethodKind.Card;
 
-        Assert.False(viewModel.AddTenderCommand.CanExecute(null));
+        Assert.False(viewModel.SelectCardCommand.CanExecute(null));
 
         viewModel.TenderAmountText = "5";
         await viewModel.SelectCardCommand.ExecuteAsync(null);
@@ -2261,7 +2260,6 @@ public sealed class PosTerminalCashPaymentViewModelTests
         Assert.False(viewModel.IsPaymentInteractionLocked);
         Assert.True(viewModel.IsCancelPaymentVisible);
         Assert.False(viewModel.SelectCardCommand.CanExecute(null));
-        Assert.False(viewModel.AddTenderCommand.CanExecute(null));
         Assert.False(viewModel.ConfirmPaymentCommand.CanExecute(null));
         Assert.True(viewModel.CancelCommand.CanExecute(null));
 
@@ -2326,7 +2324,7 @@ public sealed class PosTerminalCashPaymentViewModelTests
         viewModel.PrepareForEntry(Session);
 
         Assert.True(viewModel.SelectCashCommand.CanExecute(null));
-        Assert.True(viewModel.AddTenderCommand.CanExecute(null));
+        Assert.True(viewModel.SelectCashCommand.CanExecute(null));
 
         workflow.AddTenderResult.SetResult(PaymentTenderAttemptResult.Success(
             new PaymentTender(PaymentMethodKind.Card, 10m, "CARD-LATE"),
@@ -2468,7 +2466,6 @@ public sealed class PosTerminalCashPaymentViewModelTests
         viewModel.TenderAmountText = "5";
         viewModel.SelectedPaymentMethod = PaymentMethodKind.Voucher;
 
-        Assert.False(viewModel.AddTenderCommand.CanExecute(null));
 
         await viewModel.SelectVoucherCommand.ExecuteAsync(null);
 
@@ -2477,7 +2474,7 @@ public sealed class PosTerminalCashPaymentViewModelTests
 
         viewModel.VoucherCodeText = "ABC123";
 
-        Assert.True(viewModel.AddTenderCommand.CanExecute(null));
+        Assert.True(viewModel.SelectVoucherCommand.CanExecute(null));
     }
 
     [Fact]
@@ -2506,7 +2503,7 @@ public sealed class PosTerminalCashPaymentViewModelTests
         Assert.Equal(updatedSession.PendingSyncCount, viewModel.PendingSyncCount);
         Assert.Equal("5.00", viewModel.TenderAmountText);
         Assert.Equal("payment.status.ready", viewModel.StatusMessage);
-        Assert.True(viewModel.AddTenderCommand.CanExecute(null));
+        Assert.True(viewModel.SelectCashCommand.CanExecute(null));
         Assert.False(viewModel.ConfirmPaymentCommand.CanExecute(null));
     }
 
