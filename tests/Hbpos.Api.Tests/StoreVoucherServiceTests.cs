@@ -1,5 +1,6 @@
 using BlazorApp.Service.Models.HBPOSM_POSM;
 using Hbpos.Api.Services;
+using BlazorApp.Shared.Models.POSM;
 using Hbpos.Contracts.Vouchers;
 
 namespace Hbpos.Api.Tests;

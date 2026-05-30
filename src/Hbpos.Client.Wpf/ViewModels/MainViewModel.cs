@@ -1539,7 +1539,8 @@ public sealed partial class MainViewModel : ObservableObject
             Session,
             ShowInstallmentCreateAsync,
             ShowCashPayment,
-            _localization);
+            _localization,
+            _cardTerminalClient);
     }
 
     private InstallmentCreateViewModel CreateInstallmentCreateViewModel()

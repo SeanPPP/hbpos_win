@@ -54,8 +54,13 @@ public interface IInstallmentApiClient
 public sealed class InstallmentOrderService(
     ILocalInstallmentOrderRepository localRepository,
     IInstallmentApiClient apiClient,
-    PosCartService? cart = null) : IInstallmentOrderService
+    PosCartService? cart = null,
+    ICardTerminalClient? cardTerminalClient = null,
+    IVoucherTenderClient? voucherTenderClient = null) : IInstallmentOrderService
 {
+    private readonly ICardTerminalClient _cardTerminalClient = cardTerminalClient ?? UnavailableCardTerminalClient.Instance;
+    private readonly IVoucherTenderClient _voucherTenderClient = voucherTenderClient ?? UnavailableVoucherTenderClient.Instance;
+
     public async Task<IReadOnlyList<InstallmentOrderSummary>> GetOrdersAsync(PosSessionState session, CancellationToken cancellationToken = default)
     {
         var orders = await localRepository.GetRecentByStoreAsync(session.StoreCode, cancellationToken: cancellationToken);
@@ -70,7 +75,9 @@ public sealed class InstallmentOrderService(
             .Where(order => string.IsNullOrWhiteSpace(normalized) ||
                 order.InstallmentNumber.Contains(normalized, StringComparison.OrdinalIgnoreCase) ||
                 order.CustomerName.Contains(normalized, StringComparison.OrdinalIgnoreCase) ||
-                order.CustomerPhone.Contains(normalized, StringComparison.OrdinalIgnoreCase))
+                order.CustomerPhone.Contains(normalized, StringComparison.OrdinalIgnoreCase) ||
+                GetStatusText(order).Contains(normalized, StringComparison.OrdinalIgnoreCase) ||
+                order.DeviceCode.Contains(normalized, StringComparison.OrdinalIgnoreCase))
             .Select(MapSummary)
             .ToList();
     }
@@ -229,10 +236,48 @@ public sealed class InstallmentOrderService(
             return new InstallmentOrderActionResult(false, "未找到本机缓存的分期单。");
         }
 
-        var refunds = local.Payments
-            .Where(payment => payment.Status == InstallmentPaymentStatus.Recorded && payment.Amount > 0m)
-            .Select(payment => new InstallmentRefundPaymentCommandDto(Guid.NewGuid(), payment.Method, payment.Amount, payment.Reference, payment.CardTransactions, $"{local.InstallmentGuid:D}:refund:{payment.PaymentGuid:D}"))
-            .ToList();
+        var refunds = new List<InstallmentRefundPaymentCommandDto>();
+        foreach (var payment in local.Payments.Where(payment => payment.Status == InstallmentPaymentStatus.Recorded && payment.Amount > 0m))
+        {
+            var idempotencyKey = $"{local.InstallmentGuid:D}:refund:{payment.PaymentGuid:D}";
+            if (payment.Method == PaymentMethodKind.Card)
+            {
+                var authorization = await _cardTerminalClient.RefundAsync(payment.Amount, session, payment.Reference, cancellationToken);
+                if (!authorization.Approved)
+                {
+                    return new InstallmentOrderActionResult(false, authorization.Message ?? "银行卡退款失败，分期单未取消。");
+                }
+
+                refunds.Add(new InstallmentRefundPaymentCommandDto(
+                    Guid.NewGuid(),
+                    payment.Method,
+                    authorization.AuthorizedAmount ?? payment.Amount,
+                    authorization.Reference ?? payment.Reference,
+                    authorization.CardTransactions ?? payment.CardTransactions,
+                    idempotencyKey));
+                continue;
+            }
+
+            if (payment.Method == PaymentMethodKind.Voucher)
+            {
+                var authorization = await _voucherTenderClient.IssueRefundAsync(payment.Amount, session, local.InstallmentNumber, idempotencyKey, "取消分期退款", cancellationToken);
+                if (!authorization.Approved)
+                {
+                    return new InstallmentOrderActionResult(false, authorization.Message ?? "代金券退款失败，分期单未取消。");
+                }
+
+                refunds.Add(new InstallmentRefundPaymentCommandDto(
+                    Guid.NewGuid(),
+                    payment.Method,
+                    authorization.AuthorizedAmount ?? payment.Amount,
+                    authorization.Reference ?? payment.Reference,
+                    authorization.CardTransactions ?? payment.CardTransactions,
+                    idempotencyKey));
+                continue;
+            }
+
+            refunds.Add(new InstallmentRefundPaymentCommandDto(Guid.NewGuid(), payment.Method, payment.Amount, payment.Reference, payment.CardTransactions, idempotencyKey));
+        }
         var result = await CancelWithRefundAsync(
             session,
             new InstallmentCancelRequest(local.InstallmentGuid, session.StoreCode, session.DeviceCode, session.CashierId, session.CashierName, DateTimeOffset.Now, refunds, "取消分期并退款", $"{local.InstallmentGuid:D}:cancel"),
@@ -274,10 +319,39 @@ public sealed class InstallmentOrderService(
 
     private static InstallmentOrderSummary MapSummary(LocalInstallmentOrder order)
     {
-        return new InstallmentOrderSummary(order.InstallmentGuid, order.InstallmentNumber, order.CustomerName, order.CustomerPhone, order.TotalAmount, order.DownPaymentAmount, order.PaidAmount, order.BalanceAmount, 0, order.Status == InstallmentStatus.Active && order.BalanceAmount > 0m, order.Status == InstallmentStatus.PaidOff, order.Status == InstallmentStatus.Active && order.BalanceAmount > 0m, order.Status == InstallmentStatus.Active && order.BalanceAmount > 0m, order.Status.ToString(), order.DeviceCode, order.UpdatedAt);
+        return new InstallmentOrderSummary(
+            order.InstallmentGuid,
+            order.InstallmentNumber,
+            order.CustomerName,
+            order.CustomerPhone,
+            order.TotalAmount,
+            order.DownPaymentAmount,
+            order.PaidAmount,
+            order.BalanceAmount,
+            0,
+            order.Status == InstallmentStatus.Active && order.BalanceAmount > 0m,
+            order.Status == InstallmentStatus.PaidOff,
+            order.Status == InstallmentStatus.Active && order.BalanceAmount > 0m,
+            order.Status == InstallmentStatus.Active && order.BalanceAmount > 0m,
+            GetStatusText(order),
+            order.DeviceCode,
+            order.UpdatedAt);
     }
 
     private static string EnsureIdempotencyKey(string? value, Guid scope) => string.IsNullOrWhiteSpace(value) ? $"{scope:D}:{Guid.NewGuid():D}" : value.Trim();
+
+    private static string GetStatusText(LocalInstallmentOrder order)
+    {
+        return order.Status switch
+        {
+            InstallmentStatus.Active => "待补款",
+            InstallmentStatus.PaidOff => "待提货",
+            InstallmentStatus.PickedUp => "已提货",
+            InstallmentStatus.Cancelled when order.CancellationInfo?.Kind == InstallmentCancellationKind.VoidCancel => "已作废",
+            InstallmentStatus.Cancelled => "已取消",
+            _ => order.Status.ToString()
+        };
+    }
 }
 
 public sealed record InstallmentOrderSummary(Guid OrderId, string OrderNumber, string CustomerName, string CustomerPhone, decimal TotalAmount, decimal DownPaymentAmount, decimal PaidAmount, decimal OutstandingAmount, int InstallmentMonths, bool CanAddRepayment, bool CanConfirmPickup, bool CanCancelRefund, bool CanVoid, string Status, string DeviceCode, DateTimeOffset UpdatedAt)

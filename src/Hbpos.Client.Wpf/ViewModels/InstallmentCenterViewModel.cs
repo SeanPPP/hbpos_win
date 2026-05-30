@@ -14,6 +14,7 @@ public sealed partial class InstallmentCenterViewModel : ObservableObject
     private readonly Func<PosCartServiceSnapshot?, Task> _showCreateAsync;
     private readonly Action _backToPayment;
     private readonly ILocalizationService? _localization;
+    private readonly ICardTerminalClient? _cardTerminalClient;
 
     [ObservableProperty] private PosSessionState _session;
     [ObservableProperty] private PosCartServiceSnapshot? _cartSnapshot;
@@ -32,13 +33,15 @@ public sealed partial class InstallmentCenterViewModel : ObservableObject
         PosSessionState session,
         Func<PosCartServiceSnapshot?, Task> showCreateAsync,
         Action backToPayment,
-        ILocalizationService? localization = null)
+        ILocalizationService? localization = null,
+        ICardTerminalClient? cardTerminalClient = null)
     {
         _installmentOrderService = installmentOrderService;
         _session = session;
         _showCreateAsync = showCreateAsync;
         _backToPayment = backToPayment;
         _localization = localization;
+        _cardTerminalClient = cardTerminalClient;
         if (_localization is not null)
         {
             _localization.CultureChanged += (_, _) => RaiseLocalizedProperties();
@@ -56,6 +59,13 @@ public sealed partial class InstallmentCenterViewModel : ObservableObject
     }
 
     public ObservableCollection<InstallmentOrderSummary> Orders { get; } = [];
+    public IReadOnlyList<InstallmentPaymentMethodOption> PaymentMethodOptions { get; } =
+    [
+        new InstallmentPaymentMethodOption(PaymentMethodKind.Cash, "现金"),
+        new InstallmentPaymentMethodOption(PaymentMethodKind.Card, "银行卡"),
+        new InstallmentPaymentMethodOption(PaymentMethodKind.Voucher, "代金券")
+    ];
+
     public IAsyncRelayCommand LoadCommand { get; }
     public IAsyncRelayCommand SearchCommand { get; }
     public IAsyncRelayCommand CreateInstallmentCommand { get; }
@@ -102,8 +112,8 @@ public sealed partial class InstallmentCenterViewModel : ObservableObject
     partial void OnRepaymentReferenceChanged(string value) => RaiseSelectionStateChanged();
     partial void OnRepaymentVoucherTokenChanged(string value) => RaiseSelectionStateChanged();
 
-    public Task LoadAsync() => LoadCoreAsync(() => _installmentOrderService.GetOrdersAsync(Session), "已加载 {0} 条分期单。");
-    public Task SearchAsync() => LoadCoreAsync(() => _installmentOrderService.SearchAsync(Session, SearchText), "已找到 {0} 条分期单。");
+    public async Task LoadAsync() => await LoadCoreAsync(() => _installmentOrderService.GetOrdersAsync(Session), "已加载 {0} 条分期单。");
+    public async Task SearchAsync() => await LoadCoreAsync(() => _installmentOrderService.SearchAsync(Session, SearchText), "已找到 {0} 条分期单。");
 
     public void Prepare(PosSessionState session, PosCartServiceSnapshot? cartSnapshot)
     {
@@ -128,7 +138,10 @@ public sealed partial class InstallmentCenterViewModel : ObservableObject
         OnPropertyChanged(nameof(HasOrders));
     }
 
-    private async Task LoadCoreAsync(Func<Task<IReadOnlyList<InstallmentOrderSummary>>> loader, string loadedFormat)
+    private async Task<bool> LoadCoreAsync(
+        Func<Task<IReadOnlyList<InstallmentOrderSummary>>> loader,
+        string loadedFormat,
+        string? actionMessage = null)
     {
         IsBusy = true;
         try
@@ -136,12 +149,14 @@ public sealed partial class InstallmentCenterViewModel : ObservableObject
             var orders = await loader();
             Orders.ReplaceWith(orders);
             SelectedOrder = Orders.FirstOrDefault();
-            StatusMessage = orders.Count == 0 ? "当前没有分期单。" : string.Format(GetCulture(), loadedFormat, orders.Count);
+            StatusMessage = actionMessage ?? (orders.Count == 0 ? "当前没有分期单。" : string.Format(GetCulture(), loadedFormat, orders.Count));
             OnPropertyChanged(nameof(HasOrders));
+            return true;
         }
         catch (Exception ex)
         {
-            StatusMessage = ex.Message;
+            StatusMessage = actionMessage is null ? ex.Message : $"{actionMessage}（刷新失败：{ex.Message}）";
+            return false;
         }
         finally
         {
@@ -155,10 +170,47 @@ public sealed partial class InstallmentCenterViewModel : ObservableObject
     private async Task AddRepaymentAsync()
     {
         if (SelectedOrder is null) return;
-        await RunOrderActionAsync(() => _installmentOrderService.AddRepaymentAsync(new InstallmentOrderRepaymentRequest(SelectedOrder.OrderId, Session, new InstallmentPaymentDraft(Guid.NewGuid(), RepaymentMethod, RepaymentAmount, Normalize(RepaymentReference), Normalize(RepaymentVoucherToken)))));
+
+        var payment = new InstallmentPaymentDraft(
+            Guid.NewGuid(),
+            RepaymentMethod,
+            RepaymentAmount,
+            Normalize(RepaymentReference),
+            Normalize(RepaymentVoucherToken));
+        if (RepaymentMethod == PaymentMethodKind.Card)
+        {
+            if (_cardTerminalClient is null)
+            {
+                StatusMessage = "银行卡补款需要先配置刷卡终端。";
+                return;
+            }
+
+            // 刷卡补款必须先由终端授权，API 只记录已授权结果。
+            var authorization = await _cardTerminalClient.AuthorizeAsync(RepaymentAmount, Session);
+            if (!authorization.Approved)
+            {
+                StatusMessage = authorization.Message ?? "银行卡补款未授权。";
+                return;
+            }
+
+            payment = payment with
+            {
+                Amount = authorization.AuthorizedAmount ?? RepaymentAmount,
+                Reference = authorization.Reference ?? Normalize(RepaymentReference),
+                CardTransactions = authorization.CardTransactions
+            };
+        }
+
+        await RunOrderActionAsync(() => _installmentOrderService.AddRepaymentAsync(new InstallmentOrderRepaymentRequest(SelectedOrder.OrderId, Session, payment)));
     }
 
-    private bool CanAddRepayment() => !IsBusy && !IsOffline && SelectedOrder is { CanAddRepayment: true } && RepaymentAmount > 0m && RepaymentAmount <= SelectedOrder.OutstandingAmount && (RepaymentMethod != PaymentMethodKind.Voucher || (!string.IsNullOrWhiteSpace(RepaymentReference) && !string.IsNullOrWhiteSpace(RepaymentVoucherToken)));
+    private bool CanAddRepayment() => !IsBusy &&
+        !IsOffline &&
+        SelectedOrder is { CanAddRepayment: true } &&
+        RepaymentAmount > 0m &&
+        RepaymentAmount <= SelectedOrder.OutstandingAmount &&
+        (RepaymentMethod != PaymentMethodKind.Card || _cardTerminalClient is not null) &&
+        (RepaymentMethod != PaymentMethodKind.Voucher || (!string.IsNullOrWhiteSpace(RepaymentReference) && !string.IsNullOrWhiteSpace(RepaymentVoucherToken)));
     private Task CancelWithRefundAsync() => SelectedOrder is null ? Task.CompletedTask : RunOrderActionAsync(() => _installmentOrderService.CancelWithRefundAsync(SelectedOrder.OrderId, Session));
     private bool CanCancelWithRefund() => !IsBusy && !IsOffline && SelectedOrder is { CanCancelWithRefund: true };
     private Task VoidCancelAsync() => SelectedOrder is null ? Task.CompletedTask : RunOrderActionAsync(() => _installmentOrderService.VoidCancelAsync(SelectedOrder.OrderId, Session, VoidReason));
@@ -175,8 +227,12 @@ public sealed partial class InstallmentCenterViewModel : ObservableObject
             StatusMessage = result.Message;
             if (result.Succeeded)
             {
-                await SearchAsync();
+                await LoadCoreAsync(() => _installmentOrderService.SearchAsync(Session, SearchText), "已找到 {0} 条分期单。", result.Message);
             }
+        }
+        catch (Exception ex)
+        {
+            StatusMessage = ex.Message;
         }
         finally
         {

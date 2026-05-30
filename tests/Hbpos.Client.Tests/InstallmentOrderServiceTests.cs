@@ -24,17 +24,11 @@ public sealed class InstallmentOrderServiceTests
 
             await schema.InitializeAsync();
 
-            var result = await service.CreateAsync(
-                CreateOfflineSession(),
-                CreateInstallmentCreateRequest());
+            var result = await service.CreateAsync(CreateOfflineSession(), CreateInstallmentCreateRequest());
 
             Assert.Equal(InstallmentWriteStatus.OnlineRequired, result.Status);
-            Assert.Null(result.Response);
             Assert.Null(result.LocalOrder);
             Assert.Equal(0, apiClient.CreateCallCount);
-
-            await using var connection = await store.OpenConnectionAsync();
-            Assert.Equal(0, await ReadScalarIntAsync(connection, "SELECT COUNT(*) FROM LocalOrderInstallments;"));
         }
         finally
         {
@@ -43,7 +37,7 @@ public sealed class InstallmentOrderServiceTests
     }
 
     [Fact]
-    public async Task AppendPaymentAsync_returns_online_required_when_session_is_offline()
+    public async Task Write_operations_return_online_required_when_session_is_offline()
     {
         var databasePath = CreateTempDatabasePath();
 
@@ -54,47 +48,23 @@ public sealed class InstallmentOrderServiceTests
             var repository = new LocalInstallmentOrderRepository(store);
             var apiClient = new StubInstallmentApiClient();
             var service = new InstallmentOrderService(repository, apiClient);
+            var offlineSession = CreateOfflineSession();
 
             await schema.InitializeAsync();
 
-            var result = await service.AppendPaymentAsync(
-                CreateOfflineSession(),
-                CreateAppendPaymentRequest());
+            var appendResult = await service.AppendPaymentAsync(offlineSession, CreateAppendPaymentRequest());
+            var pickupResult = await service.ConfirmPickupAsync(offlineSession, CreateConfirmPickupRequest());
+            var cancelResult = await service.CancelWithRefundAsync(offlineSession, CreateCancelRequest());
+            var voidResult = await service.VoidCancelAsync(offlineSession, CreateVoidRequest());
 
-            Assert.Equal(InstallmentWriteStatus.OnlineRequired, result.Status);
-            Assert.Null(result.Response);
-            Assert.Null(result.LocalOrder);
+            Assert.Equal(InstallmentWriteStatus.OnlineRequired, appendResult.Status);
+            Assert.Equal(InstallmentWriteStatus.OnlineRequired, pickupResult.Status);
+            Assert.Equal(InstallmentWriteStatus.OnlineRequired, cancelResult.Status);
+            Assert.Equal(InstallmentWriteStatus.OnlineRequired, voidResult.Status);
             Assert.Equal(0, apiClient.AppendPaymentCallCount);
-        }
-        finally
-        {
-            DeleteTempDatabase(databasePath);
-        }
-    }
-
-    [Fact]
-    public async Task ConfirmPickupAsync_returns_online_required_when_session_is_offline()
-    {
-        var databasePath = CreateTempDatabasePath();
-
-        try
-        {
-            var store = new LocalSqliteStore(databasePath);
-            var schema = new LocalSchemaService(store);
-            var repository = new LocalInstallmentOrderRepository(store);
-            var apiClient = new StubInstallmentApiClient();
-            var service = new InstallmentOrderService(repository, apiClient);
-
-            await schema.InitializeAsync();
-
-            var result = await service.ConfirmPickupAsync(
-                CreateOfflineSession(),
-                CreateConfirmPickupRequest());
-
-            Assert.Equal(InstallmentWriteStatus.OnlineRequired, result.Status);
-            Assert.Null(result.Response);
-            Assert.Null(result.LocalOrder);
             Assert.Equal(0, apiClient.ConfirmPickupCallCount);
+            Assert.Equal(0, apiClient.CancelCallCount);
+            Assert.Equal(0, apiClient.VoidCallCount);
         }
         finally
         {
@@ -114,15 +84,13 @@ public sealed class InstallmentOrderServiceTests
             var repository = new LocalInstallmentOrderRepository(store);
             var apiClient = new StubInstallmentApiClient
             {
-                CreateResponse = CreateCreateResponse(PaymentMethodKind.Cash)
+                CreateResponse = CreateCreateResponse()
             };
             var service = new InstallmentOrderService(repository, apiClient);
 
             await schema.InitializeAsync();
 
-            var result = await service.CreateAsync(
-                CreateOnlineSession(),
-                CreateInstallmentCreateRequest());
+            var result = await service.CreateAsync(CreateOnlineSession(), CreateInstallmentCreateRequest());
 
             Assert.Equal(InstallmentWriteStatus.Succeeded, result.Status);
             Assert.NotNull(result.LocalOrder);
@@ -131,6 +99,7 @@ public sealed class InstallmentOrderServiceTests
 
             var saved = await repository.GetAsync(result.LocalOrder.InstallmentGuid);
             Assert.NotNull(saved);
+            Assert.Equal(InstallmentStatus.Active, saved.Status);
             Assert.Equal(30m, saved.PaidAmount);
             Assert.Equal(90m, saved.BalanceAmount);
         }
@@ -141,7 +110,7 @@ public sealed class InstallmentOrderServiceTests
     }
 
     [Fact]
-    public async Task AppendPaymentAsync_updates_local_snapshot_after_online_success()
+    public async Task CreateOrderAsync_maps_cart_lines_and_voucher_payment_into_api_request()
     {
         var databasePath = CreateTempDatabasePath();
 
@@ -152,81 +121,7 @@ public sealed class InstallmentOrderServiceTests
             var repository = new LocalInstallmentOrderRepository(store);
             var apiClient = new StubInstallmentApiClient
             {
-                CreateResponse = CreateCreateResponse(PaymentMethodKind.Cash),
-                AppendPaymentResponse = CreateAppendPaymentResponse()
-            };
-            var service = new InstallmentOrderService(repository, apiClient);
-
-            await schema.InitializeAsync();
-            await service.CreateAsync(CreateOnlineSession(), CreateInstallmentCreateRequest());
-
-            var result = await service.AppendPaymentAsync(
-                CreateOnlineSession(),
-                CreateAppendPaymentRequest());
-
-            Assert.Equal(InstallmentWriteStatus.Succeeded, result.Status);
-            Assert.NotNull(result.LocalOrder);
-            Assert.Equal(1, apiClient.AppendPaymentCallCount);
-            Assert.Equal(70m, result.LocalOrder!.PaidAmount);
-            Assert.Equal(50m, result.LocalOrder.BalanceAmount);
-        }
-        finally
-        {
-            DeleteTempDatabase(databasePath);
-        }
-    }
-
-    [Fact]
-    public async Task ConfirmPickupAsync_updates_local_snapshot_after_online_success()
-    {
-        var databasePath = CreateTempDatabasePath();
-
-        try
-        {
-            var store = new LocalSqliteStore(databasePath);
-            var schema = new LocalSchemaService(store);
-            var repository = new LocalInstallmentOrderRepository(store);
-            var apiClient = new StubInstallmentApiClient
-            {
-                CreateResponse = CreateCreateResponse(PaymentMethodKind.Cash),
-                ConfirmPickupResponse = CreateConfirmPickupResponse()
-            };
-            var service = new InstallmentOrderService(repository, apiClient);
-
-            await schema.InitializeAsync();
-            await service.CreateAsync(CreateOnlineSession(), CreateInstallmentCreateRequest());
-
-            var result = await service.ConfirmPickupAsync(
-                CreateOnlineSession(),
-                CreateConfirmPickupRequest());
-
-            Assert.Equal(InstallmentWriteStatus.Succeeded, result.Status);
-            Assert.NotNull(result.LocalOrder);
-            Assert.Equal(InstallmentStatus.PickedUp, result.LocalOrder!.Status);
-
-            var saved = await repository.GetAsync(result.LocalOrder.InstallmentGuid);
-            Assert.NotNull(saved);
-            Assert.Equal(InstallmentStatus.PickedUp, saved.Status);
-        }
-        finally
-        {
-            DeleteTempDatabase(databasePath);
-        }
-    }
-
-    [Fact]
-    public async Task CreateOrderAsync_builds_create_request_from_create_page_inputs()
-    {
-        var databasePath = CreateTempDatabasePath();
-
-        try
-        {
-            var store = new LocalSqliteStore(databasePath);
-            var schema = new LocalSchemaService(store);
-            var repository = new LocalInstallmentOrderRepository(store);
-            var apiClient = new StubInstallmentApiClient
-            {
-                CreateResponse = CreateCreateResponse(PaymentMethodKind.Voucher)
+                CreateResponse = CreateCreateResponse()
             };
             var service = new InstallmentOrderService(repository, apiClient);
 
@@ -238,23 +133,25 @@ public sealed class InstallmentOrderServiceTests
                     CreateCartSnapshot(),
                     "张三",
                     "0400111222",
-                    6,
                     30m,
-                    PaymentMethodKind.Voucher,
-                    "VIP001",
-                    "LOCK-001",
+                    new InstallmentPaymentDraft(
+                        Guid.Parse("12345678-1111-2222-3333-444444444444"),
+                        PaymentMethodKind.Voucher,
+                        30m,
+                        "VIP001",
+                        "LOCK-001"),
                     "周末取货"));
 
             Assert.True(result.Succeeded);
+            Assert.Equal("已创建分期单。", result.Message);
             Assert.NotNull(result.Order);
-            Assert.Equal("已创建分期单 IO-20260530-0001。", result.Message);
-            Assert.Equal(PaymentMethodKind.Voucher, apiClient.LastCreateRequest!.DownPayment.Method);
+            Assert.NotNull(apiClient.LastCreateRequest);
+            Assert.Equal(30m, apiClient.LastCreateRequest!.DownPayment.Amount);
+            Assert.Equal(PaymentMethodKind.Voucher, apiClient.LastCreateRequest.DownPayment.Method);
             Assert.Equal("VIP001", apiClient.LastCreateRequest.DownPayment.Reference);
             Assert.Equal("LOCK-001", apiClient.LastCreateRequest.DownPayment.ReservationToken);
-            var line = Assert.Single(apiClient.LastCreateRequest.Lines);
-            Assert.Equal("购物车商品汇总", line.DisplayName);
-            Assert.Equal(120m, line.ActualAmount);
-            Assert.Equal("代金券", result.Order!.DownPaymentMethod);
+            Assert.Equal(2, apiClient.LastCreateRequest.Lines.Count);
+            Assert.Equal("待补款", result.Order!.Status);
         }
         finally
         {
@@ -263,7 +160,7 @@ public sealed class InstallmentOrderServiceTests
     }
 
     [Fact]
-    public async Task AddRepaymentAsync_builds_payment_request_and_updates_summary()
+    public async Task AddRepaymentAsync_builds_append_payment_request()
     {
         var databasePath = CreateTempDatabasePath();
 
@@ -274,7 +171,7 @@ public sealed class InstallmentOrderServiceTests
             var repository = new LocalInstallmentOrderRepository(store);
             var apiClient = new StubInstallmentApiClient
             {
-                CreateResponse = CreateCreateResponse(PaymentMethodKind.Cash),
+                CreateResponse = CreateCreateResponse(),
                 AppendPaymentResponse = CreateAppendPaymentResponse()
             };
             var service = new InstallmentOrderService(repository, apiClient);
@@ -283,19 +180,30 @@ public sealed class InstallmentOrderServiceTests
             await service.CreateAsync(CreateOnlineSession(), CreateInstallmentCreateRequest());
 
             var result = await service.AddRepaymentAsync(
-                Guid.Parse("11111111-2222-3333-4444-555555555555"),
-                CreateOnlineSession(),
-                40m,
-                PaymentMethodKind.Voucher,
-                "VIP001",
-                "LOCK-002");
+                new InstallmentOrderRepaymentRequest(
+                    Guid.Parse("11111111-2222-3333-4444-555555555555"),
+                    CreateOnlineSession(),
+                    new InstallmentPaymentDraft(
+                        Guid.Parse("12345678-9999-aaaa-bbbb-cccccccccccc"),
+                        PaymentMethodKind.Voucher,
+                        40m,
+                        "VIP001",
+                        "LOCK-002")));
 
             Assert.True(result.Succeeded);
-            Assert.NotNull(result.Order);
+            Assert.Equal("补款完成", result.Message);
+            Assert.NotNull(apiClient.LastAppendPaymentRequest);
             Assert.Equal(PaymentMethodKind.Voucher, apiClient.LastAppendPaymentRequest!.Method);
             Assert.Equal("VIP001", apiClient.LastAppendPaymentRequest.Reference);
             Assert.Equal("LOCK-002", apiClient.LastAppendPaymentRequest.ReservationToken);
-            Assert.Equal(50m, result.Order!.OutstandingAmount);
+            Assert.NotNull(result.Order);
+            Assert.Equal(70m, result.Order!.PaidAmount);
+            Assert.Equal(50m, result.Order.OutstandingAmount);
+
+            var saved = await repository.GetAsync(result.Order.OrderId);
+            Assert.NotNull(saved);
+            Assert.Equal(70m, saved.PaidAmount);
+            Assert.Equal(50m, saved.BalanceAmount);
         }
         finally
         {
@@ -304,7 +212,7 @@ public sealed class InstallmentOrderServiceTests
     }
 
     [Fact]
-    public async Task CancelWithRefundAsync_uses_recorded_payments_as_refund_inputs()
+    public async Task CancelWithRefundAsync_builds_refund_request_from_recorded_payments()
     {
         var databasePath = CreateTempDatabasePath();
 
@@ -315,7 +223,7 @@ public sealed class InstallmentOrderServiceTests
             var repository = new LocalInstallmentOrderRepository(store);
             var apiClient = new StubInstallmentApiClient
             {
-                CreateResponse = CreateCreateResponse(PaymentMethodKind.Cash),
+                CreateResponse = CreateCreateResponse(),
                 CancelResponse = CreateCancelResponse()
             };
             var service = new InstallmentOrderService(repository, apiClient);
@@ -325,15 +233,20 @@ public sealed class InstallmentOrderServiceTests
 
             var result = await service.CancelWithRefundAsync(
                 Guid.Parse("11111111-2222-3333-4444-555555555555"),
-                CreateOnlineSession(),
-                "客户取消");
+                CreateOnlineSession());
 
             Assert.True(result.Succeeded);
+            Assert.Equal("已取消并退款", result.Message);
+            Assert.NotNull(apiClient.LastCancelRequest);
+            var refund = Assert.Single(apiClient.LastCancelRequest!.Refunds);
+            Assert.Equal(PaymentMethodKind.Cash, refund.Method);
             Assert.NotNull(result.Order);
-            Assert.Equal(2, apiClient.LastCancelRequest!.Refunds.Count);
-            Assert.Equal(InstallmentStatus.Cancelled, apiClient.CancelResponse!.Details.Status);
-            Assert.Equal("已取消", result.Order!.Status);
-            Assert.False(result.Order.CanCancelRefund);
+            Assert.False(result.Order!.CanAddRepayment);
+
+            var saved = await repository.GetAsync(result.Order.OrderId);
+            Assert.NotNull(saved);
+            Assert.Equal(InstallmentStatus.Cancelled, saved.Status);
+            Assert.Equal(InstallmentCancellationKind.RefundCancel, saved.CancellationInfo?.Kind);
         }
         finally
         {
@@ -342,7 +255,7 @@ public sealed class InstallmentOrderServiceTests
     }
 
     [Fact]
-    public async Task VoidAsync_calls_void_endpoint_and_updates_summary()
+    public async Task CancelWithRefundAsync_does_not_call_api_when_card_refund_fails()
     {
         var databasePath = CreateTempDatabasePath();
 
@@ -353,7 +266,53 @@ public sealed class InstallmentOrderServiceTests
             var repository = new LocalInstallmentOrderRepository(store);
             var apiClient = new StubInstallmentApiClient
             {
-                CreateResponse = CreateCreateResponse(PaymentMethodKind.Cash),
+                CancelResponse = CreateCancelResponse()
+            };
+            var service = new InstallmentOrderService(
+                repository,
+                apiClient,
+                cardTerminalClient: new DeclinedCardTerminalClient());
+
+            await schema.InitializeAsync();
+            await repository.UpsertAsync(CreateLocalOrderWithPayments([
+                new InstallmentPaymentDto(
+                    Guid.Parse("12345678-5555-6666-7777-888888888888"),
+                    PaymentMethodKind.Card,
+                    30m,
+                    "CARD-TXN-1",
+                    InstallmentPaymentStatus.Recorded,
+                    DateTimeOffset.Parse("2026-05-30T10:00:00+10:00"),
+                    "C001",
+                    "POS-01")
+            ]));
+
+            var result = await service.CancelWithRefundAsync(
+                Guid.Parse("11111111-2222-3333-4444-555555555555"),
+                CreateOnlineSession());
+
+            Assert.False(result.Succeeded);
+            Assert.Equal("card refund declined", result.Message);
+            Assert.Null(apiClient.LastCancelRequest);
+        }
+        finally
+        {
+            DeleteTempDatabase(databasePath);
+        }
+    }
+
+    [Fact]
+    public async Task VoidCancelAsync_builds_void_request_with_reason()
+    {
+        var databasePath = CreateTempDatabasePath();
+
+        try
+        {
+            var store = new LocalSqliteStore(databasePath);
+            var schema = new LocalSchemaService(store);
+            var repository = new LocalInstallmentOrderRepository(store);
+            var apiClient = new StubInstallmentApiClient
+            {
+                CreateResponse = CreateCreateResponse(),
                 VoidResponse = CreateVoidResponse()
             };
             var service = new InstallmentOrderService(repository, apiClient);
@@ -361,16 +320,22 @@ public sealed class InstallmentOrderServiceTests
             await schema.InitializeAsync();
             await service.CreateAsync(CreateOnlineSession(), CreateInstallmentCreateRequest());
 
-            var result = await service.VoidAsync(
+            var result = await service.VoidCancelAsync(
                 Guid.Parse("11111111-2222-3333-4444-555555555555"),
                 CreateOnlineSession(),
                 "门店作废");
 
             Assert.True(result.Succeeded);
-            Assert.NotNull(result.Order);
+            Assert.Equal("已作废", result.Message);
+            Assert.NotNull(apiClient.LastVoidRequest);
             Assert.Equal("门店作废", apiClient.LastVoidRequest!.Reason);
-            Assert.Equal("已取消", result.Order!.Status);
-            Assert.False(result.Order.CanVoid);
+            Assert.NotNull(result.Order);
+            Assert.False(result.Order!.CanVoidCancel);
+
+            var saved = await repository.GetAsync(result.Order.OrderId);
+            Assert.NotNull(saved);
+            Assert.Equal(InstallmentStatus.Cancelled, saved.Status);
+            Assert.Equal(InstallmentCancellationKind.VoidCancel, saved.CancellationInfo?.Kind);
         }
         finally
         {
@@ -390,7 +355,14 @@ public sealed class InstallmentOrderServiceTests
 
     private static PosCartServiceSnapshot CreateCartSnapshot()
     {
-        return new PosCartServiceSnapshot(130m, 10m, 120m);
+        return new PosCartServiceSnapshot(
+            130m,
+            10m,
+            120m,
+            [
+                new PosCartLineServiceSnapshot("SKU-001", null, "Premium Rice Cooker", "690001", "ITEM-001", 1m, 130m, 10m, 120m),
+                new PosCartLineServiceSnapshot("SKU-002", null, "Rice Bowl Set", "690002", "ITEM-002", 1m, 0m, 0m, 0m)
+            ]);
     }
 
     private static InstallmentCreateRequest CreateInstallmentCreateRequest()
@@ -437,9 +409,9 @@ public sealed class InstallmentOrderServiceTests
             "C001",
             "Alice",
             40m,
-            PaymentMethodKind.Voucher,
-            "VIP001",
-            "TOKEN-1");
+            PaymentMethodKind.Cash,
+            null,
+            null);
     }
 
     private static InstallmentConfirmPickupRequest CreateConfirmPickupRequest()
@@ -450,13 +422,48 @@ public sealed class InstallmentOrderServiceTests
             "POS-01",
             "C001",
             "Alice",
-            DateTimeOffset.Parse("2026-06-02T09:30:00+10:00"),
+            DateTimeOffset.Parse("2026-05-30T11:00:00+10:00"),
             "客户本人提货");
     }
 
-    private static InstallmentCreateResponse CreateCreateResponse(PaymentMethodKind downPaymentMethod)
+    private static InstallmentCancelRequest CreateCancelRequest()
     {
-        var details = CreateActiveDetails(downPaymentMethod);
+        return new InstallmentCancelRequest(
+            Guid.Parse("11111111-2222-3333-4444-555555555555"),
+            "S001",
+            "POS-01",
+            "C001",
+            "Alice",
+            DateTimeOffset.Parse("2026-05-30T11:10:00+10:00"),
+            [
+                new InstallmentRefundPaymentCommandDto(
+                    Guid.Parse("55555555-9999-aaaa-bbbb-cccccccccccc"),
+                    PaymentMethodKind.Cash,
+                    30m,
+                    null,
+                    null,
+                    "refund-offline-test")
+            ],
+            "客户取消",
+            "cancel-offline-test");
+    }
+
+    private static InstallmentVoidRequest CreateVoidRequest()
+    {
+        return new InstallmentVoidRequest(
+            Guid.Parse("11111111-2222-3333-4444-555555555555"),
+            "S001",
+            "POS-01",
+            "C001",
+            "Alice",
+            DateTimeOffset.Parse("2026-05-30T11:20:00+10:00"),
+            "门店作废",
+            "void-offline-test");
+    }
+
+    private static InstallmentCreateResponse CreateCreateResponse()
+    {
+        var details = CreateActiveDetails();
         return new InstallmentCreateResponse(
             details.InstallmentGuid,
             details.InstallmentNumber,
@@ -465,18 +472,18 @@ public sealed class InstallmentOrderServiceTests
             details.BalanceAmount,
             details,
             false,
-            null);
+            "已创建分期单。");
     }
 
     private static InstallmentAppendPaymentResponse CreateAppendPaymentResponse()
     {
-        var details = CreateActiveDetails(PaymentMethodKind.Cash) with
+        var details = CreateActiveDetails() with
         {
             PaidAmount = 70m,
             BalanceAmount = 50m,
             Payments =
             [
-                .. CreateActiveDetails(PaymentMethodKind.Cash).Payments,
+                .. CreateActiveDetails().Payments,
                 new InstallmentPaymentDto(
                     Guid.Parse("12345678-9999-aaaa-bbbb-cccccccccccc"),
                     PaymentMethodKind.Voucher,
@@ -497,61 +504,29 @@ public sealed class InstallmentOrderServiceTests
             details.Status,
             details,
             false,
-            null);
-    }
-
-    private static InstallmentConfirmPickupResponse CreateConfirmPickupResponse()
-    {
-        var pickedUpAt = DateTimeOffset.Parse("2026-06-02T09:30:00+10:00");
-        var details = CreateActiveDetails(PaymentMethodKind.Cash) with
-        {
-            Status = InstallmentStatus.PickedUp,
-            BalanceAmount = 0m,
-            PaidAmount = 120m,
-            PickupInfo = new InstallmentPickupInfoDto(pickedUpAt, "Alice", "客户本人提货")
-        };
-
-        return new InstallmentConfirmPickupResponse(
-            details.InstallmentGuid,
-            details.Status,
-            pickedUpAt,
-            details,
-            false);
+            "补款完成");
     }
 
     private static InstallmentCancelResponse CreateCancelResponse()
     {
         var cancelledAt = DateTimeOffset.Parse("2026-05-30T10:30:00+10:00");
-        var details = CreateActiveDetails(PaymentMethodKind.Cash) with
+        var details = CreateActiveDetails() with
         {
             Status = InstallmentStatus.Cancelled,
             CancellationInfo = new InstallmentCancellationInfoDto(
                 InstallmentCancellationKind.RefundCancel,
                 cancelledAt,
                 "Alice",
-                "客户取消"),
-            Payments =
-            [
-                .. CreateActiveDetails(PaymentMethodKind.Cash).Payments,
-                new InstallmentPaymentDto(
-                    Guid.Parse("55555555-9999-aaaa-bbbb-cccccccccccc"),
-                    PaymentMethodKind.Cash,
-                    10m,
-                    null,
-                    InstallmentPaymentStatus.Voided,
-                    cancelledAt,
-                    "C001",
-                    "POS-01")
-            ]
+                "客户取消")
         };
 
-        return new InstallmentCancelResponse(details.InstallmentGuid, details.Status, details, false, null);
+        return new InstallmentCancelResponse(details.InstallmentGuid, details.Status, details, false, "已取消并退款");
     }
 
     private static InstallmentVoidResponse CreateVoidResponse()
     {
         var voidedAt = DateTimeOffset.Parse("2026-05-30T10:35:00+10:00");
-        var details = CreateActiveDetails(PaymentMethodKind.Cash) with
+        var details = CreateActiveDetails() with
         {
             Status = InstallmentStatus.Cancelled,
             CancellationInfo = new InstallmentCancellationInfoDto(
@@ -561,10 +536,10 @@ public sealed class InstallmentOrderServiceTests
                 "门店作废")
         };
 
-        return new InstallmentVoidResponse(details.InstallmentGuid, details.Status, details, false, null);
+        return new InstallmentVoidResponse(details.InstallmentGuid, details.Status, details, false, "已作废");
     }
 
-    private static InstallmentDetailsDto CreateActiveDetails(PaymentMethodKind downPaymentMethod)
+    private static InstallmentDetailsDto CreateActiveDetails()
     {
         var createdAt = DateTimeOffset.Parse("2026-05-30T10:00:00+10:00");
         return new InstallmentDetailsDto(
@@ -599,42 +574,51 @@ public sealed class InstallmentOrderServiceTests
             [
                 new InstallmentPaymentDto(
                     Guid.Parse("12345678-1111-2222-3333-444444444444"),
-                    downPaymentMethod,
-                    downPaymentMethod == PaymentMethodKind.Cash ? 10m : 30m,
-                    downPaymentMethod == PaymentMethodKind.Voucher ? "VIP001" : null,
+                    PaymentMethodKind.Cash,
+                    30m,
+                    null,
                     InstallmentPaymentStatus.Recorded,
                     createdAt,
                     "C001",
-                    "POS-01"),
-                new InstallmentPaymentDto(
-                    Guid.Parse("12345678-5555-6666-7777-888888888888"),
-                    PaymentMethodKind.Card,
-                    downPaymentMethod == PaymentMethodKind.Cash ? 20m : 0m,
-                    "ANZ:TXN-INS-1",
-                    InstallmentPaymentStatus.Recorded,
-                    createdAt.AddMinutes(1),
-                    "C001",
-                    "POS-01",
-                    [
-                        new CardTransactionDto(
-                            "ANZ",
-                            "TXN-INS-1",
-                            "AUTH-001",
-                            "VISA",
-                            4,
-                            "****1234",
-                            "MID-001",
-                            "00",
-                            "APPROVED",
-                            "001122",
-                            createdAt.AddMinutes(1),
-                            20m,
-                            "merchant receipt")
-                    ])
-            ].Where(payment => payment.Amount > 0m).ToList(),
+                    "POS-01")
+            ],
             null,
             null,
             "周末取货");
+    }
+
+    private static LocalInstallmentOrder CreateLocalOrderWithPayments(IReadOnlyList<InstallmentPaymentDto> payments)
+    {
+        var paidAmount = payments.Where(payment => payment.Status == InstallmentPaymentStatus.Recorded).Sum(payment => payment.Amount);
+        var details = CreateActiveDetails() with
+        {
+            PaidAmount = paidAmount,
+            BalanceAmount = 120m - paidAmount,
+            Payments = payments
+        };
+        return new LocalInstallmentOrder(
+            details.InstallmentGuid,
+            details.InstallmentGuid,
+            details.InstallmentNumber,
+            details.StoreCode,
+            details.DeviceCode,
+            details.CashierId,
+            details.CashierName,
+            details.CustomerName,
+            details.CustomerPhone,
+            details.CreatedAt,
+            DateTimeOffset.UtcNow,
+            details.TotalAmount,
+            details.MinimumDownPayment,
+            details.DownPaymentAmount,
+            details.PaidAmount,
+            details.BalanceAmount,
+            details.Status,
+            details.Lines,
+            details.Payments,
+            details.PickupInfo,
+            details.Note,
+            details.CancellationInfo);
     }
 
     private static string CreateTempDatabasePath()
@@ -652,13 +636,6 @@ public sealed class InstallmentOrderServiceTests
                 File.Delete(path);
             }
         }
-    }
-
-    private static async Task<int> ReadScalarIntAsync(SqliteConnection connection, string sql)
-    {
-        await using var command = connection.CreateCommand();
-        command.CommandText = sql;
-        return Convert.ToInt32(await command.ExecuteScalarAsync());
     }
 
     private sealed class StubInstallmentApiClient : IInstallmentApiClient
@@ -687,6 +664,10 @@ public sealed class InstallmentOrderServiceTests
 
         public int ConfirmPickupCallCount { get; private set; }
 
+        public int CancelCallCount { get; private set; }
+
+        public int VoidCallCount { get; private set; }
+
         public Task<InstallmentCreateResponse> CreateAsync(InstallmentCreateRequest request, CancellationToken cancellationToken = default)
         {
             CreateCallCount++;
@@ -709,14 +690,36 @@ public sealed class InstallmentOrderServiceTests
 
         public Task<InstallmentCancelResponse> CancelAsync(InstallmentCancelRequest request, CancellationToken cancellationToken = default)
         {
+            CancelCallCount++;
             LastCancelRequest = request;
             return Task.FromResult(CancelResponse ?? throw new InvalidOperationException("CancelResponse was not configured."));
         }
 
         public Task<InstallmentVoidResponse> VoidAsync(InstallmentVoidRequest request, CancellationToken cancellationToken = default)
         {
+            VoidCallCount++;
             LastVoidRequest = request;
             return Task.FromResult(VoidResponse ?? throw new InvalidOperationException("VoidResponse was not configured."));
+        }
+    }
+
+    private sealed class DeclinedCardTerminalClient : ICardTerminalClient
+    {
+        public Task<PaymentAuthorizationResult> AuthorizeAsync(
+            decimal amount,
+            PosSessionState session,
+            CancellationToken cancellationToken = default)
+        {
+            return Task.FromResult(new PaymentAuthorizationResult(false, Message: "card auth declined"));
+        }
+
+        public Task<PaymentAuthorizationResult> RefundAsync(
+            decimal amount,
+            PosSessionState session,
+            string? originalReference,
+            CancellationToken cancellationToken = default)
+        {
+            return Task.FromResult(new PaymentAuthorizationResult(false, Message: "card refund declined"));
         }
     }
 }

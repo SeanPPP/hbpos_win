@@ -3,6 +3,7 @@ using System.Data;
 using System.Reflection;
 using System.Text;
 using BlazorApp.Service.Models.HBPOSM_POSM;
+using BlazorApp.Shared.Models.POSM;
 using Hbpos.Api.Data;
 using Hbpos.Contracts.Vouchers;
 using SqlSugar;
