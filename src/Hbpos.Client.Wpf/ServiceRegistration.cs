@@ -33,6 +33,7 @@ public static class ServiceRegistration
         services.AddSingleton<ILocalDeviceRepository, LocalDeviceRepository>();
         services.AddSingleton<ILocalCatalogRepository, LocalCatalogRepository>();
         services.AddSingleton<ILocalOrderRepository, LocalOrderRepository>();
+        services.AddSingleton<ILocalInstallmentOrderRepository, LocalInstallmentOrderRepository>();
         services.AddSingleton<ILocalOrderUploadRepository, LocalOrderUploadRepository>();
         services.AddSingleton<ISuspendedOrderRepository, SuspendedOrderRepository>();
         services.AddSingleton<ISyncQueueRepository, SyncQueueRepository>();
@@ -60,6 +61,12 @@ public static class ServiceRegistration
         })
         .AddHttpMessageHandler<DeviceAuthorizationMessageHandler>();
         services.AddHttpClient<IOrderSyncApiClient, OrderSyncApiClient>(client =>
+        {
+            client.BaseAddress = GetApiBaseAddress();
+            client.Timeout = TimeSpan.FromSeconds(15);
+        })
+        .AddHttpMessageHandler<DeviceAuthorizationMessageHandler>();
+        services.AddHttpClient<IInstallmentApiClient, InstallmentApiClient>(client =>
         {
             client.BaseAddress = GetApiBaseAddress();
             client.Timeout = TimeSpan.FromSeconds(15);
@@ -105,6 +112,7 @@ public static class ServiceRegistration
         services.AddSingleton<IDailyClosePrintService, DailyClosePrintService>();
         services.AddSingleton<IOrderUploadService, OrderUploadService>();
         services.AddSingleton<IOrderUploadExecutionService, OrderUploadExecutionService>();
+        services.AddSingleton<IInstallmentOrderService, InstallmentOrderService>();
         services.AddSingleton<ICardTerminalSettingsStore>(sp => new CardTerminalSettingsStore(
             sp.GetRequiredService<ILocalAppSettingsRepository>(),
             sp.GetRequiredService<IDeviceAuthorizationProtector>(),
@@ -202,7 +210,8 @@ public static class ServiceRegistration
             dailyClosePrintService: sp.GetRequiredService<IDailyClosePrintService>(),
             cashDrawerService: sp.GetRequiredService<ICashDrawerService>(),
             applicationExitService: sp.GetRequiredService<IApplicationExitService>(),
-            confirmationDialogService: sp.GetRequiredService<IConfirmationDialogService>()));
+            confirmationDialogService: sp.GetRequiredService<IConfirmationDialogService>(),
+            installmentOrderService: sp.GetRequiredService<IInstallmentOrderService>()));
         services.AddSingleton<MainWindow>();
 
         return services;

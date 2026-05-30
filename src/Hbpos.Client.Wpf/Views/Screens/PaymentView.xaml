@@ -480,6 +480,25 @@
                         <TextBlock Text="{Binding VoucherMethodText}" VerticalAlignment="Center" FontSize="17" FontWeight="Black" Foreground="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}" />
                     </StackPanel>
                 </Button>
+                <Button Command="{Binding ShowInstallmentCenterCommand}"
+                        Margin="0,8,0,0">
+                    <Button.Style>
+                        <Style TargetType="Button" BasedOn="{StaticResource CardMethodButtonStyle}">
+                            <Setter Property="Visibility" Value="Visible" />
+                            <Style.Triggers>
+                                <DataTrigger Binding="{Binding IsInstallmentEntryVisible}" Value="False">
+                                    <Setter Property="Visibility" Value="Collapsed" />
+                                </DataTrigger>
+                            </Style.Triggers>
+                        </Style>
+                    </Button.Style>
+                    <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                        <Border Width="46" Height="46" Margin="0,0,14,0" Background="#33FFFFFF" CornerRadius="10">
+                            <materialDesign:PackIcon Kind="CalendarClock" Width="28" Height="28" Foreground="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}" HorizontalAlignment="Center" VerticalAlignment="Center" />
+                        </Border>
+                        <TextBlock Text="{Binding InstallmentMethodText}" VerticalAlignment="Center" FontSize="17" FontWeight="Black" Foreground="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}" />
+                    </StackPanel>
+                </Button>
                 <TextBox Text="{Binding VoucherCodeText, UpdateSourceTrigger=PropertyChanged}"
                          materialDesign:HintAssist.Hint="{loc:Loc payment.voucher.code}"
                          Height="40"

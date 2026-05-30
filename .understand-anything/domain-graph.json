@@ -1,0 +1,1087 @@
+{
+  "version": "1.0.0",
+  "project": {
+    "name": "hbpos_win",
+    "languages": [
+      "csharp",
+      "xaml",
+      "json"
+    ],
+    "frameworks": [
+      "WPF",
+      "ASP.NET Core",
+      "SqlSugar",
+      ".NET 8",
+      "xUnit"
+    ],
+    "description": "订单领域图：描述 HBPOS 从购物车、支付、本地订单保存、上传同步、同步中心重试，到历史查询和退货记录的业务流程。",
+    "analyzedAt": "2026-05-28T09:05:48.561Z",
+    "gitCommitHash": "c73d0e474d9e513aee04c682ac4b61c5f98849c3"
+  },
+  "nodes": [
+    {
+      "id": "domain:order-checkout",
+      "type": "domain",
+      "name": "订单结账",
+      "summary": "负责从商品加入购物车、开放商品、退货行到支付完成的 POS 前台订单创建。该领域的核心不变式是购物车行、付款明细和最终本地订单必须保持金额一致。",
+      "tags": [
+        "订单",
+        "收银",
+        "购物车"
+      ],
+      "complexity": "complex",
+      "domainMeta": {
+        "entities": [
+          "CartLine",
+          "LocalOrder",
+          "LocalOrderLine",
+          "LocalPayment",
+          "SuspendedOrder"
+        ],
+        "businessRules": [
+          "商品数量必须为正整数",
+          "支付金额需与应收或退款方向匹配",
+          "本地订单先落库再上传"
+        ],
+        "crossDomainInteractions": [
+          "调用支付终端产生付款",
+          "把本地订单交给订单同步领域"
+        ]
+      }
+    },
+    {
+      "id": "domain:order-sync",
+      "type": "domain",
+      "name": "订单同步",
+      "summary": "负责将客户端本地 Pending/Failed 订单上传到 API，并在后端落库、生成凭证扣减和返回接收结果。该领域也支撑同步中心的单条重试和全部重试。",
+      "tags": [
+        "订单",
+        "同步",
+        "重试"
+      ],
+      "complexity": "complex",
+      "domainMeta": {
+        "entities": [
+          "OrderSyncRequest",
+          "OrderSyncResponse",
+          "PendingUpload",
+          "VoucherRedemption"
+        ],
+        "businessRules": [
+          "非零实收订单必须有付款",
+          "设备必须授权到对应门店",
+          "Syncing 状态不被强制重试"
+        ],
+        "crossDomainInteractions": [
+          "读取订单结账领域产生的 LocalOrder",
+          "向 API 订单落库服务提交同步请求"
+        ]
+      }
+    },
+    {
+      "id": "domain:order-history-return",
+      "type": "domain",
+      "name": "订单历史与退货",
+      "summary": "负责按门店和设备权限查询订单历史、获取订单明细、计算可退行和可退付款容量，并创建退货记录。",
+      "tags": [
+        "订单",
+        "历史",
+        "退货"
+      ],
+      "complexity": "complex",
+      "domainMeta": {
+        "entities": [
+          "OrderHistoryDetailsDto",
+          "OrderReturnContextDto",
+          "SalesReturnRecord",
+          "OrderReturnPaymentCapacityDto"
+        ],
+        "businessRules": [
+          "退货记录不能为空",
+          "可退金额由原订单和已退货记录计算",
+          "查询结果受设备门店授权限制"
+        ],
+        "crossDomainInteractions": [
+          "退货行会回到订单结账的购物车",
+          "退货订单会再通过订单同步上传"
+        ]
+      }
+    },
+    {
+      "id": "domain:payment-voucher",
+      "type": "domain",
+      "name": "支付与凭证",
+      "summary": "支撑订单结账中的现金、卡、凭证和退款付款明细。同步时会把凭证预留或退款引用转成 API 契约。",
+      "tags": [
+        "支付",
+        "凭证",
+        "退款"
+      ],
+      "complexity": "moderate",
+      "domainMeta": {
+        "entities": [
+          "PaymentMethodKind",
+          "LocalPayment",
+          "PaymentSyncDto",
+          "VoucherCode"
+        ],
+        "businessRules": [
+          "凭证付款需携带凭证编号和预留 token",
+          "退款付款可以是负向金额"
+        ],
+        "crossDomainInteractions": [
+          "被订单结账使用",
+          "被订单同步转换为 PaymentSyncDto"
+        ]
+      }
+    },
+    {
+      "id": "flow:cart-to-local-order",
+      "type": "flow",
+      "name": "购物车到本地订单",
+      "summary": "收银员将商品、开放商品或退货行加入购物车，完成支付后保存为本地订单。",
+      "tags": [
+        "订单",
+        "流程"
+      ],
+      "complexity": "moderate",
+      "domainMeta": {
+        "entryPoint": "POS checkout UI",
+        "entryType": "manual"
+      }
+    },
+    {
+      "id": "step:cart-to-local-order:add-cart-line",
+      "type": "step",
+      "name": "添加购物车行",
+      "summary": "PosCartService 根据商品或退货请求创建 CartLine，并阻止非正整数数量。",
+      "tags": [
+        "购物车",
+        "订单行"
+      ],
+      "complexity": "moderate",
+      "filePath": "src/Hbpos.Client.Wpf/Services/PosCartService.cs",
+      "lineRange": [
+        32,
+        96
+      ]
+    },
+    {
+      "id": "step:cart-to-local-order:collect-payment",
+      "type": "step",
+      "name": "收集付款",
+      "summary": "PaymentViewModel 和支付工作流收集现金、卡或凭证付款，并校验超付、找零和退款方向。",
+      "tags": [
+        "支付",
+        "校验"
+      ],
+      "complexity": "moderate",
+      "filePath": "src/Hbpos.Client.Wpf/ViewModels/PaymentViewModel.cs",
+      "lineRange": [
+        62,
+        140
+      ]
+    },
+    {
+      "id": "step:cart-to-local-order:persist-local-order",
+      "type": "step",
+      "name": "保存本地订单",
+      "summary": "LocalOrderRepository.SavePendingOrderAsync 将订单、明细和付款以 Pending 状态落到本地库。",
+      "tags": [
+        "本地存储",
+        "pending"
+      ],
+      "complexity": "moderate",
+      "filePath": "src/Hbpos.Client.Wpf/Services/LocalOrderRepository.cs",
+      "lineRange": [
+        25,
+        136
+      ]
+    },
+    {
+      "id": "step:cart-to-local-order:show-receipt",
+      "type": "step",
+      "name": "显示小票结果",
+      "summary": "结账成功后进入支付成功页，展示订单金额并支持打印小票。",
+      "tags": [
+        "小票",
+        "完成"
+      ],
+      "complexity": "moderate",
+      "filePath": "src/Hbpos.Client.Wpf/ViewModels/PaymentSuccessViewModel.cs",
+      "lineRange": [
+        33,
+        60
+      ]
+    },
+    {
+      "id": "flow:suspend-and-recall-order",
+      "type": "flow",
+      "name": "暂挂与取回订单",
+      "summary": "收银员可以把当前购物车暂挂，后续再取回继续结账。",
+      "tags": [
+        "订单",
+        "流程"
+      ],
+      "complexity": "moderate",
+      "domainMeta": {
+        "entryPoint": "POS suspend/recall command",
+        "entryType": "manual"
+      }
+    },
+    {
+      "id": "step:suspend-and-recall-order:snapshot-cart",
+      "type": "step",
+      "name": "捕获当前购物车",
+      "summary": "SuspendedOrderService 把当前购物车行和门店设备信息组装为暂挂订单。",
+      "tags": [
+        "暂挂",
+        "购物车"
+      ],
+      "complexity": "moderate",
+      "filePath": "src/Hbpos.Client.Wpf/Services/SuspendedOrderService.cs",
+      "lineRange": [
+        31,
+        89
+      ]
+    },
+    {
+      "id": "step:suspend-and-recall-order:list-pending",
+      "type": "step",
+      "name": "列出待取回订单",
+      "summary": "GetPendingOrdersAsync 读取尚未取回的暂挂订单列表。",
+      "tags": [
+        "暂挂",
+        "列表"
+      ],
+      "complexity": "moderate",
+      "filePath": "src/Hbpos.Client.Wpf/Services/SuspendedOrderService.cs",
+      "lineRange": [
+        90,
+        99
+      ]
+    },
+    {
+      "id": "step:suspend-and-recall-order:recall-cart",
+      "type": "step",
+      "name": "取回订单",
+      "summary": "RecallOrderAsync 把暂挂订单恢复到购物车，并让收银员继续结账。",
+      "tags": [
+        "取回",
+        "购物车"
+      ],
+      "complexity": "moderate",
+      "filePath": "src/Hbpos.Client.Wpf/Services/SuspendedOrderService.cs",
+      "lineRange": [
+        100,
+        140
+      ]
+    },
+    {
+      "id": "flow:upload-local-order",
+      "type": "flow",
+      "name": "上传本地订单",
+      "summary": "客户端将 Pending/Failed 本地订单转换为 API 同步请求，上传成功后标记为 Synced。",
+      "tags": [
+        "订单",
+        "流程"
+      ],
+      "complexity": "moderate",
+      "domainMeta": {
+        "entryPoint": "OrderUploadExecutionService.ExecutePendingAsync",
+        "entryType": "manual"
+      }
+    },
+    {
+      "id": "step:upload-local-order:load-order",
+      "type": "step",
+      "name": "读取本地订单",
+      "summary": "OrderUploadService.UploadOrderAsync 根据 OrderGuid 读取 LocalOrder，找不到则中止上传。",
+      "tags": [
+        "本地订单",
+        "上传"
+      ],
+      "complexity": "moderate",
+      "filePath": "src/Hbpos.Client.Wpf/Services/OrderUploadService.cs",
+      "lineRange": [
+        28,
+        35
+      ]
+    },
+    {
+      "id": "step:upload-local-order:mark-syncing",
+      "type": "step",
+      "name": "标记同步中",
+      "summary": "上传前通过 uploadRepository.MarkSyncingAsync 把订单状态切到 Syncing。",
+      "tags": [
+        "syncing",
+        "状态"
+      ],
+      "complexity": "moderate",
+      "filePath": "src/Hbpos.Client.Wpf/Services/OrderUploadService.cs",
+      "lineRange": [
+        32,
+        35
+      ]
+    },
+    {
+      "id": "step:upload-local-order:map-sync-request",
+      "type": "step",
+      "name": "转换同步契约",
+      "summary": "ToRequest 将 LocalOrder、LocalOrderLine 和 LocalPayment 映射为 OrderSyncRequest，凭证付款会解析凭证编号和预留 token。",
+      "tags": [
+        "契约",
+        "映射"
+      ],
+      "complexity": "moderate",
+      "filePath": "src/Hbpos.Client.Wpf/Services/OrderUploadService.cs",
+      "lineRange": [
+        50,
+        110
+      ]
+    },
+    {
+      "id": "step:upload-local-order:call-api",
+      "type": "step",
+      "name": "调用 API 同步",
+      "summary": "apiClient.SyncAsync 把 OrderSyncRequest 发送到 /api/v1/orders/sync，并检查 Accepted 结果。",
+      "tags": [
+        "api",
+        "同步"
+      ],
+      "complexity": "moderate",
+      "filePath": "src/Hbpos.Client.Wpf/Services/OrderUploadService.cs",
+      "lineRange": [
+        35,
+        41
+      ]
+    },
+    {
+      "id": "step:upload-local-order:mark-result",
+      "type": "step",
+      "name": "标记同步结果",
+      "summary": "成功时标记 Synced，非取消异常时标记 Failed 并保留错误信息。",
+      "tags": [
+        "synced",
+        "failed"
+      ],
+      "complexity": "moderate",
+      "filePath": "src/Hbpos.Client.Wpf/Services/OrderUploadService.cs",
+      "lineRange": [
+        41,
+        47
+      ]
+    },
+    {
+      "id": "flow:retry-sync-center-orders",
+      "type": "flow",
+      "name": "同步中心重试失败订单",
+      "summary": "同步中心允许对 Failed/Pending 订单单条重试或全部重试，重试后刷新计数和列表。",
+      "tags": [
+        "订单",
+        "流程"
+      ],
+      "complexity": "moderate",
+      "domainMeta": {
+        "entryPoint": "Sync center retry buttons",
+        "entryType": "manual"
+      }
+    },
+    {
+      "id": "step:retry-sync-center-orders:select-retry-target",
+      "type": "step",
+      "name": "选择重试目标",
+      "summary": "MainViewModel 只允许 EntityType 为 Order 且状态为 Pending/Failed 的条目进行单条重试。",
+      "tags": [
+        "同步中心",
+        "命令"
+      ],
+      "complexity": "moderate",
+      "filePath": "src/Hbpos.Client.Wpf/ViewModels/MainViewModel.cs",
+      "lineRange": [
+        1,
+        1
+      ]
+    },
+    {
+      "id": "step:retry-sync-center-orders:execute-one",
+      "type": "step",
+      "name": "执行单条重试",
+      "summary": "OrderUploadExecutionService.ExecuteOneAsync 复用 UploadOrderAsync，普通异常转成失败计数而不让 UI 命令崩出。",
+      "tags": [
+        "重试",
+        "单条"
+      ],
+      "complexity": "moderate",
+      "filePath": "src/Hbpos.Client.Wpf/Services/OrderUploadService.cs",
+      "lineRange": [
+        118,
+        150
+      ]
+    },
+    {
+      "id": "step:retry-sync-center-orders:execute-all",
+      "type": "step",
+      "name": "执行全部重试",
+      "summary": "ExecutePendingAsync 批量查询 Pending/Failed 订单并逐条上传，Syncing 订单不被强制打断。",
+      "tags": [
+        "重试",
+        "批量"
+      ],
+      "complexity": "moderate",
+      "filePath": "src/Hbpos.Client.Wpf/Services/OrderUploadService.cs",
+      "lineRange": [
+        151,
+        185
+      ]
+    },
+    {
+      "id": "step:retry-sync-center-orders:refresh-counts",
+      "type": "step",
+      "name": "刷新同步计数",
+      "summary": "重试完成后执行 RefreshPendingSyncAsync，更新 Pending/Failed/Syncing 计数和同步中心列表。",
+      "tags": [
+        "刷新",
+        "计数"
+      ],
+      "complexity": "moderate",
+      "filePath": "src/Hbpos.Client.Wpf/ViewModels/MainViewModel.cs",
+      "lineRange": [
+        1,
+        1
+      ]
+    },
+    {
+      "id": "flow:api-order-sync",
+      "type": "flow",
+      "name": "API 接收订单同步",
+      "summary": "OrdersController.Sync 接收客户端同步请求，校验设备权限、明细和付款，然后交由 OrderSyncService 落库。",
+      "tags": [
+        "订单",
+        "流程"
+      ],
+      "complexity": "moderate",
+      "domainMeta": {
+        "entryPoint": "POST /api/v1/orders/sync",
+        "entryType": "http"
+      }
+    },
+    {
+      "id": "step:api-order-sync:authorize-device",
+      "type": "step",
+      "name": "校验设备门店授权",
+      "summary": "OrdersController.Sync 先检查设备是否允许向请求中的 StoreCode/DeviceCode 同步订单。",
+      "tags": [
+        "授权",
+        "门店"
+      ],
+      "complexity": "moderate",
+      "filePath": "src/Hbpos.Api/Controllers/OrdersController.cs",
+      "lineRange": [
+        19,
+        27
+      ]
+    },
+    {
+      "id": "step:api-order-sync:validate-request",
+      "type": "step",
+      "name": "校验订单明细和付款",
+      "summary": "控制器要求订单明细不能为空，非零实收订单必须有付款。",
+      "tags": [
+        "校验",
+        "明细"
+      ],
+      "complexity": "moderate",
+      "filePath": "src/Hbpos.Api/Controllers/OrdersController.cs",
+      "lineRange": [
+        28,
+        36
+      ]
+    },
+    {
+      "id": "step:api-order-sync:create-sync-plan",
+      "type": "step",
+      "name": "创建同步计划",
+      "summary": "OrderSyncService.SyncAsync 创建同步计划，规划订单、明细、付款和凭证扣减的写入。",
+      "tags": [
+        "同步计划",
+        "落库"
+      ],
+      "complexity": "moderate",
+      "filePath": "src/Hbpos.Api/Services/OrderSyncService.cs",
+      "lineRange": [
+        19,
+        40
+      ]
+    },
+    {
+      "id": "step:api-order-sync:write-voucher-redemptions",
+      "type": "step",
+      "name": "生成凭证扣减",
+      "summary": "BuildVoucherRedemptionsAsync 根据凭证付款和预留 token 生成凭证扣减记录。",
+      "tags": [
+        "凭证",
+        "扣减"
+      ],
+      "complexity": "moderate",
+      "filePath": "src/Hbpos.Api/Services/OrderSyncService.cs",
+      "lineRange": [
+        40,
+        96
+      ]
+    },
+    {
+      "id": "step:api-order-sync:return-accepted",
+      "type": "step",
+      "name": "返回接收结果",
+      "summary": "落库成功后返回 OrderSyncResponse，客户端据此标记订单为 Synced。",
+      "tags": [
+        "响应",
+        "accepted"
+      ],
+      "complexity": "moderate",
+      "filePath": "src/Hbpos.Api/Controllers/OrdersController.cs",
+      "lineRange": [
+        38,
+        46
+      ]
+    },
+    {
+      "id": "flow:query-order-history",
+      "type": "flow",
+      "name": "查询订单历史",
+      "summary": "根据门店、设备、时间和关键字查询订单历史，用于小票查看和退货入口。",
+      "tags": [
+        "订单",
+        "流程"
+      ],
+      "complexity": "moderate",
+      "domainMeta": {
+        "entryPoint": "GET /api/v1/orders/history",
+        "entryType": "http"
+      }
+    },
+    {
+      "id": "step:query-order-history:validate-store",
+      "type": "step",
+      "name": "校验门店参数",
+      "summary": "History 要求 storeCode 不能为空，并按设备授权限制查询范围。",
+      "tags": [
+        "历史",
+        "授权"
+      ],
+      "complexity": "moderate",
+      "filePath": "src/Hbpos.Api/Controllers/OrdersController.cs",
+      "lineRange": [
+        50,
+        68
+      ]
+    },
+    {
+      "id": "step:query-order-history:query-history",
+      "type": "step",
+      "name": "执行历史查询",
+      "summary": "orderHistoryService.QueryAsync 按时间、设备和关键字查询订单列表。",
+      "tags": [
+        "查询",
+        "列表"
+      ],
+      "complexity": "moderate",
+      "filePath": "src/Hbpos.Api/Controllers/OrdersController.cs",
+      "lineRange": [
+        70,
+        73
+      ]
+    },
+    {
+      "id": "step:query-order-history:load-details",
+      "type": "step",
+      "name": "读取订单明细",
+      "summary": "HistoryDetails 根据 orderGuid 读取订单明细，再按明细中的 StoreCode 做授权检查。",
+      "tags": [
+        "明细",
+        "授权"
+      ],
+      "complexity": "moderate",
+      "filePath": "src/Hbpos.Api/Controllers/OrdersController.cs",
+      "lineRange": [
+        76,
+        94
+      ]
+    },
+    {
+      "id": "flow:return-order-records",
+      "type": "flow",
+      "name": "生成退货记录",
+      "summary": "退货前先构建可退上下文，提交后创建 SalesReturnRecord 并与原订单明细关联。",
+      "tags": [
+        "订单",
+        "流程"
+      ],
+      "complexity": "moderate",
+      "domainMeta": {
+        "entryPoint": "GET return-context / POST returns",
+        "entryType": "http"
+      }
+    },
+    {
+      "id": "step:return-order-records:load-return-context",
+      "type": "step",
+      "name": "读取退货上下文",
+      "summary": "GetReturnContextAsync 读取原订单明细和已有退货记录，组成退货页所需上下文。",
+      "tags": [
+        "退货",
+        "上下文"
+      ],
+      "complexity": "moderate",
+      "filePath": "src/Hbpos.Api/Services/OrderReturnService.cs",
+      "lineRange": [
+        24,
+        42
+      ]
+    },
+    {
+      "id": "step:return-order-records:calculate-line-capacity",
+      "type": "step",
+      "name": "计算行可退金额",
+      "summary": "BuildLineCapacities 用原订单行实收金额减去已退货金额，得到剩余可退金额。",
+      "tags": [
+        "容量",
+        "计算"
+      ],
+      "complexity": "moderate",
+      "filePath": "src/Hbpos.Api/Services/OrderReturnService.cs",
+      "lineRange": [
+        75,
+        93
+      ]
+    },
+    {
+      "id": "step:return-order-records:calculate-payment-capacity",
+      "type": "step",
+      "name": "计算付款可退容量",
+      "summary": "BuildPaymentCapacitiesAsync 基于原付款和已退货记录计算现金、卡或凭证的可退余额。",
+      "tags": [
+        "付款",
+        "容量"
+      ],
+      "complexity": "moderate",
+      "filePath": "src/Hbpos.Api/Services/OrderReturnService.cs",
+      "lineRange": [
+        95,
+        140
+      ]
+    },
+    {
+      "id": "step:return-order-records:validate-return-lines",
+      "type": "step",
+      "name": "校验退货明细",
+      "summary": "CreateRecordsAsync 要求退货明细不能为空，并把请求行转换为 SalesReturnRecord。",
+      "tags": [
+        "校验",
+        "退货明细"
+      ],
+      "complexity": "moderate",
+      "filePath": "src/Hbpos.Api/Services/OrderReturnService.cs",
+      "lineRange": [
+        44,
+        69
+      ]
+    },
+    {
+      "id": "step:return-order-records:persist-return-records",
+      "type": "step",
+      "name": "写入退货记录",
+      "summary": "returnRepository.InsertValidatedAsync 写入退货记录，并返回持久化后的退货响应。",
+      "tags": [
+        "写入",
+        "退货"
+      ],
+      "complexity": "moderate",
+      "filePath": "src/Hbpos.Api/Services/OrderReturnService.cs",
+      "lineRange": [
+        71,
+        72
+      ]
+    },
+    {
+      "id": "flow:payment-to-sync-contract",
+      "type": "flow",
+      "name": "付款到同步契约",
+      "summary": "本地付款明细在上传前被转换为 API 付款契约，特别处理凭证和凭证退款引用。",
+      "tags": [
+        "订单",
+        "流程"
+      ],
+      "complexity": "moderate",
+      "domainMeta": {
+        "entryPoint": "OrderUploadService.ToPaymentSyncDto",
+        "entryType": "manual"
+      }
+    },
+    {
+      "id": "step:payment-to-sync-contract:read-payment-method",
+      "type": "step",
+      "name": "识别付款方式",
+      "summary": "ToPaymentSyncDto 根据 PaymentMethodKind 判断是现金、卡还是凭证付款。",
+      "tags": [
+        "付款",
+        "方式"
+      ],
+      "complexity": "moderate",
+      "filePath": "src/Hbpos.Client.Wpf/Services/OrderUploadService.cs",
+      "lineRange": [
+        81,
+        84
+      ]
+    },
+    {
+      "id": "step:payment-to-sync-contract:parse-voucher-reference",
+      "type": "step",
+      "name": "解析凭证引用",
+      "summary": "ParseVoucherReference 支持 VOUCHER 和 VOUCHER_REFUND 两种引用格式，提取凭证编号和预留 token。",
+      "tags": [
+        "凭证",
+        "token"
+      ],
+      "complexity": "moderate",
+      "filePath": "src/Hbpos.Client.Wpf/Services/OrderUploadService.cs",
+      "lineRange": [
+        103,
+        110
+      ]
+    },
+    {
+      "id": "step:payment-to-sync-contract:emit-payment-dto",
+      "type": "step",
+      "name": "生成付款 DTO",
+      "summary": "最终生成 PaymentSyncDto，同时保留卡交易明细和引用信息。",
+      "tags": [
+        "dto",
+        "同步"
+      ],
+      "complexity": "moderate",
+      "filePath": "src/Hbpos.Client.Wpf/Services/OrderUploadService.cs",
+      "lineRange": [
+        86,
+        100
+      ]
+    }
+  ],
+  "edges": [
+    {
+      "source": "domain:order-checkout",
+      "target": "flow:cart-to-local-order",
+      "type": "contains_flow",
+      "direction": "forward",
+      "weight": 1
+    },
+    {
+      "source": "flow:cart-to-local-order",
+      "target": "step:cart-to-local-order:add-cart-line",
+      "type": "flow_step",
+      "direction": "forward",
+      "weight": 0.3
+    },
+    {
+      "source": "flow:cart-to-local-order",
+      "target": "step:cart-to-local-order:collect-payment",
+      "type": "flow_step",
+      "direction": "forward",
+      "weight": 0.6
+    },
+    {
+      "source": "flow:cart-to-local-order",
+      "target": "step:cart-to-local-order:persist-local-order",
+      "type": "flow_step",
+      "direction": "forward",
+      "weight": 0.9
+    },
+    {
+      "source": "flow:cart-to-local-order",
+      "target": "step:cart-to-local-order:show-receipt",
+      "type": "flow_step",
+      "direction": "forward",
+      "weight": 1
+    },
+    {
+      "source": "domain:order-checkout",
+      "target": "flow:suspend-and-recall-order",
+      "type": "contains_flow",
+      "direction": "forward",
+      "weight": 1
+    },
+    {
+      "source": "flow:suspend-and-recall-order",
+      "target": "step:suspend-and-recall-order:snapshot-cart",
+      "type": "flow_step",
+      "direction": "forward",
+      "weight": 0.3
+    },
+    {
+      "source": "flow:suspend-and-recall-order",
+      "target": "step:suspend-and-recall-order:list-pending",
+      "type": "flow_step",
+      "direction": "forward",
+      "weight": 0.6
+    },
+    {
+      "source": "flow:suspend-and-recall-order",
+      "target": "step:suspend-and-recall-order:recall-cart",
+      "type": "flow_step",
+      "direction": "forward",
+      "weight": 0.9
+    },
+    {
+      "source": "domain:order-sync",
+      "target": "flow:upload-local-order",
+      "type": "contains_flow",
+      "direction": "forward",
+      "weight": 1
+    },
+    {
+      "source": "flow:upload-local-order",
+      "target": "step:upload-local-order:load-order",
+      "type": "flow_step",
+      "direction": "forward",
+      "weight": 0.2
+    },
+    {
+      "source": "flow:upload-local-order",
+      "target": "step:upload-local-order:mark-syncing",
+      "type": "flow_step",
+      "direction": "forward",
+      "weight": 0.4
+    },
+    {
+      "source": "flow:upload-local-order",
+      "target": "step:upload-local-order:map-sync-request",
+      "type": "flow_step",
+      "direction": "forward",
+      "weight": 0.6
+    },
+    {
+      "source": "flow:upload-local-order",
+      "target": "step:upload-local-order:call-api",
+      "type": "flow_step",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "flow:upload-local-order",
+      "target": "step:upload-local-order:mark-result",
+      "type": "flow_step",
+      "direction": "forward",
+      "weight": 1
+    },
+    {
+      "source": "domain:order-sync",
+      "target": "flow:retry-sync-center-orders",
+      "type": "contains_flow",
+      "direction": "forward",
+      "weight": 1
+    },
+    {
+      "source": "flow:retry-sync-center-orders",
+      "target": "step:retry-sync-center-orders:select-retry-target",
+      "type": "flow_step",
+      "direction": "forward",
+      "weight": 0.3
+    },
+    {
+      "source": "flow:retry-sync-center-orders",
+      "target": "step:retry-sync-center-orders:execute-one",
+      "type": "flow_step",
+      "direction": "forward",
+      "weight": 0.6
+    },
+    {
+      "source": "flow:retry-sync-center-orders",
+      "target": "step:retry-sync-center-orders:execute-all",
+      "type": "flow_step",
+      "direction": "forward",
+      "weight": 0.9
+    },
+    {
+      "source": "flow:retry-sync-center-orders",
+      "target": "step:retry-sync-center-orders:refresh-counts",
+      "type": "flow_step",
+      "direction": "forward",
+      "weight": 1
+    },
+    {
+      "source": "domain:order-sync",
+      "target": "flow:api-order-sync",
+      "type": "contains_flow",
+      "direction": "forward",
+      "weight": 1
+    },
+    {
+      "source": "flow:api-order-sync",
+      "target": "step:api-order-sync:authorize-device",
+      "type": "flow_step",
+      "direction": "forward",
+      "weight": 0.2
+    },
+    {
+      "source": "flow:api-order-sync",
+      "target": "step:api-order-sync:validate-request",
+      "type": "flow_step",
+      "direction": "forward",
+      "weight": 0.4
+    },
+    {
+      "source": "flow:api-order-sync",
+      "target": "step:api-order-sync:create-sync-plan",
+      "type": "flow_step",
+      "direction": "forward",
+      "weight": 0.6
+    },
+    {
+      "source": "flow:api-order-sync",
+      "target": "step:api-order-sync:write-voucher-redemptions",
+      "type": "flow_step",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "flow:api-order-sync",
+      "target": "step:api-order-sync:return-accepted",
+      "type": "flow_step",
+      "direction": "forward",
+      "weight": 1
+    },
+    {
+      "source": "domain:order-history-return",
+      "target": "flow:query-order-history",
+      "type": "contains_flow",
+      "direction": "forward",
+      "weight": 1
+    },
+    {
+      "source": "flow:query-order-history",
+      "target": "step:query-order-history:validate-store",
+      "type": "flow_step",
+      "direction": "forward",
+      "weight": 0.3
+    },
+    {
+      "source": "flow:query-order-history",
+      "target": "step:query-order-history:query-history",
+      "type": "flow_step",
+      "direction": "forward",
+      "weight": 0.6
+    },
+    {
+      "source": "flow:query-order-history",
+      "target": "step:query-order-history:load-details",
+      "type": "flow_step",
+      "direction": "forward",
+      "weight": 0.9
+    },
+    {
+      "source": "domain:order-history-return",
+      "target": "flow:return-order-records",
+      "type": "contains_flow",
+      "direction": "forward",
+      "weight": 1
+    },
+    {
+      "source": "flow:return-order-records",
+      "target": "step:return-order-records:load-return-context",
+      "type": "flow_step",
+      "direction": "forward",
+      "weight": 0.2
+    },
+    {
+      "source": "flow:return-order-records",
+      "target": "step:return-order-records:calculate-line-capacity",
+      "type": "flow_step",
+      "direction": "forward",
+      "weight": 0.4
+    },
+    {
+      "source": "flow:return-order-records",
+      "target": "step:return-order-records:calculate-payment-capacity",
+      "type": "flow_step",
+      "direction": "forward",
+      "weight": 0.6
+    },
+    {
+      "source": "flow:return-order-records",
+      "target": "step:return-order-records:validate-return-lines",
+      "type": "flow_step",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "flow:return-order-records",
+      "target": "step:return-order-records:persist-return-records",
+      "type": "flow_step",
+      "direction": "forward",
+      "weight": 1
+    },
+    {
+      "source": "domain:payment-voucher",
+      "target": "flow:payment-to-sync-contract",
+      "type": "contains_flow",
+      "direction": "forward",
+      "weight": 1
+    },
+    {
+      "source": "flow:payment-to-sync-contract",
+      "target": "step:payment-to-sync-contract:read-payment-method",
+      "type": "flow_step",
+      "direction": "forward",
+      "weight": 0.3
+    },
+    {
+      "source": "flow:payment-to-sync-contract",
+      "target": "step:payment-to-sync-contract:parse-voucher-reference",
+      "type": "flow_step",
+      "direction": "forward",
+      "weight": 0.6
+    },
+    {
+      "source": "flow:payment-to-sync-contract",
+      "target": "step:payment-to-sync-contract:emit-payment-dto",
+      "type": "flow_step",
+      "direction": "forward",
+      "weight": 0.9
+    },
+    {
+      "source": "domain:order-checkout",
+      "target": "domain:payment-voucher",
+      "type": "cross_domain",
+      "direction": "forward",
+      "weight": 0.6,
+      "description": "订单结账依赖支付领域收集现金、卡和凭证付款。"
+    },
+    {
+      "source": "domain:order-checkout",
+      "target": "domain:order-sync",
+      "type": "cross_domain",
+      "direction": "forward",
+      "weight": 0.6,
+      "description": "本地订单保存后交由订单同步领域上传。"
+    },
+    {
+      "source": "domain:order-history-return",
+      "target": "domain:order-checkout",
+      "type": "cross_domain",
+      "direction": "forward",
+      "weight": 0.6,
+      "description": "退货上下文会把可退行和付款容量带回购物车结账流程。"
+    },
+    {
+      "source": "domain:payment-voucher",
+      "target": "domain:order-sync",
+      "type": "cross_domain",
+      "direction": "forward",
+      "weight": 0.6,
+      "description": "凭证付款会在订单同步时转成凭证扣减或退款记录。"
+    }
+  ],
+  "layers": [],
+  "tour": []
+}

@@ -22,6 +22,10 @@ public interface IVoucherApiClient : IVoucherTenderClient
     Task<StoreVoucherIssueRefundResponse> IssueRefundVoucherAsync(
         StoreVoucherIssueRefundRequest request,
         CancellationToken cancellationToken = default);
+
+    Task<StoreVoucherIssueResponse> IssueVoucherAsync(
+        StoreVoucherIssueRequest request,
+        CancellationToken cancellationToken = default);
 }
 
 public sealed class VoucherApiClient(HttpClient httpClient, ILocalizationService? localization = null) : IVoucherApiClient
@@ -54,6 +58,16 @@ public sealed class VoucherApiClient(HttpClient httpClient, ILocalizationService
             cancellationToken);
     }
 
+    public Task<StoreVoucherIssueResponse> IssueVoucherAsync(
+        StoreVoucherIssueRequest request,
+        CancellationToken cancellationToken = default)
+    {
+        return PostAsync<StoreVoucherIssueRequest, StoreVoucherIssueResponse>(
+            "api/v1/vouchers/issue",
+            request,
+            cancellationToken);
+    }
+
     public async Task<PaymentAuthorizationResult> RedeemAsync(
         decimal amount,
         PosSessionState session,
@@ -75,6 +89,7 @@ public sealed class VoucherApiClient(HttpClient httpClient, ILocalizationService
         var locked = await LockAsync(
             new StoreVoucherLockRequest(session.StoreCode, query.Voucher.VoucherCode, lockAmount),
             cancellationToken);
+        // 正向代金券支付必须保存锁定令牌，订单上传时后端用它完成最终核销。
         return new PaymentAuthorizationResult(
             true,
             $"VOUCHER:{locked.VoucherCode}:{locked.ReservationToken}",
@@ -114,6 +129,7 @@ public sealed class VoucherApiClient(HttpClient httpClient, ILocalizationService
                 OrderReference: orderReference.Trim(),
                 Reason: reason),
             cancellationToken);
+        // 退款券是新发券，不需要 reservation token，订单支付引用只保存券码。
         return new PaymentAuthorizationResult(
             true,
             $"VOUCHER_REFUND:{issued.VoucherCode}",

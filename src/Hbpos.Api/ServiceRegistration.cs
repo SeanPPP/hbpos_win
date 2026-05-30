@@ -19,6 +19,10 @@ public static class ServiceRegistration
         services.AddScoped<IOrderHistoryService, OrderHistoryService>();
         services.AddScoped<IOrderReturnRepository, SqlSugarOrderReturnRepository>();
         services.AddScoped<IOrderReturnService, OrderReturnService>();
+        services.AddScoped<IInstallmentRepository, SqlSugarInstallmentRepository>();
+        services.AddScoped<InstallmentService>();
+        services.AddScoped<IInstallmentService>(sp => sp.GetRequiredService<InstallmentService>());
+        services.AddScoped<IInstallmentHistoryService>(sp => sp.GetRequiredService<InstallmentService>());
         services.AddScoped<IStoreVoucherRepository, SqlSugarStoreVoucherRepository>();
         services.AddScoped<IStoreVoucherService, StoreVoucherService>();
         services.AddScoped<ILinklyCloudCredentialRepository, SqlSugarLinklyCloudCredentialRepository>();

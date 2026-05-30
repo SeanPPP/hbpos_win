@@ -48,6 +48,7 @@ public sealed partial class MainViewModel : ObservableObject
     private readonly IReceiptPrintService _receiptPrintService;
     private readonly IReceiptPrinterSettingsStore? _receiptPrinterSettingsStore;
     private readonly IReceiptTextFormatter _receiptTextFormatter;
+    private readonly IInstallmentOrderService _installmentOrderService;
     private readonly ISuspendedOrderService? _suspendedOrderService;
     private readonly IRemoteOrderHistoryService? _remoteOrderHistoryService;
     private readonly ICashPaymentWorkflowService _cashPaymentWorkflowService;
@@ -233,6 +234,7 @@ public sealed partial class MainViewModel : ObservableObject
                 priceIndex,
                 cart,
                 localization),
+            installmentOrderService: NoopInstallmentOrderService.Instance,
             userFeedbackService: userFeedbackService ?? NoopUserFeedbackService.Instance,
             receiptPrintService: receiptPrintService ?? new NoopReceiptPrintService(localization),
             receiptPrinterSettingsStore: receiptPrinterSettingsStore,
@@ -283,7 +285,8 @@ public sealed partial class MainViewModel : ObservableObject
         IDailyClosePrintService? dailyClosePrintService = null,
         ICashDrawerService? cashDrawerService = null,
         IApplicationExitService? applicationExitService = null,
-        IConfirmationDialogService? confirmationDialogService = null)
+        IConfirmationDialogService? confirmationDialogService = null,
+        IInstallmentOrderService? installmentOrderService = null)
     {
         _priceIndex = priceIndex;
         _cart = cart;
@@ -307,6 +310,7 @@ public sealed partial class MainViewModel : ObservableObject
         _receiptPrintService = receiptPrintService ?? new NoopReceiptPrintService(_localization);
         _receiptPrinterSettingsStore = receiptPrinterSettingsStore;
         _receiptTextFormatter = receiptTextFormatter ?? new ReceiptTextFormatter();
+        _installmentOrderService = installmentOrderService ?? NoopInstallmentOrderService.Instance;
         _suspendedOrderService = suspendedOrderService;
         _remoteOrderHistoryService = remoteOrderHistoryService;
         _cashPaymentWorkflowService = cashPaymentWorkflowService;
@@ -373,6 +377,10 @@ public sealed partial class MainViewModel : ObservableObject
 
     public PaymentViewModel? CashPayment { get; private set; }
 
+    public InstallmentCenterViewModel? InstallmentCenter { get; private set; }
+
+    public InstallmentCreateViewModel? InstallmentCreate { get; private set; }
+
     public ReceiptReturnsViewModel? ReceiptReturns { get; private set; }
 
     public PaymentSuccessViewModel PaymentSuccess { get; }
@@ -398,7 +406,7 @@ public sealed partial class MainViewModel : ObservableObject
         !IsCashPaymentScreenActive &&
         !IsSpecialProductsScreenActive;
 
-    public string ActivePageTitleText => _localization.T(GetActivePageTitleKey());
+    public string ActivePageTitleText => GetActivePageTitleText();
 
     public ObservableCollection<SyncQueueListItem> SyncCenterOrders { get; } = [];
 
@@ -814,6 +822,21 @@ public sealed partial class MainViewModel : ObservableObject
         }
     }
 
+    private string GetActivePageTitleText()
+    {
+        if (ReferenceEquals(CurrentScreen, InstallmentCenter))
+        {
+            return InstallmentCenter?.PageTitleText ?? "分期中心";
+        }
+
+        if (ReferenceEquals(CurrentScreen, InstallmentCreate))
+        {
+            return InstallmentCreate?.PageTitleText ?? "创建分期";
+        }
+
+        return _localization.T(GetActivePageTitleKey());
+    }
+
     private string GetActivePageTitleKey()
     {
         if (ReferenceEquals(CurrentScreen, PosTerminal))
@@ -942,6 +965,12 @@ public sealed partial class MainViewModel : ObservableObject
         {
             DailyClose.Session = Session;
         }
+
+        InstallmentCenter?.Prepare(Session, CreateCurrentCartSnapshot());
+        if (InstallmentCreate is not null)
+        {
+            InstallmentCreate.Session = Session;
+        }
     }
 
     private void BeginInitialCatalogSync()
@@ -974,7 +1003,8 @@ public sealed partial class MainViewModel : ObservableObject
                 _cashPaymentWorkflowService,
                 Session,
                 _localization,
-                ShowPos);
+                ShowPos,
+                ShowInstallmentCenter);
             CashPayment.PaymentCompleted += OnPaymentCompleted;
             CashPayment.PropertyChanged += OnCashPaymentPropertyChanged;
         }
@@ -1223,6 +1253,8 @@ public sealed partial class MainViewModel : ObservableObject
         CachedPosTerminalScreen = null;
         ClearCashPaymentCache();
         CachedSpecialProductsScreen = null;
+        InstallmentCenter = null;
+        InstallmentCreate = null;
         ReceiptReturns = null;
         TransactionHistory = null;
         _lastCompletedOrder = null;
@@ -1254,6 +1286,11 @@ public sealed partial class MainViewModel : ObservableObject
     private void OnCartChanged(object? sender, EventArgs e)
     {
         CashPayment?.RefreshCart();
+        InstallmentCenter?.Prepare(Session, CreateCurrentCartSnapshot());
+        if (InstallmentCreate is not null)
+        {
+            InstallmentCreate.CartSnapshot = CreateCurrentCartSnapshot();
+        }
         LoadCustomerDisplayFromCart();
         ShowCashPaymentCommand.NotifyCanExecuteChanged();
     }
@@ -1323,6 +1360,28 @@ public sealed partial class MainViewModel : ObservableObject
 
         CashPayment.PrepareForEntry(Session);
         CurrentScreen = CashPayment;
+    }
+
+    private void ShowInstallmentCenter()
+    {
+        if (CashPayment is null)
+        {
+            return;
+        }
+
+        // 分期入口从支付页进入，先带上当前购物车汇总做 UI 骨架展示。
+        InstallmentCenter ??= CreateInstallmentCenterViewModel();
+        InstallmentCenter.Prepare(Session, CreateCurrentCartSnapshot());
+        CurrentScreen = InstallmentCenter;
+        _ = InstallmentCenter.LoadAsync();
+    }
+
+    private async Task ShowInstallmentCreateAsync(PosCartServiceSnapshot? cartSnapshot)
+    {
+        InstallmentCreate ??= CreateInstallmentCreateViewModel();
+        InstallmentCreate.Prepare(Session, cartSnapshot);
+        CurrentScreen = InstallmentCreate;
+        await Task.CompletedTask;
     }
 
     private void ClearCashPaymentCache()
@@ -1471,6 +1530,61 @@ public sealed partial class MainViewModel : ObservableObject
             _receiptPrinterSettingsStore);
         viewModel.ReprintRequested += async (_, _) => await PrintSelectedHistoryReceiptAsync(viewModel);
         return viewModel;
+    }
+
+    private InstallmentCenterViewModel CreateInstallmentCenterViewModel()
+    {
+        return new InstallmentCenterViewModel(
+            _installmentOrderService,
+            Session,
+            ShowInstallmentCreateAsync,
+            ShowCashPayment,
+            _localization);
+    }
+
+    private InstallmentCreateViewModel CreateInstallmentCreateViewModel()
+    {
+        return new InstallmentCreateViewModel(
+            _installmentOrderService,
+            Session,
+            async order =>
+            {
+                InstallmentCenter ??= CreateInstallmentCenterViewModel();
+                InstallmentCenter.Prepare(Session, CreateCurrentCartSnapshot());
+                InstallmentCenter.AppendOrUpdateOrder(order);
+                CurrentScreen = InstallmentCenter;
+                await InstallmentCenter.LoadAsync();
+            },
+            () =>
+            {
+                InstallmentCenter ??= CreateInstallmentCenterViewModel();
+                InstallmentCenter.Prepare(Session, CreateCurrentCartSnapshot());
+                CurrentScreen = InstallmentCenter;
+            },
+            _localization);
+    }
+
+    private PosCartServiceSnapshot? CreateCurrentCartSnapshot()
+    {
+        if (_cart.IsEmpty)
+        {
+            return null;
+        }
+
+        return new PosCartServiceSnapshot(
+            _cart.TotalAmount,
+            _cart.DiscountAmount,
+            _cart.ActualAmount,
+            _cart.Lines.Select(line => new PosCartLineServiceSnapshot(
+                line.ProductCode,
+                line.ReferenceCode,
+                line.DisplayName,
+                line.LookupCode,
+                line.ItemNumber,
+                line.Quantity,
+                line.UnitPrice,
+                line.DiscountAmount,
+                line.ActualAmount)).ToList());
     }
 
     private async Task<ReceiptPrintResult> PrintLatestReceiptAsync()

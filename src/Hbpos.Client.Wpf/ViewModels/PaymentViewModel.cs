@@ -14,6 +14,7 @@ public partial class PaymentViewModel : ObservableObject
     private readonly ICashPaymentWorkflowService _workflowService;
     private readonly ILocalizationService? _localization;
     private readonly Action? _onBackToPos;
+    private readonly Action? _onShowInstallmentCenter;
     private string _statusKey = "payment.status.ready";
     private string? _statusTextOverride;
     private Guid? _pendingVoucherUploadOrderGuid;
@@ -67,13 +68,15 @@ public partial class PaymentViewModel : ObservableObject
         ISyncQueueRepository syncQueueRepository,
         PosSessionState session,
         ILocalizationService? localization = null,
-        Action? onBackToPos = null)
+        Action? onBackToPos = null,
+        Action? onShowInstallmentCenter = null)
         : this(
             cart,
             new CashPaymentWorkflowService(checkout, orderRepository, syncQueueRepository),
             session,
             localization,
-            onBackToPos)
+            onBackToPos,
+            onShowInstallmentCenter)
     {
     }
 
@@ -82,13 +85,15 @@ public partial class PaymentViewModel : ObservableObject
         ICashPaymentWorkflowService workflowService,
         PosSessionState session,
         ILocalizationService? localization = null,
-        Action? onBackToPos = null)
+        Action? onBackToPos = null,
+        Action? onShowInstallmentCenter = null)
     {
         _cart = cart;
         _workflowService = workflowService;
         _session = session;
         _localization = localization;
         _onBackToPos = onBackToPos;
+        _onShowInstallmentCenter = onShowInstallmentCenter;
         if (_localization is not null)
         {
             _localization.CultureChanged += (_, _) => RaiseLocalizedProperties();
@@ -106,6 +111,7 @@ public partial class PaymentViewModel : ObservableObject
         ConfirmPaymentCommand = new AsyncRelayCommand(ConfirmPaymentAsync, CanConfirmPayment);
         CancelCommand = new RelayCommand(CancelPayment, CanCancelPayment);
         BackToPosCommand = new RelayCommand(BackToPos, CanBackToPos);
+        ShowInstallmentCenterCommand = new RelayCommand(ShowInstallmentCenter, CanShowInstallmentCenter);
 
         RefreshCart();
     }
@@ -133,6 +139,8 @@ public partial class PaymentViewModel : ObservableObject
     public IRelayCommand CancelCommand { get; }
 
     public IRelayCommand BackToPosCommand { get; }
+
+    public IRelayCommand ShowInstallmentCenterCommand { get; }
 
     public event EventHandler<PaymentCompletedEventArgs>? PaymentCompleted;
 
@@ -163,6 +171,8 @@ public partial class PaymentViewModel : ObservableObject
     public string CardMethodText => T(IsRefundMode ? "payment.method.refundCard" : "payment.method.card");
 
     public string VoucherMethodText => T(IsRefundMode ? "payment.method.refundVoucher" : "payment.method.voucher");
+
+    public string InstallmentMethodText => T("payment.method.installment");
 
     public string CancelText => T("common.cancel");
 
@@ -205,6 +215,8 @@ public partial class PaymentViewModel : ObservableObject
 
     public bool IsVoucherCodeEntryVisible => IsVoucherSelected && !IsRefundMode;
 
+    public bool IsInstallmentEntryVisible => IsPaymentMode;
+
     public bool IsConfirmPaymentVisible => CanConfirmPayment();
 
     partial void OnTenderAmountTextChanged(string value)
@@ -224,6 +236,7 @@ public partial class PaymentViewModel : ObservableObject
         SelectCardCommand.NotifyCanExecuteChanged();
         SelectVoucherCommand.NotifyCanExecuteChanged();
         QuickCashCommand.NotifyCanExecuteChanged();
+        ShowInstallmentCenterCommand.NotifyCanExecuteChanged();
         OnPropertyChanged(nameof(IsCashSelected));
         OnPropertyChanged(nameof(IsCardSelected));
         OnPropertyChanged(nameof(IsVoucherSelected));
@@ -257,6 +270,7 @@ public partial class PaymentViewModel : ObservableObject
         OnPropertyChanged(nameof(CashMethodText));
         OnPropertyChanged(nameof(CardMethodText));
         OnPropertyChanged(nameof(VoucherMethodText));
+        OnPropertyChanged(nameof(InstallmentMethodText));
         OnPropertyChanged(nameof(IsRefundMode));
         OnPropertyChanged(nameof(IsZeroSettlementMode));
         OnPropertyChanged(nameof(IsPaymentMode));
@@ -264,6 +278,8 @@ public partial class PaymentViewModel : ObservableObject
         OnPropertyChanged(nameof(IsPaymentMethodSelectionVisible));
         OnPropertyChanged(nameof(IsQuickCashVisible));
         OnPropertyChanged(nameof(IsVoucherCodeEntryVisible));
+        OnPropertyChanged(nameof(IsInstallmentEntryVisible));
+        ShowInstallmentCenterCommand.NotifyCanExecuteChanged();
     }
 
     public void PrepareForEntry(PosSessionState session)
@@ -842,6 +858,20 @@ public partial class PaymentViewModel : ObservableObject
             !_awaitingLateCardResultAfterManualCancel;
     }
 
+    private void ShowInstallmentCenter()
+    {
+        // 分期流程暂时独立于现有收款流程，只负责跳转到新骨架页面。
+        _onShowInstallmentCenter?.Invoke();
+    }
+
+    private bool CanShowInstallmentCenter()
+    {
+        return IsPaymentMode &&
+            !IsPaymentInteractionLocked &&
+            _activeCardPaymentCts is null &&
+            !_cart.IsEmpty;
+    }
+
     private void CancelPayment()
     {
         if (IsCardPaymentInProgress)
@@ -1191,6 +1221,7 @@ public partial class PaymentViewModel : ObservableObject
         ConfirmPaymentCommand.NotifyCanExecuteChanged();
         CancelCommand.NotifyCanExecuteChanged();
         BackToPosCommand.NotifyCanExecuteChanged();
+        ShowInstallmentCenterCommand.NotifyCanExecuteChanged();
         OnPropertyChanged(nameof(IsCancelPaymentVisible));
         OnPropertyChanged(nameof(IsConfirmPaymentVisible));
     }
@@ -1222,6 +1253,7 @@ public partial class PaymentViewModel : ObservableObject
         OnPropertyChanged(nameof(CashMethodText));
         OnPropertyChanged(nameof(CardMethodText));
         OnPropertyChanged(nameof(VoucherMethodText));
+        OnPropertyChanged(nameof(InstallmentMethodText));
         OnPropertyChanged(nameof(CancelText));
         OnPropertyChanged(nameof(StatusMessage));
     }

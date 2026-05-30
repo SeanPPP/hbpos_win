@@ -5,7 +5,6 @@ using Hbpos.Contracts.Orders;
 using Microsoft.Extensions.Logging;
 using SqlSugar;
 using System.Diagnostics;
-using StoreVoucherEntity = BlazorApp.Service.Models.HBPOSM_POSM.StoreVoucher;
 
 namespace Hbpos.Api.Services;
 
@@ -40,7 +39,14 @@ public sealed class OrderSyncService(
         Log(
             $"plan created orderGuid={request.OrderGuid:D} saleLines={plan.Lines.Count} payments={plan.Payments.Count} " +
             $"bankTransactions={plan.BankTransactions.Count} returns={plan.ReturnRecords.Count}");
-        await repository.InsertAsync(plan, voucherRedemptions, cancellationToken);
+        var inserted = await repository.InsertAsync(plan, voucherRedemptions, cancellationToken);
+        if (!inserted)
+        {
+            // 并发重复上传时不再消费预占令牌，直接向上层返回已同步结果。
+            Log($"service completed orderGuid={request.OrderGuid:D} status=already-synced-after-insert elapsedMs={stopwatch.ElapsedMilliseconds}");
+            return new OrderSyncResponse(request.OrderGuid, true, true, "AlreadySynced");
+        }
+
         Log($"repository insert completed orderGuid={request.OrderGuid:D}");
 
         foreach (var redemption in voucherRedemptions)
@@ -144,7 +150,7 @@ public interface IOrderRepository
 {
     Task<bool> ExistsAsync(Guid orderGuid, CancellationToken cancellationToken);
 
-    Task InsertAsync(
+    Task<bool> InsertAsync(
         OrderSyncPlan plan,
         IReadOnlyList<StoreVoucherRedemptionCommit> voucherRedemptions,
         CancellationToken cancellationToken);
@@ -168,7 +174,7 @@ public sealed class SqlSugarOrderRepository(
             .AnyAsync(x => x.OrderGuid == orderGuidText, cancellationToken);
     }
 
-    public async Task InsertAsync(
+    public async Task<bool> InsertAsync(
         OrderSyncPlan plan,
         IReadOnlyList<StoreVoucherRedemptionCommit> voucherRedemptions,
         CancellationToken cancellationToken)
@@ -204,11 +210,12 @@ public sealed class SqlSugarOrderRepository(
                     plan.Order.OrderGuid,
                     stopwatch.ElapsedMilliseconds);
                 await db.Ado.CommitTranAsync();
-                return;
+                return false;
             }
 
             if (voucherRedemptions.Count > 0)
             {
+                // 代金券余额扣减与订单写入放在同一事务内，避免部分成功。
                 await ApplyVoucherPaymentsAsync(db, plan, voucherRedemptions, cancellationToken);
                 logger.LogInformation(
                     "OrderSyncRepository voucher apply completed OrderGuid={OrderGuid} VoucherCount={VoucherCount}",
@@ -259,6 +266,7 @@ public sealed class SqlSugarOrderRepository(
                 plan.BankTransactions.Count,
                 plan.ReturnRecords.Count,
                 stopwatch.ElapsedMilliseconds);
+            return true;
         }
         catch (Exception ex)
         {
@@ -281,35 +289,13 @@ public sealed class SqlSugarOrderRepository(
         foreach (var redemption in voucherRedemptions)
         {
             var storeCode = plan.Order.BranchCode ?? string.Empty;
-            var voucher = await db.Queryable<StoreVoucherEntity>()
-                .Where(x => x.VoucherCode == redemption.VoucherCode)
-                .Where(x => x.StoreCode == null || x.StoreCode == string.Empty || x.StoreCode == storeCode)
-                .OrderBy(x => x.StoreCode == storeCode, OrderByType.Desc)
-                .FirstAsync(cancellationToken)
-                ?? throw new InvalidOperationException($"Voucher {redemption.VoucherCode} was not found.");
-            ValidateVoucherForOrder(voucher, storeCode);
-
-            var remaining = voucher.RemainingAmount ?? 0m;
-            if (remaining < redemption.Amount)
-            {
-                throw new InvalidOperationException($"Voucher {redemption.VoucherCode} balance is not enough.");
-            }
-
-            var newRemaining = decimal.Round(remaining - redemption.Amount, 2, MidpointRounding.AwayFromZero);
-            voucher.RemainingAmount = newRemaining <= 0m ? 0m : newRemaining;
-            voucher.Status = voucher.RemainingAmount <= 0m ? "0" : "1";
-            voucher.UpdateTime = DateTime.UtcNow;
-            voucher.UpdateUser = plan.Order.CashierId ?? plan.Order.CashierName;
-
-            await db.Updateable(voucher)
-                .UpdateColumns(x => new
-                {
-                    x.RemainingAmount,
-                    x.Status,
-                    x.UpdateTime,
-                    x.UpdateUser
-                })
-                .ExecuteCommandAsync(cancellationToken);
+            await SqlSugarStoreVoucherRepository.RedeemInsideTransactionAsync(
+                db,
+                storeCode,
+                redemption.VoucherCode,
+                redemption.Amount,
+                plan.Order.CashierId ?? plan.Order.CashierName,
+                cancellationToken);
         }
     }
 
@@ -369,30 +355,6 @@ public sealed class SqlSugarOrderRepository(
     private static string RemoveLogControlChars(string value)
     {
         return new string(value.Select(ch => char.IsControl(ch) ? ' ' : ch).ToArray());
-    }
-
-    private static void ValidateVoucherForOrder(StoreVoucherEntity voucher, string storeCode)
-    {
-        if (voucher.IsDelete == true)
-        {
-            throw new InvalidOperationException("Voucher has been deleted.");
-        }
-
-        if (!string.Equals(voucher.Status?.Trim(), "1", StringComparison.Ordinal))
-        {
-            throw new InvalidOperationException("Voucher is not active.");
-        }
-
-        if (!string.IsNullOrWhiteSpace(voucher.StoreCode) &&
-            !string.Equals(voucher.StoreCode.Trim(), storeCode.Trim(), StringComparison.OrdinalIgnoreCase))
-        {
-            throw new InvalidOperationException("Voucher does not belong to this store.");
-        }
-
-        if (voucher.ExpiredDate is not null && voucher.ExpiredDate.Value <= DateTime.UtcNow)
-        {
-            throw new InvalidOperationException("Voucher has expired.");
-        }
     }
 
 }

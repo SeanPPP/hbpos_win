@@ -320,7 +320,8 @@ public sealed class ReceiptReturnsWorkflowService(
                 group.Sum(payment => payment.Amount),
                 0m,
                 group.Sum(payment => payment.Amount),
-                group.Key.Reference))
+                group.Key.Reference,
+                OriginalOrderGuid: order.OrderGuid))
             .ToList();
     }
 

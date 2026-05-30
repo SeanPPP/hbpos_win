@@ -23,6 +23,35 @@ public sealed class OrderSyncServiceTests
     }
 
     [Fact]
+    public async Task SyncAsync_DoesNotConsumeVoucherReservationWhenOrderAlreadySyncedDuringInsert()
+    {
+        var orderGuid = Guid.NewGuid();
+        var repository = new FakeOrderRepository(exists: false)
+        {
+            InsertResult = false
+        };
+        var reservationService = new FakeReservationService();
+        reservationService.Add(new StoreVoucherReservation("token-1", "S01", "V001", 5m, DateTimeOffset.UtcNow.AddMinutes(5)));
+        var service = new OrderSyncService(repository, new OrderSyncPlanner(), reservationService);
+
+        var response = await service.SyncAsync(
+            CreateRequest(
+                orderGuid,
+                payments:
+                [
+                    new PaymentSyncDto(Guid.NewGuid(), PaymentMethodKind.Voucher, 5m, "V001", "token-1")
+                ]),
+            CancellationToken.None);
+
+        Assert.True(response.Accepted);
+        Assert.True(response.AlreadySynced);
+        Assert.Equal("AlreadySynced", response.Message);
+        Assert.True(repository.InsertCalled);
+        Assert.Empty(reservationService.ConsumedTokens);
+        Assert.NotNull(await reservationService.GetAsync("token-1", CancellationToken.None));
+    }
+
+    [Fact]
     public async Task SyncAsync_InsertsSnapshotWhenOrderDoesNotExist()
     {
         var orderGuid = Guid.NewGuid();
@@ -39,6 +68,9 @@ public sealed class OrderSyncServiceTests
         Assert.Equal(9.99m, repository.LastPlan?.Lines.Single().Price);
         Assert.Equal("SOURCE-GUID-01", repository.LastPlan?.Lines.Single().ReferenceGUID);
         Assert.Equal("priceSource=1", repository.LastPlan?.Lines.Single().Remark);
+        Assert.Equal("POS_S01_POS01", repository.LastPlan?.Order.CreatedBy);
+        Assert.Equal("POS_S01_POS01", repository.LastPlan?.Lines.Single().CreatedBy);
+        Assert.Equal("POS_S01_POS01", repository.LastPlan?.Payments.Single().CreatedBy);
     }
 
     [Fact]
@@ -88,6 +120,9 @@ public sealed class OrderSyncServiceTests
         Assert.Equal(originalDetailGuid.ToString("D"), record.OriginalOrderDetailGuid);
         Assert.Equal(1m, record.ReturnQuantity);
         Assert.Equal(9.99m, record.ReturnAmount);
+        Assert.Equal("C01", record.StaffCode);
+        Assert.Equal("POS_S01_POS01", record.CreatedBy);
+        Assert.Equal("POS_S01_POS01", record.UpdatedBy);
         Assert.Empty(repository.LastPlan.Lines);
         Assert.Equal(1, repository.AtomicReturnValidationCallCount);
     }
@@ -563,6 +598,207 @@ public sealed class OrderSyncServiceTests
     }
 
     [Fact]
+    public void Planner_SanitizesSalesOrderDetailTextBeforeInsert()
+    {
+        var request = new OrderSyncRequest(
+            Guid.NewGuid(),
+            "S01",
+            "POS01",
+            "  Cashier-01  ",
+            "Cashier",
+            DateTimeOffset.Parse("2026-05-21T10:00:00Z"),
+            9.99m,
+            0m,
+            9.99m,
+            [
+                new OrderLineSyncDto(
+                    Guid.NewGuid(),
+                    $"  {new string('P', 130)}  ",
+                    $"  {new string('R', 130)}  ",
+                    $"  {new string('N', 280)}  ",
+                    $"  {new string('B', 130)}  ",
+                    1m,
+                    9.99m,
+                    0m,
+                    9.99m,
+                    PriceSourceKind.StoreRetailPrice,
+                    new string('I', 260))
+            ],
+            []);
+
+        var plan = new OrderSyncPlanner().CreatePlan(request);
+
+        var line = Assert.Single(plan.Lines);
+        Assert.Equal(50, line.ProductCode.Length);
+        Assert.Equal(50, line.ReferenceGUID.Length);
+        Assert.Equal(255, line.ProductName!.Length);
+        Assert.Equal(50, line.Barcode!.Length);
+        Assert.Equal(50, line.Remark!.Length);
+        Assert.Equal("POS_S01_POS01", line.CreatedBy);
+        Assert.Equal("POS_S01_POS01", line.UpdatedBy);
+        Assert.DoesNotContain("  ", line.ProductCode);
+        Assert.StartsWith("priceSource=1;itemNo=", line.Remark);
+    }
+
+    [Fact]
+    public void Planner_ConvertsBlankSalesOrderDetailTextToEmptyStrings()
+    {
+        var request = new OrderSyncRequest(
+            Guid.NewGuid(),
+            "S01",
+            "POS01",
+            "   ",
+            "Cashier",
+            DateTimeOffset.Parse("2026-05-21T10:00:00Z"),
+            9.99m,
+            0m,
+            9.99m,
+            [
+                new OrderLineSyncDto(
+                    Guid.NewGuid(),
+                    "   ",
+                    "   ",
+                    "   ",
+                    "   ",
+                    1m,
+                    9.99m,
+                    0m,
+                    9.99m,
+                    PriceSourceKind.StoreRetailPrice,
+                    "   ")
+            ],
+            []);
+
+        var plan = new OrderSyncPlanner().CreatePlan(request);
+
+        var line = Assert.Single(plan.Lines);
+        Assert.Equal(string.Empty, line.ProductCode);
+        Assert.Equal(string.Empty, line.ReferenceGUID);
+        Assert.Equal(string.Empty, line.ProductName);
+        Assert.Equal(string.Empty, line.Barcode);
+        Assert.Equal("priceSource=1", line.Remark);
+        Assert.Equal("POS_S01_POS01", line.CreatedBy);
+        Assert.Equal("POS_S01_POS01", line.UpdatedBy);
+    }
+
+    [Fact]
+    public void Planner_UsesExistingPosmDeviceCodeForAuditFields()
+    {
+        var request = CreateRequest(
+            Guid.NewGuid(),
+            storeCode: "1042",
+            deviceCode: "POS_1042_1234");
+
+        var plan = new OrderSyncPlanner().CreatePlan(request);
+
+        Assert.Equal("POS_1042_1234", plan.Order.CreatedBy);
+        Assert.Equal("POS_1042_1234", plan.Order.UpdatedBy);
+        Assert.Equal("POS_1042_1234", Assert.Single(plan.Lines).CreatedBy);
+        Assert.Equal("POS_1042_1234", Assert.Single(plan.Payments).CreatedBy);
+        Assert.Equal("POS_1042_1234", Assert.Single(plan.Payments).UpdatedBy);
+    }
+
+    [Fact]
+    public void Planner_PreservesExistingPosmDeviceCodeWithUnderscoreSuffix()
+    {
+        var request = CreateRequest(
+            Guid.NewGuid(),
+            storeCode: "1042",
+            deviceCode: "POS_1042_TILL_01");
+
+        var plan = new OrderSyncPlanner().CreatePlan(request);
+
+        Assert.Equal("POS_1042_TILL_01", plan.Order.CreatedBy);
+        Assert.Equal("POS_1042_TILL_01", Assert.Single(plan.Lines).CreatedBy);
+    }
+
+    [Fact]
+    public void Planner_SynthesizesPosmAuditFieldsFromStoreAndDeviceSuffix()
+    {
+        var request = CreateRequest(
+            Guid.NewGuid(),
+            storeCode: "1042",
+            deviceCode: "Register-A");
+
+        var plan = new OrderSyncPlanner().CreatePlan(request);
+
+        Assert.Equal("POS_1042_Register-A", plan.Order.CreatedBy);
+        Assert.Equal("POS_1042_Register-A", Assert.Single(plan.Lines).UpdatedBy);
+        Assert.Equal("POS_1042_Register-A", Assert.Single(plan.Payments).CreatedBy);
+    }
+
+    [Fact]
+    public void Planner_FallsBackToCashierWhenDeviceCodeIsBlank()
+    {
+        var request = CreateRequest(
+            Guid.NewGuid(),
+            storeCode: "1042",
+            deviceCode: "   ",
+            cashierId: "Cashier-7");
+
+        var plan = new OrderSyncPlanner().CreatePlan(request);
+
+        Assert.Equal("POS_1042_Cashier-7", plan.Order.CreatedBy);
+        Assert.Equal("POS_1042_Cashier-7", Assert.Single(plan.Lines).UpdatedBy);
+    }
+
+    [Fact]
+    public void Planner_TruncatesPosmAuditFieldsWithoutBreakingShopCodePrefix()
+    {
+        var request = CreateRequest(
+            Guid.NewGuid(),
+            storeCode: "1042",
+            deviceCode: $"POS_1042_{new string('X', 80)}");
+
+        var plan = new OrderSyncPlanner().CreatePlan(request);
+
+        Assert.Equal(50, plan.Order.CreatedBy!.Length);
+        Assert.StartsWith("POS_1042_", plan.Order.CreatedBy);
+        Assert.Equal(2, plan.Order.CreatedBy.Count(ch => ch == '_'));
+        Assert.Equal(plan.Order.CreatedBy, Assert.Single(plan.Lines).CreatedBy);
+    }
+
+    [Fact]
+    public void Repository_BuildsSalesOrderDetailDiagnosticsWithLengthsAndSafePreview()
+    {
+        var line = new SalesOrderDetail
+        {
+            OrderDetailGuid = "detail-1",
+            ProductCode = new string('P', 90),
+            ReferenceGUID = "REF-1",
+            ProductName = "Name\r\nWithControl",
+            Barcode = null,
+            Remark = new string('R', 120),
+            CreatedBy = "POS_1042_1234",
+            UpdatedBy = "POS_1042_1234"
+        };
+
+        var diagnostic = Assert.Single(SqlSugarOrderRepository.BuildSalesOrderDetailDiagnostics([line]));
+
+        Assert.Equal("detail-1", diagnostic.OrderDetailGuid);
+        Assert.Equal(90, diagnostic.ProductCode.Length);
+        Assert.Equal(80, diagnostic.ProductCode.Preview.Length);
+        Assert.Equal(5, diagnostic.ReferenceGUID.Length);
+        Assert.Equal("REF-1", diagnostic.ReferenceGUID.Preview);
+        Assert.Equal(17, diagnostic.ProductName.Length);
+        Assert.Equal("Name  WithControl", diagnostic.ProductName.Preview);
+        Assert.Equal(0, diagnostic.Barcode.Length);
+        Assert.Equal(string.Empty, diagnostic.Barcode.Preview);
+        Assert.Equal(120, diagnostic.Remark.Length);
+        Assert.Equal(80, diagnostic.Remark.Preview.Length);
+        Assert.Equal("POS_1042_1234", diagnostic.CreatedBy.Preview);
+        Assert.Equal("POS_1042_1234", diagnostic.UpdatedBy.Preview);
+
+        var diagnosticsText = SqlSugarOrderRepository.BuildSalesOrderDetailDiagnosticsText([line]);
+        Assert.Contains("\"ProductName\"", diagnosticsText);
+        Assert.Contains("\"CreatedBy\"", diagnosticsText);
+        Assert.Contains("\"UpdatedBy\"", diagnosticsText);
+        Assert.Contains("\"Preview\":\"Name  WithControl\"", diagnosticsText);
+        Assert.DoesNotContain("\r", diagnosticsText);
+        Assert.DoesNotContain("\n", diagnosticsText);
+    }
+
+    [Fact]
     public void Planner_CreatesBankTransactionForCardPayment()
     {
         var paymentGuid = Guid.NewGuid();
@@ -714,13 +950,16 @@ public sealed class OrderSyncServiceTests
         Guid orderGuid,
         string? itemNumber = null,
         IReadOnlyList<PaymentSyncDto>? payments = null,
-        IReadOnlyList<OrderLineSyncDto>? lines = null)
+        IReadOnlyList<OrderLineSyncDto>? lines = null,
+        string storeCode = "S01",
+        string deviceCode = "POS01",
+        string cashierId = "C01")
     {
         return new OrderSyncRequest(
             orderGuid,
-            "S01",
-            "POS01",
-            "C01",
+            storeCode,
+            deviceCode,
+            cashierId,
             "Cashier",
             DateTimeOffset.Parse("2026-05-21T10:00:00Z"),
             9.99m,
@@ -810,12 +1049,14 @@ public sealed class OrderSyncServiceTests
 
         public int InsertedReturnRecordCount { get; private set; }
 
+        public bool InsertResult { get; init; } = true;
+
         public Task<bool> ExistsAsync(Guid orderGuid, CancellationToken cancellationToken)
         {
             return Task.FromResult(exists);
         }
 
-        public async Task InsertAsync(
+        public async Task<bool> InsertAsync(
             OrderSyncPlan plan,
             IReadOnlyList<StoreVoucherRedemptionCommit> voucherRedemptions,
             CancellationToken cancellationToken)
@@ -823,8 +1064,14 @@ public sealed class OrderSyncServiceTests
             InsertCalled = true;
             LastPlan = plan;
             LastVoucherRedemptions = voucherRedemptions;
+            if (!InsertResult)
+            {
+                return false;
+            }
+
             var returnRecords = await PrepareReturnRecordsAsync(plan.ReturnRecords, plan.Payments, cancellationToken);
             InsertedReturnRecordCount = returnRecords.Count;
+            return true;
         }
 
         private async Task<IReadOnlyList<SalesReturnRecord>> PrepareReturnRecordsAsync(

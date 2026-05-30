@@ -23,6 +23,10 @@ public interface IStoreVoucherService
     Task<StoreVoucherIssueRefundResponse> IssueRefundAsync(
         StoreVoucherIssueRefundRequest request,
         CancellationToken cancellationToken);
+
+    Task<StoreVoucherIssueResponse> IssueAsync(
+        StoreVoucherIssueRequest request,
+        CancellationToken cancellationToken);
 }
 
 public sealed class StoreVoucherService(
@@ -108,6 +112,50 @@ public sealed class StoreVoucherService(
                 : DateTime.SpecifyKind(voucher.ExpiredDate.Value, DateTimeKind.Utc));
     }
 
+    public async Task<StoreVoucherIssueResponse> IssueAsync(
+        StoreVoucherIssueRequest request,
+        CancellationToken cancellationToken)
+    {
+        var normalizedStoreCode = NormalizeRequired(request.StoreCode ?? string.Empty, nameof(request.StoreCode));
+        var normalizedCashierId = NormalizeRequired(request.CashierId, nameof(request.CashierId));
+        var normalizedIdempotencyKey = NormalizeRequired(request.IdempotencyKey, nameof(request.IdempotencyKey));
+        if (request.Amount <= 0m)
+        {
+            throw new InvalidOperationException("Amount must be greater than zero.");
+        }
+
+        var now = _timeProvider.GetUtcNow();
+        var expiredAt = request.ExpiredAt ?? now.AddMonths(12);
+        if (expiredAt <= now)
+        {
+            throw new InvalidOperationException("ExpiredAt must be in the future.");
+        }
+
+        var voucher = await repository.CreateIssuedVoucherAsync(
+            new IssuedVoucherCreateModel(
+                normalizedStoreCode,
+                decimal.Round(request.Amount, 2, MidpointRounding.AwayFromZero),
+                normalizedCashierId,
+                now,
+                expiredAt,
+                normalizedIdempotencyKey,
+                NormalizeOptional(request.CustomerCode),
+                request.Reason?.Trim()),
+            cancellationToken);
+
+        var amount = voucher.Amount ?? decimal.Round(request.Amount, 2, MidpointRounding.AwayFromZero);
+        return new StoreVoucherIssueResponse(
+            voucher.VoucherCode ?? string.Empty,
+            amount,
+            voucher.RemainingAmount ?? amount,
+            voucher.Status ?? "1",
+            voucher.ExpiredDate is null
+                ? expiredAt
+                : DateTime.SpecifyKind(voucher.ExpiredDate.Value, DateTimeKind.Utc),
+            NormalizeOptional(voucher.StoreCode),
+            NormalizeOptional(voucher.CustomerCode));
+    }
+
     private static StoreVoucherDto Map(StoreVoucher voucher)
     {
         return new StoreVoucherDto(
@@ -134,6 +182,11 @@ public sealed class StoreVoucherService(
 
         return value.Trim();
     }
+
+    private static string? NormalizeOptional(string? value)
+    {
+        return string.IsNullOrWhiteSpace(value) ? null : value.Trim();
+    }
 }
 
 public interface IStoreVoucherRepository
@@ -146,6 +199,10 @@ public interface IStoreVoucherRepository
     Task<StoreVoucher> CreateRefundVoucherAsync(
         RefundVoucherCreateModel request,
         CancellationToken cancellationToken);
+
+    Task<StoreVoucher> CreateIssuedVoucherAsync(
+        IssuedVoucherCreateModel request,
+        CancellationToken cancellationToken);
 }
 
 public sealed record RefundVoucherCreateModel(
@@ -156,6 +213,16 @@ public sealed record RefundVoucherCreateModel(
     DateTimeOffset ExpiredAt,
     string IdempotencyKey,
     string? OrderReference,
+    string? Reason);
+
+public sealed record IssuedVoucherCreateModel(
+    string? StoreCode,
+    decimal Amount,
+    string CashierId,
+    DateTimeOffset CreatedAt,
+    DateTimeOffset ExpiredAt,
+    string IdempotencyKey,
+    string? CustomerCode,
     string? Reason);
 
 public sealed class SqlSugarStoreVoucherRepository(HbposSqlSugarContext dbContext) : IStoreVoucherRepository
@@ -182,6 +249,111 @@ public sealed class SqlSugarStoreVoucherRepository(HbposSqlSugarContext dbContex
         RefundVoucherCreateModel request,
         CancellationToken cancellationToken)
     {
+        return await CreateVoucherAsync(
+            new VoucherCreatePersistenceModel(
+                "RF",
+                request.StoreCode,
+                request.Amount,
+                request.CashierId,
+                request.CreatedAt,
+                request.ExpiredAt,
+                request.IdempotencyKey,
+                null,
+                request.OrderReference,
+                request.Reason,
+                BuildRefundRemark,
+                BuildRefundIdempotencyMarker),
+            cancellationToken);
+    }
+
+    public async Task<StoreVoucher> CreateIssuedVoucherAsync(
+        IssuedVoucherCreateModel request,
+        CancellationToken cancellationToken)
+    {
+        return await CreateVoucherAsync(
+            new VoucherCreatePersistenceModel(
+                "VC",
+                request.StoreCode,
+                request.Amount,
+                request.CashierId,
+                request.CreatedAt,
+                request.ExpiredAt,
+                request.IdempotencyKey,
+                request.CustomerCode,
+                null,
+                request.Reason,
+                BuildIssueRemark,
+                BuildIssueIdempotencyMarker),
+            cancellationToken);
+    }
+
+    internal static async Task RedeemInsideTransactionAsync(
+        ISqlSugarClient db,
+        string storeCode,
+        string voucherCode,
+        decimal amount,
+        string? updatedBy,
+        CancellationToken cancellationToken)
+    {
+        var voucher = await db.Queryable<StoreVoucher>()
+            .Where(x => x.VoucherCode == voucherCode)
+            .Where(x => x.StoreCode == null || x.StoreCode == string.Empty || x.StoreCode == storeCode)
+            .OrderBy(x => x.StoreCode == storeCode, OrderByType.Desc)
+            .FirstAsync(cancellationToken)
+            ?? throw new InvalidOperationException($"Voucher {voucherCode} was not found.");
+        ValidateVoucherForRedemption(voucher, storeCode);
+
+        var remaining = voucher.RemainingAmount ?? 0m;
+        if (remaining < amount)
+        {
+            throw new InvalidOperationException($"Voucher {voucherCode} balance is not enough.");
+        }
+
+        var newRemaining = decimal.Round(remaining - amount, 2, MidpointRounding.AwayFromZero);
+        voucher.RemainingAmount = newRemaining <= 0m ? 0m : newRemaining;
+        voucher.Status = voucher.RemainingAmount <= 0m ? "0" : "1";
+        voucher.UpdateTime = DateTime.UtcNow;
+        voucher.UpdateUser = updatedBy;
+
+        await db.Updateable(voucher)
+            .UpdateColumns(x => new
+            {
+                x.RemainingAmount,
+                x.Status,
+                x.UpdateTime,
+                x.UpdateUser
+            })
+            .ExecuteCommandAsync(cancellationToken);
+    }
+
+    private static void ValidateVoucherForRedemption(StoreVoucher voucher, string storeCode)
+    {
+        if (voucher.IsDelete == true)
+        {
+            throw new InvalidOperationException("Voucher has been deleted.");
+        }
+
+        if (!string.Equals(voucher.Status?.Trim(), "1", StringComparison.Ordinal))
+        {
+            throw new InvalidOperationException("Voucher is not active.");
+        }
+
+        if (!string.IsNullOrWhiteSpace(voucher.StoreCode) &&
+            !string.Equals(voucher.StoreCode.Trim(), storeCode.Trim(), StringComparison.OrdinalIgnoreCase))
+        {
+            throw new InvalidOperationException("Voucher does not belong to this store.");
+        }
+
+        if (voucher.ExpiredDate is not null && voucher.ExpiredDate.Value <= DateTime.UtcNow)
+        {
+            throw new InvalidOperationException("Voucher has expired.");
+        }
+    }
+
+    private async Task<StoreVoucher> CreateVoucherAsync(
+        VoucherCreatePersistenceModel request,
+        CancellationToken cancellationToken)
+    {
         cancellationToken.ThrowIfCancellationRequested();
 
         for (var attempt = 0; attempt < 5; attempt++)
@@ -189,14 +361,14 @@ public sealed class SqlSugarStoreVoucherRepository(HbposSqlSugarContext dbContex
             await dbContext.PosmDb.Ado.BeginTranAsync(IsolationLevel.Serializable);
             try
             {
-                var existing = await FindRefundVoucherByIdempotencyKeyAsync(request, cancellationToken);
+                var existing = await FindVoucherByIdempotencyKeyAsync(request, cancellationToken);
                 if (existing is not null)
                 {
                     await dbContext.PosmDb.Ado.CommitTranAsync();
                     return existing;
                 }
 
-                var voucherCode = CreateVoucherCode();
+                var voucherCode = CreateVoucherCode(request.CodePrefix);
                 var entity = new StoreVoucher();
                 SetIfExists(entity, "VoucherCode", voucherCode);
                 SetIfExists(entity, "StoreCode", request.StoreCode);
@@ -205,10 +377,11 @@ public sealed class SqlSugarStoreVoucherRepository(HbposSqlSugarContext dbContex
                 SetIfExists(entity, "RemainingAmount", request.Amount);
                 SetIfExists(entity, "Status", "1");
                 SetIfExists(entity, "ExpiredDate", request.ExpiredAt.UtcDateTime);
-                SetIfExists(entity, "Remark", BuildRefundRemark(request));
+                // 备注承载发放来源与幂等标记，第一版不新增流水表时用于审计和重试去重。
+                SetIfExists(entity, "Remark", request.BuildRemark(request));
                 SetIfExists(entity, "DiscountRate", 0m);
                 SetIfExists(entity, "IsDelete", false);
-                SetIfExists(entity, "CustomerCode", null);
+                SetIfExists(entity, "CustomerCode", request.CustomerCode);
                 SetIfExists(entity, "CreatedBy", request.CashierId);
                 SetIfExists(entity, "CreateUser", request.CashierId);
                 SetIfExists(entity, "CreatedAt", request.CreatedAt.UtcDateTime);
@@ -233,24 +406,26 @@ public sealed class SqlSugarStoreVoucherRepository(HbposSqlSugarContext dbContex
         throw new InvalidOperationException("Unable to generate a unique voucher code.");
     }
 
-    private async Task<StoreVoucher?> FindRefundVoucherByIdempotencyKeyAsync(
-        RefundVoucherCreateModel request,
+    private async Task<StoreVoucher?> FindVoucherByIdempotencyKeyAsync(
+        VoucherCreatePersistenceModel request,
         CancellationToken cancellationToken)
     {
-        var marker = BuildRefundIdempotencyMarker(request.IdempotencyKey);
-        return await dbContext.PosmDb.Queryable<StoreVoucher>()
-            .Where(x => x.StoreCode == request.StoreCode)
+        var marker = request.BuildIdempotencyMarker(request.IdempotencyKey);
+        var query = dbContext.PosmDb.Queryable<StoreVoucher>()
             .Where(x => x.Remark != null && x.Remark.Contains(marker))
-            .Where(x => x.IsDelete == null || x.IsDelete == false)
-            .FirstAsync(cancellationToken);
+            .Where(x => x.IsDelete == null || x.IsDelete == false);
+        query = string.IsNullOrWhiteSpace(request.StoreCode)
+            ? query.Where(x => x.StoreCode == null || x.StoreCode == string.Empty)
+            : query.Where(x => x.StoreCode == request.StoreCode);
+        return await query.FirstAsync(cancellationToken);
     }
 
-    private static string CreateVoucherCode()
+    private static string CreateVoucherCode(string prefix)
     {
-        return $"RF{Guid.NewGuid():N}"[..14].ToUpperInvariant();
+        return $"{prefix}{Guid.NewGuid():N}"[..14].ToUpperInvariant();
     }
 
-    private static string BuildRefundRemark(RefundVoucherCreateModel request)
+    private static string BuildRefundRemark(VoucherCreatePersistenceModel request)
     {
         var parts = new List<string> { "Refund voucher" };
         parts.Add(BuildRefundIdempotencyMarker(request.IdempotencyKey));
@@ -267,11 +442,43 @@ public sealed class SqlSugarStoreVoucherRepository(HbposSqlSugarContext dbContex
         return string.Join(" | ", parts);
     }
 
+    private static string BuildIssueRemark(VoucherCreatePersistenceModel request)
+    {
+        var parts = new List<string> { "Issued voucher" };
+        parts.Add(BuildIssueIdempotencyMarker(request.IdempotencyKey));
+        if (!string.IsNullOrWhiteSpace(request.Reason))
+        {
+            parts.Add(request.Reason!);
+        }
+
+        return string.Join(" | ", parts);
+    }
+
     private static string BuildRefundIdempotencyMarker(string idempotencyKey)
     {
         var encodedKey = Convert.ToBase64String(Encoding.UTF8.GetBytes(idempotencyKey.Trim()));
         return $"RefundKey[{encodedKey}]";
     }
+
+    private static string BuildIssueIdempotencyMarker(string idempotencyKey)
+    {
+        var encodedKey = Convert.ToBase64String(Encoding.UTF8.GetBytes(idempotencyKey.Trim()));
+        return $"IssueKey[{encodedKey}]";
+    }
+
+    private sealed record VoucherCreatePersistenceModel(
+        string CodePrefix,
+        string? StoreCode,
+        decimal Amount,
+        string CashierId,
+        DateTimeOffset CreatedAt,
+        DateTimeOffset ExpiredAt,
+        string IdempotencyKey,
+        string? CustomerCode,
+        string? OrderReference,
+        string? Reason,
+        Func<VoucherCreatePersistenceModel, string> BuildRemark,
+        Func<string, string> BuildIdempotencyMarker);
 
     private static void SetIfExists(StoreVoucher entity, string propertyName, object? value)
     {

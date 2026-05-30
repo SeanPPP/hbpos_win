@@ -23,6 +23,7 @@ public sealed class LocalSchemaService(LocalSqliteStore store) : ILocalSchemaSer
         await EnsureDeviceCacheColumnsAsync(connection, cancellationToken);
         await EnsureLocalOrderColumnsAsync(connection, cancellationToken);
         await EnsureLocalOrderLineColumnsAsync(connection, cancellationToken);
+        await EnsureLocalInstallmentColumnsAsync(connection, cancellationToken);
         await EnsureSuspendedOrderLineColumnsAsync(connection, cancellationToken);
         await EnsureSuspendedOrderReturnPaymentCapacityColumnsAsync(connection, cancellationToken);
 
@@ -183,6 +184,17 @@ public sealed class LocalSchemaService(LocalSqliteStore store) : ILocalSchemaSer
         if (!columns.Contains("OriginalOrderDetailGuid"))
         {
             await ExecuteAsync(connection, "ALTER TABLE LocalOrderLines ADD COLUMN OriginalOrderDetailGuid TEXT NULL;", cancellationToken);
+        }
+    }
+
+    private static async Task EnsureLocalInstallmentColumnsAsync(
+        SqliteConnection connection,
+        CancellationToken cancellationToken)
+    {
+        var columns = await ReadColumnNamesAsync(connection, "LocalOrderInstallments", cancellationToken);
+        if (!columns.Contains("CancellationInfoJson"))
+        {
+            await ExecuteAsync(connection, "ALTER TABLE LocalOrderInstallments ADD COLUMN CancellationInfoJson TEXT NULL;", cancellationToken);
         }
     }
 
@@ -374,6 +386,32 @@ public sealed class LocalSchemaService(LocalSqliteStore store) : ILocalSchemaSer
         );
         """,
         """
+        CREATE TABLE IF NOT EXISTS LocalOrderInstallments (
+            OrderGuid TEXT PRIMARY KEY,
+            InstallmentGuid TEXT NOT NULL,
+            InstallmentNumber TEXT NOT NULL,
+            StoreCode TEXT NOT NULL,
+            DeviceCode TEXT NOT NULL,
+            CashierId TEXT NOT NULL,
+            CashierName TEXT NOT NULL,
+            CustomerName TEXT NOT NULL,
+            CustomerPhone TEXT NOT NULL,
+            CreatedAt TEXT NOT NULL,
+            UpdatedAt TEXT NOT NULL,
+            TotalAmount TEXT NOT NULL,
+            MinimumDownPayment TEXT NOT NULL,
+            DownPaymentAmount TEXT NOT NULL,
+            PaidAmount TEXT NOT NULL,
+            BalanceAmount TEXT NOT NULL,
+            Status INTEGER NOT NULL,
+              LinesJson TEXT NOT NULL,
+              PaymentsJson TEXT NOT NULL,
+              PickupInfoJson TEXT NULL,
+              CancellationInfoJson TEXT NULL,
+              Note TEXT NULL
+          );
+        """,
+        """
         CREATE TABLE IF NOT EXISTS LocalDailyCloses (
             DailyCloseGuid TEXT PRIMARY KEY,
             StoreCode TEXT NOT NULL,
@@ -535,6 +573,18 @@ public sealed class LocalSchemaService(LocalSqliteStore store) : ILocalSchemaSer
         """
         CREATE INDEX IF NOT EXISTS IX_LocalOrders_Store_Device_SoldAt
         ON LocalOrders (StoreCode, DeviceCode, SoldAt);
+        """,
+        """
+        CREATE UNIQUE INDEX IF NOT EXISTS UX_LocalOrderInstallments_InstallmentGuid
+        ON LocalOrderInstallments (InstallmentGuid);
+        """,
+        """
+        CREATE INDEX IF NOT EXISTS IX_LocalOrderInstallments_Store_Status_CreatedAt
+        ON LocalOrderInstallments (StoreCode, Status, CreatedAt DESC);
+        """,
+        """
+        CREATE UNIQUE INDEX IF NOT EXISTS UX_LocalOrderInstallments_InstallmentNumber
+        ON LocalOrderInstallments (InstallmentNumber);
         """,
         """
         CREATE INDEX IF NOT EXISTS IX_LocalDailyCloses_Store_Device_BusinessDate_SavedAt

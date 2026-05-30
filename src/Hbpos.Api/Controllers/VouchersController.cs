@@ -63,7 +63,7 @@ public sealed class VouchersController(IStoreVoucherService voucherService) : Co
             return BadRequest(ApiResult<StoreVoucherLockResponse>.Fail("REQUESTED_AMOUNT_INVALID", "requestedAmount must be greater than zero"));
         }
 
-        if (!this.IsDeviceScopeAllowed(request.StoreCode))
+        if (!this.IsDeviceScopeAllowed(request.StoreCode!))
         {
             return DeviceAuthorizationExtensions.DeviceScopeForbidden<StoreVoucherLockResponse>("Device is not authorized for this store.");
         }
@@ -90,6 +90,11 @@ public sealed class VouchersController(IStoreVoucherService voucherService) : Co
             return BadRequest(ApiResult<StoreVoucherIssueRefundResponse>.Fail("STORE_CODE_REQUIRED", "storeCode is required"));
         }
 
+        if (string.IsNullOrWhiteSpace(request.StoreCode))
+        {
+            return BadRequest(ApiResult<StoreVoucherIssueResponse>.Fail("STORE_CODE_REQUIRED", "storeCode is required"));
+        }
+
         if (request.Amount <= 0)
         {
             return BadRequest(ApiResult<StoreVoucherIssueRefundResponse>.Fail("AMOUNT_INVALID", "amount must be greater than zero"));
@@ -105,7 +110,7 @@ public sealed class VouchersController(IStoreVoucherService voucherService) : Co
             return BadRequest(ApiResult<StoreVoucherIssueRefundResponse>.Fail("IDEMPOTENCY_KEY_REQUIRED", "idempotencyKey is required"));
         }
 
-        if (!this.IsDeviceScopeAllowed(request.StoreCode))
+        if (!this.IsDeviceScopeAllowed(request.StoreCode!))
         {
             return DeviceAuthorizationExtensions.DeviceScopeForbidden<StoreVoucherIssueRefundResponse>("Device is not authorized for this store.");
         }
@@ -118,6 +123,48 @@ public sealed class VouchersController(IStoreVoucherService voucherService) : Co
         catch (InvalidOperationException ex)
         {
             return BadRequest(ApiResult<StoreVoucherIssueRefundResponse>.Fail("VOUCHER_REFUND_INVALID", ex.Message));
+        }
+    }
+
+    [Authorize]
+    [HttpPost("issue")]
+    public async Task<ActionResult<ApiResult<StoreVoucherIssueResponse>>> Issue(
+        [FromBody] StoreVoucherIssueRequest request,
+        CancellationToken cancellationToken)
+    {
+        if (string.IsNullOrWhiteSpace(request.StoreCode))
+        {
+            return BadRequest(ApiResult<StoreVoucherIssueResponse>.Fail("STORE_CODE_REQUIRED", "storeCode is required"));
+        }
+
+        if (request.Amount <= 0)
+        {
+            return BadRequest(ApiResult<StoreVoucherIssueResponse>.Fail("AMOUNT_INVALID", "amount must be greater than zero"));
+        }
+
+        if (string.IsNullOrWhiteSpace(request.CashierId))
+        {
+            return BadRequest(ApiResult<StoreVoucherIssueResponse>.Fail("CASHIER_ID_REQUIRED", "cashierId is required"));
+        }
+
+        if (string.IsNullOrWhiteSpace(request.IdempotencyKey))
+        {
+            return BadRequest(ApiResult<StoreVoucherIssueResponse>.Fail("IDEMPOTENCY_KEY_REQUIRED", "idempotencyKey is required"));
+        }
+
+        if (!this.IsDeviceScopeAllowed(request.StoreCode!))
+        {
+            return DeviceAuthorizationExtensions.DeviceScopeForbidden<StoreVoucherIssueResponse>("Device is not authorized for this store.");
+        }
+
+        try
+        {
+            var response = await voucherService.IssueAsync(request, cancellationToken);
+            return Ok(ApiResult<StoreVoucherIssueResponse>.Ok(response));
+        }
+        catch (InvalidOperationException ex)
+        {
+            return BadRequest(ApiResult<StoreVoucherIssueResponse>.Fail("VOUCHER_ISSUE_INVALID", ex.Message));
         }
     }
 }

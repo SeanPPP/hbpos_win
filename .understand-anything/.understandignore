@@ -1,0 +1,12 @@
+# Understand Anything ignore file
+# Generated for hbpos_win analysis.
+**/.understand-anything/**
+**/bin/**
+**/obj/**
+**/.vs/**
+**/.git/**
+**/.codex/**
+**/.superpowers/**
+**/TestResults/**
+**/.tmp/**
+**/artifacts/**

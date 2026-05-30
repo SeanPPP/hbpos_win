@@ -1,0 +1,36 @@
+{
+  "project": {
+    "name": "hbpos_win",
+    "languages": [
+      "csharp",
+      "csproj",
+      "dll",
+      "http",
+      "json",
+      "markdown",
+      "resx",
+      "slnx",
+      "xaml"
+    ],
+    "frameworks": [
+      "ASP.NET Core",
+      "WPF",
+      "SqlSugar",
+      ".NET 8",
+      "xUnit"
+    ],
+    "description": "HBPOS Windows 收银系统，包含 ASP.NET Core API、WPF 客户端、共享契约以及自动化测试。",
+    "analyzedAt": "2026-05-28T08:54:57.854Z",
+    "gitCommitHash": "c73d0e474d9e513aee04c682ac4b61c5f98849c3"
+  },
+  "totalFiles": 235,
+  "review": {
+    "stats": {
+      "totalNodes": 2250,
+      "totalEdges": 2015,
+      "totalLayers": 6,
+      "tourSteps": 6
+    }
+  },
+  "note": "已修复中文编码问题，浏览器刷新后应不再显示问号乱码。"
+}

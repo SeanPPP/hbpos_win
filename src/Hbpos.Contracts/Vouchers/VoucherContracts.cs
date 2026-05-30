@@ -42,3 +42,21 @@ public sealed record StoreVoucherIssueRefundResponse(
     decimal RemainingAmount,
     string Status,
     DateTimeOffset ExpiredAt);
+
+public sealed record StoreVoucherIssueRequest(
+    string? StoreCode,
+    decimal Amount,
+    string CashierId,
+    string IdempotencyKey,
+    DateTimeOffset? ExpiredAt = null,
+    string? CustomerCode = null,
+    string? Reason = null);
+
+public sealed record StoreVoucherIssueResponse(
+    string VoucherCode,
+    decimal Amount,
+    decimal RemainingAmount,
+    string Status,
+    DateTimeOffset ExpiredAt,
+    string? StoreCode,
+    string? CustomerCode);
