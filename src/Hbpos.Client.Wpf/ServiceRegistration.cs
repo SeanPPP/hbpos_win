@@ -54,6 +54,12 @@ public static class ServiceRegistration
             client.BaseAddress = GetApiBaseAddress();
             client.Timeout = TimeSpan.FromSeconds(3);
         });
+        services.AddHttpClient<IAdvertisementApiClient, AdvertisementApiClient>(client =>
+        {
+            client.BaseAddress = GetApiBaseAddress();
+            client.Timeout = TimeSpan.FromSeconds(5);
+        })
+        .AddHttpMessageHandler<DeviceAuthorizationMessageHandler>();
         services.AddHttpClient<IOrderHistoryApiClient, OrderHistoryApiClient>(client =>
         {
             client.BaseAddress = GetApiBaseAddress();

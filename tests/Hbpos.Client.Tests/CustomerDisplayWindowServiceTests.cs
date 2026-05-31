@@ -36,7 +36,7 @@ public sealed class CustomerDisplayWindowServiceTests
     public void Prewarm_loads_cart_into_view_model_and_calls_window_service_once()
     {
         var windowService = new FakeCustomerDisplayWindowService();
-        var orchestrator = new CustomerDisplayOrchestrator(windowService);
+        var orchestrator = new CustomerDisplayOrchestrator(windowService, new FakeAdvertisementApiClient());
         var customerDisplay = new CustomerDisplayViewModel();
         var session = CreateSession();
         var cart = new PosCartService();
@@ -65,7 +65,7 @@ public sealed class CustomerDisplayWindowServiceTests
         {
             NextSetModeResult = expected
         };
-        var orchestrator = new CustomerDisplayOrchestrator(windowService);
+        var orchestrator = new CustomerDisplayOrchestrator(windowService, new FakeAdvertisementApiClient());
         var customerDisplay = new CustomerDisplayViewModel();
         var session = CreateSession();
         var cart = new PosCartService();
@@ -165,6 +165,20 @@ public sealed class CustomerDisplayWindowServiceTests
             LastRequestedMode = mode;
             Mode = NextSetModeResult.Mode;
             return NextSetModeResult;
+        }
+    }
+
+    private sealed class FakeAdvertisementApiClient : IAdvertisementApiClient
+    {
+        public Task<Hbpos.Contracts.Advertisements.AdvertisementPlaybackResponse> GetActiveAsync(
+            string storeCode,
+            int take = 20,
+            CancellationToken cancellationToken = default)
+        {
+            return Task.FromResult(new Hbpos.Contracts.Advertisements.AdvertisementPlaybackResponse(
+                storeCode,
+                DateTimeOffset.UtcNow,
+                []));
         }
     }
 }

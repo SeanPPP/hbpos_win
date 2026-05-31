@@ -44,7 +44,7 @@
     <Grid Margin="18">
         <Grid.RowDefinitions>
             <RowDefinition Height="*" />
-            <RowDefinition Height="132" />
+            <RowDefinition x:Name="SummaryRow" Height="132" />
         </Grid.RowDefinitions>
 
         <Grid x:Name="ContentGrid" Grid.Row="0" SizeChanged="ContentGrid_SizeChanged">
@@ -127,6 +127,20 @@
 
             <Border x:Name="PromotionPanel" Grid.Row="1" Grid.Column="1" Margin="18,0,0,0" CornerRadius="18" Background="#243B2E" ClipToBounds="True">
                 <Grid>
+                    <Rectangle Fill="#243B2E" />
+                    <Image x:Name="AdvertisementImage"
+                           Stretch="UniformToFill"
+                           Visibility="Collapsed"
+                           ImageFailed="AdvertisementImage_ImageFailed" />
+                    <MediaElement x:Name="AdvertisementVideo"
+                                  Stretch="UniformToFill"
+                                  LoadedBehavior="Manual"
+                                  UnloadedBehavior="Manual"
+                                  IsMuted="True"
+                                  Volume="0"
+                                  Visibility="Collapsed"
+                                  MediaEnded="AdvertisementVideo_MediaEnded"
+                                  MediaFailed="AdvertisementVideo_MediaFailed" />
                     <Rectangle>
                         <Rectangle.Fill>
                             <LinearGradientBrush StartPoint="0,0" EndPoint="1,1">
@@ -140,8 +154,32 @@
                         <Border Background="{StaticResource PosWarningBrush}" CornerRadius="6" Padding="10,5" HorizontalAlignment="Left">
                             <TextBlock Text="{loc:Loc customer.promotionTitle}" Foreground="#3A2400" FontSize="12" FontWeight="Black" />
                         </Border>
-                        <TextBlock x:Name="PromotionSubtitleText" Text="{loc:Loc customer.promotionSubtitle}" Margin="0,18,0,8" Foreground="White" FontSize="34" FontWeight="Black" TextWrapping="Wrap" />
-                        <TextBlock x:Name="PromotionBodyText" Text="{loc:Loc customer.promotionBody}" Foreground="#FFF2F4F7" FontSize="16" TextWrapping="Wrap" />
+                        <TextBlock x:Name="PromotionSubtitleText"
+                                   Text="{Binding CurrentAdvertisementTitle}"
+                                   Margin="0,18,0,8"
+                                   Foreground="White"
+                                   FontSize="34"
+                                   FontWeight="Black"
+                                   TextWrapping="Wrap"
+                                   Visibility="Collapsed" />
+                        <TextBlock x:Name="PromotionBodyText"
+                                   Text="{Binding CurrentAdvertisementDescription}"
+                                   Foreground="#FFF2F4F7"
+                                   FontSize="16"
+                                   TextWrapping="Wrap"
+                                   Visibility="Collapsed" />
+                        <TextBlock x:Name="PromotionFallbackSubtitleText"
+                                   Text="{loc:Loc customer.promotionSubtitle}"
+                                   Margin="0,18,0,8"
+                                   Foreground="White"
+                                   FontSize="34"
+                                   FontWeight="Black"
+                                   TextWrapping="Wrap" />
+                        <TextBlock x:Name="PromotionFallbackBodyText"
+                                   Text="{loc:Loc customer.promotionBody}"
+                                   Foreground="#FFF2F4F7"
+                                   FontSize="16"
+                                   TextWrapping="Wrap" />
                     </StackPanel>
                     <Border HorizontalAlignment="Right" VerticalAlignment="Bottom" Margin="0,0,28,28" Background="#33000000" CornerRadius="16" Padding="16,12">
                         <StackPanel Orientation="Horizontal">
@@ -153,7 +191,7 @@
             </Border>
         </Grid>
 
-        <Grid Grid.Row="1" Margin="0,20,0,0">
+        <Grid x:Name="SummaryPanel" Grid.Row="1" Margin="0,20,0,0">
             <Grid.ColumnDefinitions>
                 <ColumnDefinition Width="*" />
                 <ColumnDefinition Width="Auto" />
