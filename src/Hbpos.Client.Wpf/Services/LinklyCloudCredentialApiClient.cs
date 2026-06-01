@@ -7,7 +7,9 @@ namespace Hbpos.Client.Wpf.Services;
 
 public interface ILinklyCloudCredentialApiClient
 {
-    Task<LinklyCloudCredentialResponse> GetCredentialAsync(CancellationToken cancellationToken = default);
+    Task<LinklyCloudCredentialResponse> GetCredentialAsync(
+        CardTerminalEnvironment environment,
+        CancellationToken cancellationToken = default);
 }
 
 public sealed class LinklyCloudCredentialApiClient(HttpClient httpClient) : ILinklyCloudCredentialApiClient
@@ -17,12 +19,16 @@ public sealed class LinklyCloudCredentialApiClient(HttpClient httpClient) : ILin
         PropertyNameCaseInsensitive = true
     };
 
-    public async Task<LinklyCloudCredentialResponse> GetCredentialAsync(CancellationToken cancellationToken = default)
+    public async Task<LinklyCloudCredentialResponse> GetCredentialAsync(
+        CardTerminalEnvironment environment,
+        CancellationToken cancellationToken = default)
     {
-        Log("backend credential request start");
-        using var response = await httpClient.GetAsync("api/v1/linkly/cloud-credential", cancellationToken);
+        Log($"backend credential request start environment={environment}");
+        using var response = await httpClient.GetAsync(
+            $"api/v1/linkly/cloud-credential?environment={Uri.EscapeDataString(environment.ToString())}",
+            cancellationToken);
         var content = await response.Content.ReadAsStringAsync(cancellationToken);
-        Log($"backend credential response http={(int)response.StatusCode}");
+        Log($"backend credential response environment={environment} http={(int)response.StatusCode}");
         ApiResult<LinklyCloudCredentialResponse>? result = null;
         if (!string.IsNullOrWhiteSpace(content))
         {
@@ -32,7 +38,7 @@ public sealed class LinklyCloudCredentialApiClient(HttpClient httpClient) : ILin
             }
             catch (JsonException ex)
             {
-                Log($"backend credential response invalid-json http={(int)response.StatusCode}");
+                Log($"backend credential response invalid-json environment={environment} http={(int)response.StatusCode}");
                 throw new CatalogApiException(
                     "Linkly credential API returned invalid JSON.",
                     response.StatusCode,
@@ -43,7 +49,7 @@ public sealed class LinklyCloudCredentialApiClient(HttpClient httpClient) : ILin
 
         if (!response.IsSuccessStatusCode)
         {
-            Log($"backend credential request failed http={(int)response.StatusCode} errorCode={LogValue(result?.ErrorCode)}");
+            Log($"backend credential request failed environment={environment} http={(int)response.StatusCode} errorCode={LogValue(result?.ErrorCode)}");
             throw new CatalogApiException(
                 $"Linkly credential API request failed with HTTP {(int)response.StatusCode}.",
                 response.StatusCode,
@@ -52,13 +58,13 @@ public sealed class LinklyCloudCredentialApiClient(HttpClient httpClient) : ILin
 
         if (result is null)
         {
-            Log($"backend credential request failed http={(int)response.StatusCode} reason=empty-response");
+            Log($"backend credential request failed environment={environment} http={(int)response.StatusCode} reason=empty-response");
             throw new CatalogApiException("Linkly credential API returned an empty response.", response.StatusCode);
         }
 
         if (!result.Success || result.Data is null)
         {
-            Log($"backend credential request failed http={(int)response.StatusCode} errorCode={LogValue(result.ErrorCode)}");
+            Log($"backend credential request failed environment={environment} http={(int)response.StatusCode} errorCode={LogValue(result.ErrorCode)}");
             throw new CatalogApiException(
                 "Linkly credential API returned a failure response.",
                 response.StatusCode,
@@ -68,11 +74,11 @@ public sealed class LinklyCloudCredentialApiClient(HttpClient httpClient) : ILin
         if (string.IsNullOrWhiteSpace(result.Data.Username) ||
             string.IsNullOrWhiteSpace(result.Data.Password))
         {
-            Log($"backend credential request failed http={(int)response.StatusCode} reason=incomplete-credentials store={LogValue(result.Data.StoreCode)}");
+            Log($"backend credential request failed environment={environment} http={(int)response.StatusCode} reason=incomplete-credentials store={LogValue(result.Data.StoreCode)}");
             throw new CatalogApiException("Linkly credential API returned incomplete credentials.", response.StatusCode);
         }
 
-        Log($"backend credential request succeeded store={LogValue(result.Data.StoreCode)} updatedAt={result.Data.UpdatedAt:O}");
+        Log($"backend credential request succeeded environment={environment} store={LogValue(result.Data.StoreCode)} credentialEnvironment={LogValue(result.Data.Environment)} updatedAt={result.Data.UpdatedAt:O}");
         return result.Data;
     }
 

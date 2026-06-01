@@ -2298,12 +2298,37 @@ public sealed class MainViewModelScannerTests
         public Task<LinklyConnectionTestResult> PairLinklyCloudAsync(
             CardTerminalEnvironment environment,
             string pairCode,
+            string? username,
+            string? password,
             CancellationToken cancellationToken = default)
         {
             return Task.FromResult(new LinklyConnectionTestResult(false, "not tested"));
         }
 
+        public Task<LinklyCloudCredentialSettings> LoadLinklyCloudCredentialAsync(
+            CardTerminalEnvironment environment,
+            CancellationToken cancellationToken = default)
+        {
+            return Task.FromResult(new LinklyCloudCredentialSettings(null, null, false));
+        }
+
+        public Task SaveLinklyCloudCredentialAsync(
+            CardTerminalEnvironment environment,
+            string username,
+            string password,
+            CancellationToken cancellationToken = default)
+        {
+            return Task.CompletedTask;
+        }
+
         public Task<LinklyConnectionTestResult> TestLinklyCloudConnectionAsync(
+            CardTerminalEnvironment environment,
+            CancellationToken cancellationToken = default)
+        {
+            return Task.FromResult(new LinklyConnectionTestResult(false, "not tested"));
+        }
+
+        public Task<LinklyConnectionTestResult> TestLinklyCloudBackendConnectionAsync(
             CardTerminalEnvironment environment,
             CancellationToken cancellationToken = default)
         {

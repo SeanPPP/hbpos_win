@@ -15,7 +15,7 @@ builder.Services
         DeviceAuthConstants.Scheme,
         options => { });
 builder.Services.AddAuthorization();
-builder.Services.AddHbposApiServices();
+builder.Services.AddHbposApiServices(builder.Configuration);
 
 var app = builder.Build();
 
@@ -23,6 +23,13 @@ using (var scope = app.Services.CreateScope())
 {
     var linklyCloudCredentialSchemaInitializer = scope.ServiceProvider.GetRequiredService<ILinklyCloudCredentialSchemaInitializer>();
     await linklyCloudCredentialSchemaInitializer.InitializeAsync();
+
+    // WebApplicationFactory 测试会替换特定 initializer；没有 POSM 连接串时避免新表初始化触发真实数据库依赖。
+    if (HasConnectionString(app.Configuration, "PosmConnection", "HBPOSMConnection"))
+    {
+        var linklyCloudBackendAsyncSchemaInitializer = scope.ServiceProvider.GetRequiredService<ILinklyCloudBackendAsyncSchemaInitializer>();
+        await linklyCloudBackendAsyncSchemaInitializer.InitializeAsync();
+    }
 
     var squareTokenSchemaInitializer = scope.ServiceProvider.GetRequiredService<ISquareTokenSchemaInitializer>();
     await squareTokenSchemaInitializer.InitializeAsync();
@@ -44,3 +51,9 @@ app.UseAuthorization();
 app.MapControllers();
 
 app.Run();
+
+static bool HasConnectionString(IConfiguration configuration, string primaryName, string fallbackName)
+{
+    return !string.IsNullOrWhiteSpace(configuration.GetConnectionString(primaryName)) ||
+        !string.IsNullOrWhiteSpace(configuration.GetConnectionString(fallbackName));
+}

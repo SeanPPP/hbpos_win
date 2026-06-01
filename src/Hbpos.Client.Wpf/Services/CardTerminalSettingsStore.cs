@@ -11,6 +11,8 @@ public sealed class CardTerminalSettingsStore(
     private const string LinklyPortKey = "CardTerminal:LinklyPort";
     private const string LinklyConnectionModeKey = "CardTerminal:LinklyConnectionMode";
     private const string LinklyCloudSecretKeyPrefix = "CardTerminal:LinklyCloudSecretProtected:";
+    private const string LinklyCloudUsernameKeyPrefix = "CardTerminal:LinklyCloudUsername:";
+    private const string LinklyCloudPasswordKeyPrefix = "CardTerminal:LinklyCloudPasswordProtected:";
     private const string LinklyCloudPosIdKeyPrefix = "CardTerminal:LinklyCloudPosId:";
     private const string LegacySquareTokenKey = "CardTerminal:SquareAccessTokenProtected";
     private const string SquareTokenKeyPrefix = "CardTerminal:SquareAccessTokenProtected:";
@@ -71,7 +73,10 @@ public sealed class CardTerminalSettingsStore(
         await settingsRepository.SetValueAsync(EnvironmentKey, configuration.Environment.ToString(), cancellationToken);
         await settingsRepository.SetValueAsync(LinklyHostKey, NormalizeText(configuration.LinklyHost, CardTerminalConfiguration.Default.LinklyHost), cancellationToken);
         await settingsRepository.SetValueAsync(LinklyPortKey, NormalizePort(configuration.LinklyPort).ToString(), cancellationToken);
-        await settingsRepository.SetValueAsync(LinklyConnectionModeKey, configuration.LinklyConnectionMode.ToString(), cancellationToken);
+        await settingsRepository.SetValueAsync(
+            LinklyConnectionModeKey,
+            CardTerminalSettings.FormatLinklyConnectionMode(configuration.LinklyConnectionMode),
+            cancellationToken);
         await settingsRepository.SetValueAsync(SquareLocationIdKey, configuration.SquareLocationId?.Trim() ?? string.Empty, cancellationToken);
         await settingsRepository.SetValueAsync(SquareDeviceIdKey, configuration.SquareDeviceId?.Trim() ?? string.Empty, cancellationToken);
         await settingsRepository.SetValueAsync(TimeoutSecondsKey, NormalizeTimeoutSeconds(configuration.TerminalTimeoutSeconds).ToString(), cancellationToken);
@@ -174,22 +179,90 @@ public sealed class CardTerminalSettingsStore(
     }
 
     public async Task<string> GetOrCreateLinklyCloudPosIdAsync(
+        CardTerminalEnvironment environment,
         string storeCode,
         string deviceCode,
         CancellationToken cancellationToken = default)
     {
-        var key = GetLinklyCloudPosIdKey(storeCode, deviceCode);
+        var key = GetLinklyCloudPosIdKey(environment, storeCode, deviceCode);
         var existing = await settingsRepository.GetValueAsync(key, cancellationToken);
         if (IsUuidV4(existing))
         {
-            LogLinklyCloud($"posId reused store={LogValue(storeCode)} device={LogValue(deviceCode)} posId={ShortId(existing)}");
+            LogLinklyCloud($"posId reused environment={environment} store={LogValue(storeCode)} device={LogValue(deviceCode)} posId={ShortId(existing)}");
             return existing!.Trim();
+        }
+
+        // 仅生产环境兼容旧版无环境 key，读取成功后立即写入新 key，避免沙箱误用生产 POS ID。
+        if (environment == CardTerminalEnvironment.Production)
+        {
+            var legacyKey = GetLegacyLinklyCloudPosIdKey(storeCode, deviceCode);
+            var legacy = await settingsRepository.GetValueAsync(legacyKey, cancellationToken);
+            if (IsUuidV4(legacy))
+            {
+                var migrated = legacy!.Trim();
+                await settingsRepository.SetValueAsync(key, migrated, cancellationToken);
+                LogLinklyCloud($"posId migrated environment={environment} store={LogValue(storeCode)} device={LogValue(deviceCode)} posId={ShortId(migrated)}");
+                return migrated;
+            }
         }
 
         var posId = Guid.NewGuid().ToString("D");
         await settingsRepository.SetValueAsync(key, posId, cancellationToken);
-        LogLinklyCloud($"posId generated store={LogValue(storeCode)} device={LogValue(deviceCode)} posId={ShortId(posId)} replacedInvalid={!string.IsNullOrWhiteSpace(existing)}");
+        LogLinklyCloud($"posId generated environment={environment} store={LogValue(storeCode)} device={LogValue(deviceCode)} posId={ShortId(posId)} replacedInvalid={!string.IsNullOrWhiteSpace(existing)}");
         return posId;
+    }
+
+    public async Task<LinklyCloudCredentialSettings> GetLinklyCloudCredentialAsync(
+        CardTerminalEnvironment environment,
+        CancellationToken cancellationToken = default)
+    {
+        var username = NormalizeOptional(await settingsRepository.GetValueAsync(
+            GetLinklyCloudUsernameKey(environment),
+            cancellationToken));
+        var protectedPassword = await settingsRepository.GetValueAsync(
+            GetLinklyCloudPasswordKey(environment),
+            cancellationToken);
+        var password = string.IsNullOrWhiteSpace(protectedPassword)
+            ? null
+            : protector.Unprotect(protectedPassword);
+
+        return new LinklyCloudCredentialSettings(
+            username,
+            password,
+            !string.IsNullOrWhiteSpace(protectedPassword));
+    }
+
+    public async Task SaveLinklyCloudCredentialAsync(
+        CardTerminalEnvironment environment,
+        string username,
+        string password,
+        CancellationToken cancellationToken = default)
+    {
+        if (string.IsNullOrWhiteSpace(username))
+        {
+            throw new InvalidOperationException("Linkly Cloud username is required.");
+        }
+
+        if (string.IsNullOrWhiteSpace(password))
+        {
+            throw new InvalidOperationException("Linkly Cloud password is required.");
+        }
+
+        var protectedPassword = protector.Protect(password.Trim());
+        if (string.IsNullOrWhiteSpace(protectedPassword))
+        {
+            throw new InvalidOperationException("Linkly Cloud password could not be protected.");
+        }
+
+        await settingsRepository.SetValueAsync(
+            GetLinklyCloudUsernameKey(environment),
+            username.Trim(),
+            cancellationToken);
+        await settingsRepository.SetValueAsync(
+            GetLinklyCloudPasswordKey(environment),
+            protectedPassword,
+            cancellationToken);
+        LogLinklyCloud($"protected cloud api credential saved environment={environment} hasUsername=true");
     }
 
     private async Task<string?> ReadLocalSquareAccessTokenAsync(
@@ -251,7 +324,25 @@ public sealed class CardTerminalSettingsStore(
         return $"{LinklyCloudSecretKeyPrefix}{environment}";
     }
 
-    private static string GetLinklyCloudPosIdKey(string storeCode, string deviceCode)
+    private static string GetLinklyCloudUsernameKey(CardTerminalEnvironment environment)
+    {
+        return $"{LinklyCloudUsernameKeyPrefix}{environment}";
+    }
+
+    private static string GetLinklyCloudPasswordKey(CardTerminalEnvironment environment)
+    {
+        return $"{LinklyCloudPasswordKeyPrefix}{environment}";
+    }
+
+    private static string GetLinklyCloudPosIdKey(
+        CardTerminalEnvironment environment,
+        string storeCode,
+        string deviceCode)
+    {
+        return $"{LinklyCloudPosIdKeyPrefix}{environment}:{NormalizeKeyPart(storeCode)}:{NormalizeKeyPart(deviceCode)}";
+    }
+
+    private static string GetLegacyLinklyCloudPosIdKey(string storeCode, string deviceCode)
     {
         return $"{LinklyCloudPosIdKeyPrefix}{NormalizeKeyPart(storeCode)}:{NormalizeKeyPart(deviceCode)}";
     }
@@ -273,17 +364,15 @@ public sealed class CardTerminalSettingsStore(
             configuration.SquareDeviceId,
             CardTerminalSettings.GetSquareApiBaseUrl(configuration.Environment),
             TimeSpan.FromSeconds(NormalizeTimeoutSeconds(configuration.TerminalTimeoutSeconds)),
-            configuration.LinklyConnectionMode,
+            CardTerminalSettings.NormalizeLinklyConnectionMode(configuration.LinklyConnectionMode),
             linklyCloudSecret,
-            ResolveBaseUrlFromEnvironment(
-                "HBPOS_LINKLY_CLOUD_AUTH_BASE_URL",
-                CardTerminalSettings.GetLinklyCloudAuthBaseUrl(configuration.Environment)),
-            ResolveBaseUrlFromEnvironment(
-                "HBPOS_LINKLY_CLOUD_REST_BASE_URL",
-                CardTerminalSettings.GetLinklyCloudRestBaseUrl(configuration.Environment)),
+            CardTerminalSettings.ResolveLinklyCloudAuthBaseUrl(configuration.Environment),
+            CardTerminalSettings.ResolveLinklyCloudRestBaseUrl(configuration.Environment),
             environmentSettings.LinklyPosName,
             environmentSettings.LinklyPosVersion,
-            environmentSettings.LinklyPosVendorId);
+            CardTerminalSettings.ResolveLinklyPosVendorId(
+                configuration.Environment,
+                environmentSettings.LinklyPosVendorId));
     }
 
     private static CardProcessorKind ParseProcessor(string? value, CardProcessorKind fallback)
@@ -302,9 +391,7 @@ public sealed class CardTerminalSettingsStore(
 
     private static LinklyConnectionMode ParseLinklyConnectionMode(string? value, LinklyConnectionMode fallback)
     {
-        return Enum.TryParse<LinklyConnectionMode>(value, ignoreCase: true, out var mode)
-            ? mode
-            : fallback;
+        return CardTerminalSettings.NormalizeLinklyConnectionMode(value, fallback);
     }
 
     private static string NormalizeText(string? value, string? fallback)
@@ -312,16 +399,9 @@ public sealed class CardTerminalSettingsStore(
         return string.IsNullOrWhiteSpace(value) ? fallback ?? string.Empty : value.Trim();
     }
 
-    private static string ResolveBaseUrlFromEnvironment(string key, string fallback)
+    private static string? NormalizeOptional(string? value)
     {
-        var value = Environment.GetEnvironmentVariable(key);
-        return string.IsNullOrWhiteSpace(value) ? fallback : NormalizeBaseUrl(value);
-    }
-
-    private static string NormalizeBaseUrl(string value)
-    {
-        var trimmed = value.Trim();
-        return trimmed.EndsWith("/", StringComparison.Ordinal) ? trimmed : trimmed + "/";
+        return string.IsNullOrWhiteSpace(value) ? null : value.Trim();
     }
 
     private static int ParsePort(string? value, int fallback)

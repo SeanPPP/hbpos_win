@@ -34,6 +34,7 @@ public sealed class LinklyCloudTerminalClientTests
         Assert.True(result.Approved);
         Assert.Equal("ANZCLOUD:TXN-1:RFN-1", result.Reference);
         Assert.Equal("pos-id-1", apiClient.LastPosId);
+        Assert.Equal(CardTerminalEnvironment.Production, store.LastEnvironment);
         Assert.Equal("S01", store.LastStoreCode);
         Assert.Equal("TERM-1", store.LastDeviceCode);
         var transaction = Assert.Single(result.CardTransactions!);
@@ -70,6 +71,73 @@ public sealed class LinklyCloudTerminalClientTests
 
         Assert.False(result.Approved);
         Assert.Equal("Linkly Cloud pairing is invalid. Pair the terminal again.", result.Message);
+    }
+
+    [Fact]
+    public async Task PurchaseAsync_rejects_mismatched_endpoint_before_token_request()
+    {
+        var apiClient = new FakeLinklyCloudApiClient();
+        var client = new LinklyCloudTerminalClient(
+            apiClient,
+            new FakeLinklyCloudSecretStore());
+
+        var result = await client.PurchaseAsync(10m, CreateSession(), CreateSettings() with
+        {
+            Environment = CardTerminalEnvironment.Production,
+            LinklyCloudAuthBaseUrl = CardTerminalSettings.GetLinklyCloudAuthBaseUrl(CardTerminalEnvironment.Sandbox)
+        });
+
+        Assert.False(result.Approved);
+        Assert.Equal(
+            "Linkly Cloud Auth endpoint does not match the selected Production environment. Update the configured host and try again.",
+            result.Message);
+        Assert.Equal(0, apiClient.TokenCallCount);
+    }
+
+    [Fact]
+    public async Task TestConnectionAsync_sends_logon_and_fails_when_logon_is_declined()
+    {
+        var apiClient = new FakeLinklyCloudApiClient
+        {
+            LogonResult = new LinklyCloudLogonResult(
+                false,
+                "TF",
+                "LOGON FAILED",
+                "CAT-1",
+                "CA-1",
+                "1.0")
+        };
+        var client = new LinklyCloudTerminalClient(
+            apiClient,
+            new FakeLinklyCloudSecretStore());
+
+        var result = await client.TestConnectionAsync(CreateSettings(), "S01", "TERM-1");
+
+        Assert.False(result.Succeeded);
+        Assert.Equal("LOGON FAILED (TF)", result.Message);
+    }
+
+    [Fact]
+    public async Task TestConnectionAsync_succeeds_when_logon_is_successful()
+    {
+        var apiClient = new FakeLinklyCloudApiClient
+        {
+            LogonResult = new LinklyCloudLogonResult(
+                true,
+                "00",
+                "APPROVED",
+                "CAT-1",
+                "CA-1",
+                "1.0")
+        };
+        var client = new LinklyCloudTerminalClient(
+            apiClient,
+            new FakeLinklyCloudSecretStore());
+
+        var result = await client.TestConnectionAsync(CreateSettings(), "S01", "TERM-1");
+
+        Assert.True(result.Succeeded);
+        Assert.Equal("APPROVED (00)", result.Message);
     }
 
     [Fact]
@@ -197,6 +265,8 @@ public sealed class LinklyCloudTerminalClientTests
 
         public string? LastDeviceCode { get; private set; }
 
+        public CardTerminalEnvironment? LastEnvironment { get; private set; }
+
         public Task<string?> GetLinklyCloudSecretAsync(
             CardTerminalEnvironment environment,
             CancellationToken cancellationToken = default)
@@ -212,11 +282,29 @@ public sealed class LinklyCloudTerminalClientTests
             return Task.CompletedTask;
         }
 
+        public Task<LinklyCloudCredentialSettings> GetLinklyCloudCredentialAsync(
+            CardTerminalEnvironment environment,
+            CancellationToken cancellationToken = default)
+        {
+            return Task.FromResult(new LinklyCloudCredentialSettings(null, null, false));
+        }
+
+        public Task SaveLinklyCloudCredentialAsync(
+            CardTerminalEnvironment environment,
+            string username,
+            string password,
+            CancellationToken cancellationToken = default)
+        {
+            return Task.CompletedTask;
+        }
+
         public Task<string> GetOrCreateLinklyCloudPosIdAsync(
+            CardTerminalEnvironment environment,
             string storeCode,
             string deviceCode,
             CancellationToken cancellationToken = default)
         {
+            LastEnvironment = environment;
             LastStoreCode = storeCode;
             LastDeviceCode = deviceCode;
             return Task.FromResult("pos-id-1");
@@ -238,6 +326,9 @@ public sealed class LinklyCloudTerminalClientTests
         public Queue<LinklyCloudTransactionResult> TransactionResultSequence { get; } = [];
 
         public Queue<object> TransactionStatusSequence { get; } = [];
+
+        public LinklyCloudLogonResult LogonResult { get; init; } =
+            new(true, "00", null, "CAT-1", "CA-1", "1.0");
 
         public LinklyCloudTransactionResult TransactionResult { get; init; } =
             new("session-1", false, null, null, null, null, null, null, "05", "DECLINED", null, null, null);
@@ -273,6 +364,14 @@ public sealed class LinklyCloudTerminalClientTests
             CancellationToken cancellationToken = default)
         {
             throw new NotSupportedException();
+        }
+
+        public Task<LinklyCloudLogonResult> SendLogonAsync(
+            CardTerminalSettings settings,
+            string token,
+            CancellationToken cancellationToken = default)
+        {
+            return Task.FromResult(LogonResult);
         }
 
         public Task<LinklyCloudTransactionResult> SendTransactionAsync(

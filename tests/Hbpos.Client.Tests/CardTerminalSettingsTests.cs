@@ -3,6 +3,13 @@ using Hbpos.Contracts.Square;
 
 namespace Hbpos.Client.Tests;
 
+[CollectionDefinition(Name, DisableParallelization = true)]
+public sealed class EnvironmentVariableTestCollection
+{
+    public const string Name = "EnvironmentVariableTests";
+}
+
+[Collection(EnvironmentVariableTestCollection.Name)]
 public sealed class CardTerminalSettingsTests
 {
     private const string EnvToken = "opaque-env-square-token";
@@ -35,11 +42,34 @@ public sealed class CardTerminalSettingsTests
         Assert.Equal(5444, settings.LinklyPort);
     }
 
+    [Theory]
+    [InlineData("Local", "LocalIp")]
+    [InlineData("LocalIp", "LocalIp")]
+    [InlineData("local_ip", "LocalIp")]
+    [InlineData("Cloud", "CloudDirectSync")]
+    [InlineData("CloudDirectSync", "CloudDirectSync")]
+    [InlineData("cloud-direct-sync", "CloudDirectSync")]
+    [InlineData("CloudBackendAsync", "CloudBackendAsync")]
+    [InlineData("cloud_backend_async", "CloudBackendAsync")]
+    public void FromEnvironment_reads_linkly_connection_mode_aliases(string configuredMode, string expectedMode)
+    {
+        using var variables = new EnvironmentVariableScope(new Dictionary<string, string?>
+        {
+            ["HBPOS_LINKLY_CONNECTION_MODE"] = configuredMode,
+            ["HBPOS_LINKLY_MODE"] = null
+        });
+
+        var settings = CardTerminalSettings.FromEnvironment();
+
+        Assert.Equal(LinklyMode(expectedMode), settings.LinklyConnectionMode);
+    }
+
     [Fact]
     public void FromEnvironment_reads_linkly_cloud_identity_defaults_and_vendor_id()
     {
         using var variables = new EnvironmentVariableScope(new Dictionary<string, string?>
         {
+            ["HBPOS_CARD_TERMINAL_ENVIRONMENT"] = null,
             ["HBPOS_LINKLY_POS_NAME"] = null,
             ["HBPOS_LINKLY_POS_VERSION"] = null,
             ["HBPOS_LINKLY_POS_VENDOR_ID"] = "a256b7ec-709d-4c7d-8ffe-57cc7ca1fd22"
@@ -50,6 +80,54 @@ public sealed class CardTerminalSettingsTests
         Assert.Equal("HotBargainPOS", settings.LinklyPosName);
         Assert.Equal("2026.5.1", settings.LinklyPosVersion);
         Assert.Equal("a256b7ec-709d-4c7d-8ffe-57cc7ca1fd22", settings.LinklyPosVendorId);
+    }
+
+    [Fact]
+    public void FromEnvironment_uses_sandbox_placeholder_vendor_id_when_missing()
+    {
+        using var variables = new EnvironmentVariableScope(new Dictionary<string, string?>
+        {
+            ["HBPOS_CARD_TERMINAL_ENVIRONMENT"] = "Sandbox",
+            ["HBPOS_LINKLY_POS_VENDOR_ID"] = null
+        });
+
+        var settings = CardTerminalSettings.FromEnvironment();
+
+        Assert.Equal(CardTerminalEnvironment.Sandbox, settings.Environment);
+        Assert.Equal(CardTerminalSettings.SandboxPlaceholderLinklyPosVendorId, settings.LinklyPosVendorId);
+    }
+
+    [Fact]
+    public void FromEnvironment_keeps_production_vendor_id_missing_when_not_configured()
+    {
+        using var variables = new EnvironmentVariableScope(new Dictionary<string, string?>
+        {
+            ["HBPOS_CARD_TERMINAL_ENVIRONMENT"] = "Production",
+            ["HBPOS_LINKLY_POS_VENDOR_ID"] = null
+        });
+
+        var settings = CardTerminalSettings.FromEnvironment();
+
+        Assert.Equal(CardTerminalEnvironment.Production, settings.Environment);
+        Assert.Null(settings.LinklyPosVendorId);
+    }
+
+    [Fact]
+    public void FromEnvironment_prefers_environment_specific_linkly_cloud_base_urls_over_legacy_global_variables()
+    {
+        using var variables = new EnvironmentVariableScope(new Dictionary<string, string?>
+        {
+            ["HBPOS_CARD_TERMINAL_ENVIRONMENT"] = "Sandbox",
+            ["HBPOS_LINKLY_CLOUD_AUTH_BASE_URL"] = "https://auth.global.example/v1",
+            ["HBPOS_LINKLY_CLOUD_AUTH_BASE_URL_SANDBOX"] = "https://auth.sandbox.example/v1",
+            ["HBPOS_LINKLY_CLOUD_REST_BASE_URL"] = "https://rest.global.example/v1",
+            ["HBPOS_LINKLY_CLOUD_REST_BASE_URL_SANDBOX"] = "https://rest.sandbox.example/v1"
+        });
+
+        var settings = CardTerminalSettings.FromEnvironment();
+
+        Assert.Equal("https://auth.sandbox.example/v1/", settings.LinklyCloudAuthBaseUrl);
+        Assert.Equal("https://rest.sandbox.example/v1/", settings.LinklyCloudRestBaseUrl);
     }
 
     [Fact]
@@ -235,19 +313,113 @@ public sealed class CardTerminalSettingsTests
     }
 
     [Fact]
+    public async Task SaveLinklyCloudCredentialAsync_protects_password_before_persisting()
+    {
+        const string username = "cloud-user";
+        const string password = "cloud-password";
+        var repository = new InMemorySettingsRepository();
+        var protector = new FakeAuthorizationProtector();
+        var store = new CardTerminalSettingsStore(repository, protector);
+
+        await store.SaveLinklyCloudCredentialAsync(CardTerminalEnvironment.Sandbox, $" {username} ", password);
+
+        Assert.Equal(username, repository.GetStoredValue("CardTerminal:LinklyCloudUsername:Sandbox"));
+        AssertSecretEquals(password, protector.LastProtectedValue, "Linkly Cloud API password should be passed to the protector");
+        Assert.Equal(Protect(password), repository.GetStoredValue("CardTerminal:LinklyCloudPasswordProtected:Sandbox"));
+        Assert.True(
+            !string.Equals(password, repository.GetStoredValue("CardTerminal:LinklyCloudPasswordProtected:Sandbox"), StringComparison.Ordinal),
+            "stored Linkly Cloud API password should not be plaintext");
+
+        var credential = await store.GetLinklyCloudCredentialAsync(CardTerminalEnvironment.Sandbox);
+        Assert.Equal(username, credential.Username);
+        AssertSecretEquals(password, credential.Password, "protected Linkly Cloud API password should be readable");
+        Assert.True(credential.HasProtectedPassword);
+    }
+
+    [Fact]
+    public async Task LinklyCloudCredentialAsync_keeps_environment_credentials_separate()
+    {
+        var repository = new InMemorySettingsRepository();
+        var store = new CardTerminalSettingsStore(repository, new FakeAuthorizationProtector());
+
+        await store.SaveLinklyCloudCredentialAsync(CardTerminalEnvironment.Production, "production-user", "production-password");
+        await store.SaveLinklyCloudCredentialAsync(CardTerminalEnvironment.Sandbox, "sandbox-user", "sandbox-password");
+
+        var production = await store.GetLinklyCloudCredentialAsync(CardTerminalEnvironment.Production);
+        var sandbox = await store.GetLinklyCloudCredentialAsync(CardTerminalEnvironment.Sandbox);
+
+        Assert.Equal("production-user", production.Username);
+        AssertSecretEquals("production-password", production.Password, "production password should be read from production key");
+        Assert.Equal("sandbox-user", sandbox.Username);
+        AssertSecretEquals("sandbox-password", sandbox.Password, "sandbox password should be read from sandbox key");
+    }
+
+    [Fact]
     public async Task GetOrCreateLinklyCloudPosIdAsync_reuses_uuid_v4_for_same_store_and_device()
     {
         var repository = new InMemorySettingsRepository();
         var store = new CardTerminalSettingsStore(repository, new FakeAuthorizationProtector());
 
-        var first = await store.GetOrCreateLinklyCloudPosIdAsync("S01", "TERM-1");
-        var second = await store.GetOrCreateLinklyCloudPosIdAsync("S01", "TERM-1");
-        var third = await store.GetOrCreateLinklyCloudPosIdAsync("S01", "TERM-2");
+        var first = await store.GetOrCreateLinklyCloudPosIdAsync(CardTerminalEnvironment.Production, "S01", "TERM-1");
+        var second = await store.GetOrCreateLinklyCloudPosIdAsync(CardTerminalEnvironment.Production, "S01", "TERM-1");
+        var third = await store.GetOrCreateLinklyCloudPosIdAsync(CardTerminalEnvironment.Production, "S01", "TERM-2");
 
         Assert.Equal(first, second);
         Assert.NotEqual(first, third);
         AssertUuidV4(first);
         AssertUuidV4(third);
+    }
+
+    [Fact]
+    public async Task GetOrCreateLinklyCloudPosIdAsync_migrates_legacy_key_for_production()
+    {
+        var legacyPosId = Guid.NewGuid().ToString("D");
+        var repository = new InMemorySettingsRepository(new Dictionary<string, string?>
+        {
+            [LegacyLinklyCloudPosIdKey("S01", "TERM-1")] = legacyPosId
+        });
+        var store = new CardTerminalSettingsStore(repository, new FakeAuthorizationProtector());
+
+        var posId = await store.GetOrCreateLinklyCloudPosIdAsync(CardTerminalEnvironment.Production, "S01", "TERM-1");
+
+        Assert.Equal(legacyPosId, posId);
+        Assert.Equal(legacyPosId, repository.GetStoredValue(LinklyCloudPosIdKey(CardTerminalEnvironment.Production, "S01", "TERM-1")));
+    }
+
+    [Fact]
+    public async Task GetOrCreateLinklyCloudPosIdAsync_does_not_reuse_legacy_key_for_sandbox()
+    {
+        var legacyPosId = Guid.NewGuid().ToString("D");
+        var repository = new InMemorySettingsRepository(new Dictionary<string, string?>
+        {
+            [LegacyLinklyCloudPosIdKey("S01", "TERM-1")] = legacyPosId
+        });
+        var store = new CardTerminalSettingsStore(repository, new FakeAuthorizationProtector());
+
+        var posId = await store.GetOrCreateLinklyCloudPosIdAsync(CardTerminalEnvironment.Sandbox, "S01", "TERM-1");
+
+        Assert.NotEqual(legacyPosId, posId);
+        AssertUuidV4(posId);
+        Assert.Equal(posId, repository.GetStoredValue(LinklyCloudPosIdKey(CardTerminalEnvironment.Sandbox, "S01", "TERM-1")));
+        Assert.Null(repository.GetStoredValue(LinklyCloudPosIdKey(CardTerminalEnvironment.Production, "S01", "TERM-1")));
+    }
+
+    [Fact]
+    public async Task GetOrCreateLinklyCloudPosIdAsync_keeps_environments_separate()
+    {
+        var repository = new InMemorySettingsRepository();
+        var store = new CardTerminalSettingsStore(repository, new FakeAuthorizationProtector());
+
+        var production = await store.GetOrCreateLinklyCloudPosIdAsync(CardTerminalEnvironment.Production, "S01", "TERM-1");
+        var sandbox = await store.GetOrCreateLinklyCloudPosIdAsync(CardTerminalEnvironment.Sandbox, "S01", "TERM-1");
+        var productionAgain = await store.GetOrCreateLinklyCloudPosIdAsync(CardTerminalEnvironment.Production, "S01", "TERM-1");
+        var sandboxAgain = await store.GetOrCreateLinklyCloudPosIdAsync(CardTerminalEnvironment.Sandbox, "S01", "TERM-1");
+
+        Assert.Equal(production, productionAgain);
+        Assert.Equal(sandbox, sandboxAgain);
+        Assert.NotEqual(production, sandbox);
+        Assert.Equal(production, repository.GetStoredValue(LinklyCloudPosIdKey(CardTerminalEnvironment.Production, "S01", "TERM-1")));
+        Assert.Equal(sandbox, repository.GetStoredValue(LinklyCloudPosIdKey(CardTerminalEnvironment.Sandbox, "S01", "TERM-1")));
     }
 
     [Fact]
@@ -326,6 +498,93 @@ public sealed class CardTerminalSettingsTests
         Assert.Equal("https://rest.example.test/v1/", settings.LinklyCloudRestBaseUrl);
     }
 
+    [Fact]
+    public async Task GetSettingsAsync_prefers_environment_specific_linkly_cloud_base_url_overrides()
+    {
+        using var variables = new EnvironmentVariableScope(new Dictionary<string, string?>
+        {
+            ["HBPOS_LINKLY_CLOUD_AUTH_BASE_URL"] = "https://auth.global.example/v1",
+            ["HBPOS_LINKLY_CLOUD_AUTH_BASE_URL_PRODUCTION"] = "https://auth.production.example/v1",
+            ["HBPOS_LINKLY_CLOUD_REST_BASE_URL"] = "https://rest.global.example/v1",
+            ["HBPOS_LINKLY_CLOUD_REST_BASE_URL_PRODUCTION"] = "https://rest.production.example/v1"
+        });
+        var repository = new InMemorySettingsRepository(new Dictionary<string, string?>
+        {
+            ["CardTerminal:Processor"] = nameof(CardProcessorKind.Linkly),
+            ["CardTerminal:Environment"] = nameof(CardTerminalEnvironment.Production),
+            ["CardTerminal:LinklyConnectionMode"] = nameof(LinklyConnectionMode.Cloud)
+        });
+        var store = new CardTerminalSettingsStore(repository, new FakeAuthorizationProtector());
+
+        var settings = await store.GetSettingsAsync();
+
+        Assert.Equal("https://auth.production.example/v1/", settings.LinklyCloudAuthBaseUrl);
+        Assert.Equal("https://rest.production.example/v1/", settings.LinklyCloudRestBaseUrl);
+    }
+
+    [Fact]
+    public async Task GetSettingsAsync_uses_sandbox_placeholder_vendor_id_for_saved_sandbox_environment()
+    {
+        using var variables = new EnvironmentVariableScope(new Dictionary<string, string?>
+        {
+            ["HBPOS_CARD_TERMINAL_ENVIRONMENT"] = "Production",
+            ["HBPOS_LINKLY_POS_VENDOR_ID"] = null
+        });
+        var repository = new InMemorySettingsRepository(new Dictionary<string, string?>
+        {
+            ["CardTerminal:Environment"] = nameof(CardTerminalEnvironment.Sandbox)
+        });
+        var store = new CardTerminalSettingsStore(repository, new FakeAuthorizationProtector());
+
+        var settings = await store.GetSettingsAsync();
+
+        Assert.Equal(CardTerminalEnvironment.Sandbox, settings.Environment);
+        Assert.Equal(CardTerminalSettings.SandboxPlaceholderLinklyPosVendorId, settings.LinklyPosVendorId);
+    }
+
+    [Theory]
+    [InlineData("Local", "LocalIp")]
+    [InlineData("LocalIp", "LocalIp")]
+    [InlineData("local_ip", "LocalIp")]
+    [InlineData("Cloud", "CloudDirectSync")]
+    [InlineData("CloudDirectSync", "CloudDirectSync")]
+    [InlineData("cloud-direct-sync", "CloudDirectSync")]
+    [InlineData("CloudBackendAsync", "CloudBackendAsync")]
+    [InlineData("cloud_backend_async", "CloudBackendAsync")]
+    public async Task LoadAsync_reads_linkly_connection_mode_aliases(string storedMode, string expectedMode)
+    {
+        var repository = new InMemorySettingsRepository(new Dictionary<string, string?>
+        {
+            ["CardTerminal:LinklyConnectionMode"] = storedMode
+        });
+        var store = new CardTerminalSettingsStore(repository, new FakeAuthorizationProtector());
+
+        var configuration = await store.LoadAsync();
+
+        Assert.Equal(LinklyMode(expectedMode), configuration.LinklyConnectionMode);
+    }
+
+    [Theory]
+    [InlineData("Local", "LocalIp")]
+    [InlineData("LocalIp", "LocalIp")]
+    [InlineData("Cloud", "CloudDirectSync")]
+    [InlineData("CloudDirectSync", "CloudDirectSync")]
+    [InlineData("CloudBackendAsync", "CloudBackendAsync")]
+    public async Task SaveAsync_persists_canonical_linkly_connection_mode_names(string configuredMode, string expectedStoredMode)
+    {
+        var repository = new InMemorySettingsRepository();
+        var store = new CardTerminalSettingsStore(repository, new FakeAuthorizationProtector());
+
+        await store.SaveAsync(
+            CardTerminalConfiguration.Default with
+            {
+                LinklyConnectionMode = LinklyMode(configuredMode)
+            },
+            squareAccessToken: null);
+
+        Assert.Equal(expectedStoredMode, repository.GetStoredValue("CardTerminal:LinklyConnectionMode"));
+    }
+
     private sealed class EnvironmentVariableScope : IDisposable
     {
         private readonly Dictionary<string, string?> _originalValues = new(StringComparer.OrdinalIgnoreCase);
@@ -356,6 +615,30 @@ public sealed class CardTerminalSettingsTests
     private static string TokenKey(CardTerminalEnvironment environment)
     {
         return $"CardTerminal:SquareAccessTokenProtected:{environment}";
+    }
+
+    private static string LinklyCloudPosIdKey(
+        CardTerminalEnvironment environment,
+        string storeCode,
+        string deviceCode)
+    {
+        return $"CardTerminal:LinklyCloudPosId:{environment}:{NormalizeKeyPart(storeCode)}:{NormalizeKeyPart(deviceCode)}";
+    }
+
+    private static string LegacyLinklyCloudPosIdKey(string storeCode, string deviceCode)
+    {
+        return $"CardTerminal:LinklyCloudPosId:{NormalizeKeyPart(storeCode)}:{NormalizeKeyPart(deviceCode)}";
+    }
+
+    private static LinklyConnectionMode LinklyMode(string value)
+    {
+        return Enum.Parse<LinklyConnectionMode>(value, ignoreCase: true);
+    }
+
+    private static string NormalizeKeyPart(string value)
+    {
+        var trimmed = string.IsNullOrWhiteSpace(value) ? "unknown" : value.Trim();
+        return string.Concat(trimmed.Select(ch => char.IsLetterOrDigit(ch) ? ch : '_'));
     }
 
     private static void AssertSecretEquals(string expected, string? actual, string safeMessage)

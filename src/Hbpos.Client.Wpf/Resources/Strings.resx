@@ -493,7 +493,9 @@
   <data name="main.suspendedRecalled" xml:space="preserve"><value>Suspended order recalled.</value></data>
   <data name="main.scannerBindingReset" xml:space="preserve"><value>Scanner binding reset. Trigger the scanner again to bind the current device.</value></data>
   <data name="settings.linklyCloud.unavailable" xml:space="preserve"><value>Linkly Cloud setup is unavailable.</value></data>
-  <data name="settings.linklyCloud.pairCodeRequired" xml:space="preserve"><value>Pair code is required.</value></data>
+  <data name="settings.linklyCloud.usernameRequired" xml:space="preserve"><value>Enter the Linkly Cloud API username first.</value></data>
+  <data name="settings.linklyCloud.passwordRequired" xml:space="preserve"><value>Enter the Linkly Cloud API password, or save it on this POS first.</value></data>
+  <data name="settings.linklyCloud.pairCodeRequired" xml:space="preserve"><value>Enter the Linkly VPP pair code first.</value></data>
   <data name="settings.linklyCloud.vendorIdMissing" xml:space="preserve"><value>Linkly POS vendor id is not configured.</value></data>
   <data name="settings.linklyCloud.vendorIdInvalid" xml:space="preserve"><value>Linkly POS vendor id must be a UUID v4.</value></data>
   <data name="settings.linklyCloud.paired" xml:space="preserve"><value>Linkly Cloud terminal paired.</value></data>
@@ -544,8 +546,9 @@
   <data name="linkly.local.cancelOutcomeUnknown" xml:space="preserve"><value>ANZ Linkly cancellation outcome could not be confirmed.</value></data>
   <data name="linkly.local.emptyResponse" xml:space="preserve"><value>ANZ Linkly returned an empty response.</value></data>
   <data name="linkly.local.declined" xml:space="preserve"><value>ANZ Linkly transaction was declined.</value></data>
-  <data name="linkly.cloud.test.success" xml:space="preserve"><value>Linkly Cloud connection succeeded.</value></data>
-  <data name="linkly.cloud.test.failed" xml:space="preserve"><value>Linkly Cloud status check failed.</value></data>
+  <data name="linkly.cloud.test.success" xml:space="preserve"><value>Linkly Cloud logon succeeded.</value></data>
+  <data name="linkly.cloud.test.failed" xml:space="preserve"><value>Linkly Cloud logon failed.</value></data>
+  <data name="linkly.cloud.test.notLoggedOn" xml:space="preserve"><value>Linkly Cloud connection reached the terminal, but the terminal is not logged on.</value></data>
   <data name="linkly.cloud.pairingInvalid" xml:space="preserve"><value>Linkly Cloud pairing is invalid. Pair the terminal again.</value></data>
   <data name="linkly.cloud.refundMissingReference" xml:space="preserve"><value>Linkly Cloud refund requires an original RFN reference.</value></data>
   <data name="linkly.cloud.amountMustBePositive" xml:space="preserve"><value>Card amount must be greater than zero.</value></data>
@@ -556,4 +559,10 @@
   <data name="linkly.cloud.invalidResponse" xml:space="preserve"><value>Linkly Cloud returned an invalid response.</value></data>
   <data name="linkly.cloud.communicationFailed" xml:space="preserve"><value>Linkly Cloud communication failed.</value></data>
   <data name="linkly.cloud.declined" xml:space="preserve"><value>ANZ Linkly Cloud transaction was declined.</value></data>
+  <data name="linkly.backend.dialog.title" xml:space="preserve"><value>ANZ Linkly Terminal</value></data>
+  <data name="linkly.backend.dialog.status" xml:space="preserve"><value>Status</value></data>
+  <data name="linkly.backend.dialog.display" xml:space="preserve"><value>Terminal display</value></data>
+  <data name="linkly.backend.dialog.receipt" xml:space="preserve"><value>Receipt</value></data>
+  <data name="linkly.backend.dialog.confirm" xml:space="preserve"><value>Confirm</value></data>
+  <data name="linkly.backend.dialog.cancel" xml:space="preserve"><value>Cancel</value></data>
 </root>

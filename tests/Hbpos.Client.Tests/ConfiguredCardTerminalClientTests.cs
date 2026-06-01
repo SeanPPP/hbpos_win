@@ -85,6 +85,27 @@ public sealed class ConfiguredCardTerminalClientTests
     }
 
     [Fact]
+    public async Task AuthorizeAsync_preserves_linkly_backend_async_mode_for_configured_adapter()
+    {
+        var settings = CardTerminalSettings.FromEnvironment() with
+        {
+            Processor = CardProcessorKind.Linkly,
+            LinklyConnectionMode = LinklyConnectionMode.CloudBackendAsync
+        };
+        var linkly = new StubLinklyTerminalClient(new PaymentAuthorizationResult(true, "ANZBACKEND:TXN-1", AuthorizedAmount: 10m));
+        var client = new ConfiguredCardTerminalClient(
+            new StaticCardTerminalSettingsProvider(settings),
+            new HttpClient(new StubHttpMessageHandler((_, _) =>
+                Task.FromException<HttpResponseMessage>(new InvalidOperationException("HTTP should not be called.")))),
+            linkly);
+
+        var result = await client.AuthorizeAsync(10m, CreateSession());
+
+        Assert.True(result.Approved);
+        Assert.Equal(LinklyConnectionMode.CloudBackendAsync, linkly.LastSettings?.LinklyConnectionMode);
+    }
+
+    [Fact]
     public async Task RefundAsync_posts_square_refund_request()
     {
         HttpRequestMessage? capturedRequest = null;
@@ -882,6 +903,8 @@ public sealed class ConfiguredCardTerminalClientTests
 
         public string? LastOriginalReference { get; private set; }
 
+        public CardTerminalSettings? LastSettings { get; private set; }
+
         public Task<LinklyConnectionTestResult> TestConnectionAsync(
             string host,
             int port,
@@ -898,6 +921,7 @@ public sealed class ConfiguredCardTerminalClientTests
             CancellationToken cancellationToken = default)
         {
             LastAmount = amount;
+            LastSettings = settings;
             return Task.FromResult(result);
         }
 
@@ -910,6 +934,7 @@ public sealed class ConfiguredCardTerminalClientTests
         {
             LastRefundAmount = amount;
             LastOriginalReference = originalReference;
+            LastSettings = settings;
             return Task.FromResult(result);
         }
 

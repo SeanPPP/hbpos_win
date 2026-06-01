@@ -1,3 +1,4 @@
+using Hbpos.Contracts.Linkly;
 using Hbpos.Contracts.Orders;
 
 namespace Hbpos.Client.Wpf.Models;
@@ -79,9 +80,13 @@ public static class PaymentReferenceDisplay
                 : reference;
         }
 
-        return method == PaymentMethodKind.Card
-            ? CardRefundReference.GetDisplayReference(reference)
-            : reference;
+        if (method != PaymentMethodKind.Card)
+        {
+            return reference;
+        }
+
+        var cardReference = CardRefundReference.GetDisplayReference(reference);
+        return LinklyBackendPaymentReference.GetDisplayReference(cardReference);
     }
 
     public static string? FormatCardSummary(CardTransactionDto transaction)

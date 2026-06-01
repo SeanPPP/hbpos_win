@@ -56,9 +56,25 @@ public interface ICardTerminalSetupService
     Task<LinklyConnectionTestResult> PairLinklyCloudAsync(
         CardTerminalEnvironment environment,
         string pairCode,
+        string? username,
+        string? password,
+        CancellationToken cancellationToken = default);
+
+    Task<LinklyCloudCredentialSettings> LoadLinklyCloudCredentialAsync(
+        CardTerminalEnvironment environment,
+        CancellationToken cancellationToken = default);
+
+    Task SaveLinklyCloudCredentialAsync(
+        CardTerminalEnvironment environment,
+        string username,
+        string password,
         CancellationToken cancellationToken = default);
 
     Task<LinklyConnectionTestResult> TestLinklyCloudConnectionAsync(
+        CardTerminalEnvironment environment,
+        CancellationToken cancellationToken = default);
+
+    Task<LinklyConnectionTestResult> TestLinklyCloudBackendConnectionAsync(
         CardTerminalEnvironment environment,
         CancellationToken cancellationToken = default);
 
@@ -75,9 +91,9 @@ public sealed class CardTerminalSetupService(
     ICardTerminalSettingsStore settingsStore,
     ISquareTerminalSetupClient squareSetupClient,
     ILinklyTerminalClient linklyTerminalClient,
-    ILinklyCloudCredentialApiClient? linklyCloudCredentialApiClient = null,
     ILinklyCloudApiClient? linklyCloudApiClient = null,
     ILinklyCloudTerminalClient? linklyCloudTerminalClient = null,
+    ILinklyBackendTerminalClient? linklyBackendTerminalClient = null,
     DeviceAuthorizationState? deviceAuthorizationState = null,
     ILocalizationService? localization = null) : ICardTerminalSetupService
 {
@@ -237,9 +253,11 @@ public sealed class CardTerminalSetupService(
     public async Task<LinklyConnectionTestResult> PairLinklyCloudAsync(
         CardTerminalEnvironment environment,
         string pairCode,
+        string? username,
+        string? password,
         CancellationToken cancellationToken = default)
     {
-        if (linklyCloudCredentialApiClient is null || linklyCloudApiClient is null)
+        if (linklyCloudApiClient is null)
         {
             LogLinklyCloudSetup($"pair blocked environment={environment} reason=missing-dependencies");
             return new LinklyConnectionTestResult(false, T("settings.linklyCloud.unavailable", "Linkly Cloud setup is unavailable."));
@@ -251,43 +269,35 @@ public sealed class CardTerminalSetupService(
             return new LinklyConnectionTestResult(false, T("settings.linklyCloud.pairCodeRequired", "Pair code is required."));
         }
 
-        var environmentSettings = CardTerminalSettings.FromEnvironment();
-        if (string.IsNullOrWhiteSpace(environmentSettings.LinklyPosVendorId))
+        var savedCredential = await settingsStore.GetLinklyCloudCredentialAsync(environment, cancellationToken);
+        var resolvedUsername = ResolveCredentialPart(username, savedCredential.Username);
+        var resolvedPassword = ResolveCredentialPart(password, savedCredential.Password);
+        if (string.IsNullOrWhiteSpace(resolvedUsername) || string.IsNullOrWhiteSpace(resolvedPassword))
         {
-            LogLinklyCloudSetup($"pair blocked environment={environment} reason=missing-pos-vendor-id");
-            return new LinklyConnectionTestResult(false, T("settings.linklyCloud.vendorIdMissing", "Linkly POS vendor id is not configured."));
-        }
-
-        if (!IsUuidV4(environmentSettings.LinklyPosVendorId))
-        {
-            LogLinklyCloudSetup($"pair blocked environment={environment} reason=invalid-pos-vendor-id");
-            return new LinklyConnectionTestResult(false, T("settings.linklyCloud.vendorIdInvalid", "Linkly POS vendor id must be a UUID v4."));
+            LogLinklyCloudSetup($"pair blocked environment={environment} reason=missing-local-credential hasUsername={!string.IsNullOrWhiteSpace(resolvedUsername)} hasPassword={!string.IsNullOrWhiteSpace(resolvedPassword)}");
+            return new LinklyConnectionTestResult(false, T("settings.linklyCloud.localCredentialMissing", "Save the Linkly Cloud API username and password first."));
         }
 
         try
         {
-            LogLinklyCloudSetup($"pair start environment={environment} hasPairCode=true");
-            var credential = await linklyCloudCredentialApiClient.GetCredentialAsync(cancellationToken);
-            LogLinklyCloudSetup($"pair credential loaded environment={environment} store={LogValue(credential.StoreCode)} updatedAt={credential.UpdatedAt:O}");
-            var authBaseUrl = ResolveBaseUrlFromEnvironment(
-                "HBPOS_LINKLY_CLOUD_AUTH_BASE_URL",
-                CardTerminalSettings.GetLinklyCloudAuthBaseUrl(environment));
+            LogLinklyCloudSetup($"pair start environment={environment} hasPairCode=true credentialSource=local hasUsername=true");
+            var authBaseUrl = CardTerminalSettings.ResolveLinklyCloudAuthBaseUrl(environment);
+            var authValidationMessage = CardTerminalSettings.ValidateLinklyCloudAuthBaseUrl(environment, authBaseUrl);
+            if (!string.IsNullOrWhiteSpace(authValidationMessage))
+            {
+                LogLinklyCloudSetup($"pair blocked environment={environment} reason=invalid-auth-endpoint");
+                return new LinklyConnectionTestResult(false, authValidationMessage);
+            }
+
             var secret = await linklyCloudApiClient.PairAsync(
                 authBaseUrl,
-                credential.Username,
-                credential.Password,
+                resolvedUsername,
+                resolvedPassword,
                 pairCode,
                 cancellationToken);
             await settingsStore.SaveLinklyCloudSecretAsync(environment, secret, cancellationToken);
-            LogLinklyCloudSetup($"pair succeeded environment={environment} store={LogValue(credential.StoreCode)} secretSaved=true");
+            LogLinklyCloudSetup($"pair succeeded environment={environment} secretSaved=true");
             return new LinklyConnectionTestResult(true, T("settings.linklyCloud.paired", "Linkly Cloud terminal paired."));
-        }
-        catch (CatalogApiException ex)
-        {
-            LogLinklyCloudSetup($"pair failed environment={environment} source=backend-credential http={(int?)ex.StatusCode ?? 0} errorCode={LogValue(ex.ErrorCode)}");
-            return new LinklyConnectionTestResult(false, ex.StatusCode == System.Net.HttpStatusCode.NotFound
-                ? "Linkly Cloud credentials are not configured for this store."
-                : "Linkly Cloud credentials could not be loaded.");
         }
         catch (LinklyCloudApiException ex)
         {
@@ -296,6 +306,25 @@ public sealed class CardTerminalSetupService(
                 ? "Linkly Cloud pairing failed. Check the pair code."
                 : ex.Message);
         }
+    }
+
+    public async Task<LinklyCloudCredentialSettings> LoadLinklyCloudCredentialAsync(
+        CardTerminalEnvironment environment,
+        CancellationToken cancellationToken = default)
+    {
+        var credential = await settingsStore.GetLinklyCloudCredentialAsync(environment, cancellationToken);
+        LogLinklyCloudSetup($"load local credential environment={environment} hasUsername={!string.IsNullOrWhiteSpace(credential.Username)} hasPassword={credential.HasProtectedPassword}");
+        return credential with { Password = null };
+    }
+
+    public Task SaveLinklyCloudCredentialAsync(
+        CardTerminalEnvironment environment,
+        string username,
+        string password,
+        CancellationToken cancellationToken = default)
+    {
+        LogLinklyCloudSetup($"save local credential requested environment={environment} hasUsername={!string.IsNullOrWhiteSpace(username)} hasPassword={!string.IsNullOrWhiteSpace(password)}");
+        return settingsStore.SaveLinklyCloudCredentialAsync(environment, username, password, cancellationToken);
     }
 
     public async Task<LinklyConnectionTestResult> TestLinklyCloudConnectionAsync(
@@ -309,6 +338,22 @@ public sealed class CardTerminalSetupService(
         }
 
         LogLinklyCloudSetup($"test start environment={environment} store={LogValue(deviceAuthorizationState.Current.StoreCode)} device={LogValue(deviceAuthorizationState.Current.DeviceCode)}");
+        var authBaseUrl = CardTerminalSettings.ResolveLinklyCloudAuthBaseUrl(environment);
+        var restBaseUrl = CardTerminalSettings.ResolveLinklyCloudRestBaseUrl(environment);
+        var authValidationMessage = CardTerminalSettings.ValidateLinklyCloudAuthBaseUrl(environment, authBaseUrl);
+        if (!string.IsNullOrWhiteSpace(authValidationMessage))
+        {
+            LogLinklyCloudSetup($"test blocked environment={environment} reason=invalid-auth-endpoint");
+            return new LinklyConnectionTestResult(false, authValidationMessage);
+        }
+
+        var restValidationMessage = CardTerminalSettings.ValidateLinklyCloudRestBaseUrl(environment, restBaseUrl);
+        if (!string.IsNullOrWhiteSpace(restValidationMessage))
+        {
+            LogLinklyCloudSetup($"test blocked environment={environment} reason=invalid-rest-endpoint");
+            return new LinklyConnectionTestResult(false, restValidationMessage);
+        }
+
         var settings = await settingsStore.GetSettingsAsync(cancellationToken);
         var secret = await settingsStore.GetLinklyCloudSecretAsync(environment, cancellationToken);
         settings = settings with
@@ -316,12 +361,12 @@ public sealed class CardTerminalSetupService(
             Environment = environment,
             LinklyConnectionMode = LinklyConnectionMode.Cloud,
             LinklyCloudSecret = secret,
-            LinklyCloudAuthBaseUrl = ResolveBaseUrlFromEnvironment(
-                "HBPOS_LINKLY_CLOUD_AUTH_BASE_URL",
-                CardTerminalSettings.GetLinklyCloudAuthBaseUrl(environment)),
-            LinklyCloudRestBaseUrl = ResolveBaseUrlFromEnvironment(
-                "HBPOS_LINKLY_CLOUD_REST_BASE_URL",
-                CardTerminalSettings.GetLinklyCloudRestBaseUrl(environment))
+            // 统一使用按环境解析后的 endpoint，避免调用链里新旧变量优先级不一致。
+            LinklyCloudAuthBaseUrl = authBaseUrl,
+            LinklyCloudRestBaseUrl = restBaseUrl,
+            LinklyPosVendorId = CardTerminalSettings.ResolveLinklyPosVendorId(
+                environment,
+                settings.LinklyPosVendorId)
         };
         var result = await linklyCloudTerminalClient.TestConnectionAsync(
             settings,
@@ -329,6 +374,22 @@ public sealed class CardTerminalSetupService(
             deviceAuthorizationState.Current.DeviceCode,
             cancellationToken);
         LogLinklyCloudSetup($"test completed environment={environment} store={LogValue(deviceAuthorizationState.Current.StoreCode)} device={LogValue(deviceAuthorizationState.Current.DeviceCode)} success={result.Succeeded}");
+        return result;
+    }
+
+    public async Task<LinklyConnectionTestResult> TestLinklyCloudBackendConnectionAsync(
+        CardTerminalEnvironment environment,
+        CancellationToken cancellationToken = default)
+    {
+        if (linklyBackendTerminalClient is null)
+        {
+            LogLinklyCloudSetup($"backend test blocked environment={environment} reason=missing-backend-client");
+            return new LinklyConnectionTestResult(false, T("settings.linklyCloud.unavailable", "Linkly Cloud setup is unavailable."));
+        }
+
+        LogLinklyCloudSetup($"backend test start environment={environment}");
+        var result = await linklyBackendTerminalClient.TestConnectionAsync(environment, cancellationToken);
+        LogLinklyCloudSetup($"backend test completed environment={environment} success={result.Succeeded}");
         return result;
     }
 
@@ -347,8 +408,12 @@ public sealed class CardTerminalSetupService(
         CardTerminalConfiguration configuration,
         CancellationToken cancellationToken = default)
     {
-        LogLinklyCloudSetup($"save configuration environment={configuration.Environment} mode=Cloud");
-        return settingsStore.SaveAsync(configuration with { LinklyConnectionMode = LinklyConnectionMode.Cloud }, squareAccessToken: null, cancellationToken);
+        var normalizedMode = CardTerminalSettings.NormalizeLinklyConnectionMode(configuration.LinklyConnectionMode);
+        var cloudMode = normalizedMode == LinklyConnectionMode.CloudBackendAsync
+            ? LinklyConnectionMode.CloudBackendAsync
+            : LinklyConnectionMode.CloudDirectSync;
+        LogLinklyCloudSetup($"save configuration environment={configuration.Environment} mode={cloudMode}");
+        return settingsStore.SaveAsync(configuration with { LinklyConnectionMode = cloudMode }, squareAccessToken: null, cancellationToken);
     }
 
     private async Task<string> ResolveSquareAccessTokenAsync(
@@ -438,16 +503,9 @@ public sealed class CardTerminalSetupService(
         return string.IsNullOrWhiteSpace(value) ? "<null>" : value;
     }
 
-    private static string ResolveBaseUrlFromEnvironment(string key, string fallback)
+    private static string? ResolveCredentialPart(string? currentValue, string? savedValue)
     {
-        var value = Environment.GetEnvironmentVariable(key);
-        if (string.IsNullOrWhiteSpace(value))
-        {
-            return fallback;
-        }
-
-        var trimmed = value.Trim();
-        return trimmed.EndsWith("/", StringComparison.Ordinal) ? trimmed : trimmed + "/";
+        return string.IsNullOrWhiteSpace(currentValue) ? savedValue?.Trim() : currentValue.Trim();
     }
 
     private static bool IsUuidV4(string? value)

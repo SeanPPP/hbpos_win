@@ -8,6 +8,7 @@ public interface ILinklyCloudCredentialService
 {
     Task<LinklyCloudCredentialResponse?> GetByStoreCodeAsync(
         string storeCode,
+        string environment,
         CancellationToken cancellationToken);
 }
 
@@ -16,15 +17,20 @@ public sealed class LinklyCloudCredentialService(
 {
     public async Task<LinklyCloudCredentialResponse?> GetByStoreCodeAsync(
         string storeCode,
+        string environment,
         CancellationToken cancellationToken)
     {
         var normalizedStoreCode = NormalizeStoreCode(storeCode);
-        if (string.IsNullOrWhiteSpace(normalizedStoreCode))
+        var normalizedEnvironment = NormalizeEnvironment(environment);
+        if (string.IsNullOrWhiteSpace(normalizedStoreCode) || normalizedEnvironment is null)
         {
             return null;
         }
 
-        var credential = await repository.GetByStoreCodeAsync(normalizedStoreCode, cancellationToken);
+        var credential = await repository.GetByStoreCodeAsync(
+            normalizedStoreCode,
+            normalizedEnvironment,
+            cancellationToken);
         if (credential is null
             || string.IsNullOrWhiteSpace(credential.Username)
             || string.IsNullOrWhiteSpace(credential.Password))
@@ -34,6 +40,7 @@ public sealed class LinklyCloudCredentialService(
 
         return new LinklyCloudCredentialResponse(
             credential.StoreCode ?? normalizedStoreCode,
+            credential.Environment ?? normalizedEnvironment,
             credential.Username,
             credential.Password,
             new DateTimeOffset(DateTime.SpecifyKind(credential.UpdatedAt ?? DateTime.UtcNow, DateTimeKind.Utc)));
@@ -43,12 +50,23 @@ public sealed class LinklyCloudCredentialService(
     {
         return (storeCode ?? string.Empty).Trim();
     }
+
+    internal static string? NormalizeEnvironment(string? environment)
+    {
+        return (environment ?? string.Empty).Trim().ToUpperInvariant() switch
+        {
+            "PRODUCTION" => "Production",
+            "SANDBOX" => "Sandbox",
+            _ => null
+        };
+    }
 }
 
 public interface ILinklyCloudCredentialRepository
 {
     Task<LinklyCloudCredentialRecord?> GetByStoreCodeAsync(
         string storeCode,
+        string environment,
         CancellationToken cancellationToken);
 }
 
@@ -57,18 +75,21 @@ public sealed class SqlSugarLinklyCloudCredentialRepository(
 {
     public async Task<LinklyCloudCredentialRecord?> GetByStoreCodeAsync(
         string storeCode,
+        string environment,
         CancellationToken cancellationToken)
     {
         const string sql = """
             SELECT TOP 1
                 [Id],
                 [StoreCode],
+                [Environment],
                 [Username],
                 [Password],
                 [UpdatedAt],
                 [UpdatedBy]
             FROM [dbo].[POSM_LinklyCloudCredential]
             WHERE [StoreCode] = @StoreCode
+              AND [Environment] = @Environment
               AND NULLIF(LTRIM(RTRIM([Username])), '') IS NOT NULL
               AND NULLIF(LTRIM(RTRIM([Password])), '') IS NOT NULL
             ORDER BY [UpdatedAt] DESC, [Id] DESC;
@@ -76,7 +97,8 @@ public sealed class SqlSugarLinklyCloudCredentialRepository(
 
         return await dbContext.PosmDb.Ado.SqlQuerySingleAsync<LinklyCloudCredentialRecord>(
             sql,
-            new SugarParameter("@StoreCode", storeCode));
+            new SugarParameter("@StoreCode", storeCode),
+            new SugarParameter("@Environment", environment));
     }
 }
 
@@ -85,6 +107,8 @@ public sealed class LinklyCloudCredentialRecord
     public long Id { get; set; }
 
     public string? StoreCode { get; set; }
+
+    public string? Environment { get; set; }
 
     public string? Username { get; set; }
 

@@ -27,6 +27,8 @@
   <data name="settings.square.tokenStatus.cached" xml:space="preserve"><value>Local encrypted token cached. HBPOS refreshes it when Square rejects it.</value></data>
   <data name="settings.square.tokenStatus.missing" xml:space="preserve"><value>No local token cached. The next Square request will fetch one from HBPOS.</value></data>
   <data name="settings.square.tokenHelp" xml:space="preserve"><value>Square token is stored encrypted on this device and fetched from HBPOS when missing or rejected.</value></data>
+  <data name="settings.payment.environment" xml:space="preserve"><value>Environment</value></data>
+  <data name="settings.payment.sandbox.toggle" xml:space="preserve"><value>Use Sandbox test environment</value></data>
   <data name="settings.square.sandbox" xml:space="preserve"><value>Sandbox</value></data>
   <data name="settings.square.sandbox.toggle" xml:space="preserve"><value>Test mode only</value></data>
   <data name="settings.square.location" xml:space="preserve"><value>Location</value></data>
@@ -48,11 +50,36 @@
   <data name="settings.linkly.title" xml:space="preserve"><value>ANZ Linkly</value></data>
   <data name="settings.linkly.description" xml:space="preserve"><value>Connect to the local Linkly EFT-Client, then enable ANZ Linkly for card payments.</value></data>
   <data name="settings.linkly.cloudMode" xml:space="preserve"><value>Use Linkly Cloud</value></data>
+  <data name="settings.linkly.mode.title" xml:space="preserve"><value>Connection mode</value></data>
+  <data name="settings.linkly.mode.localIp" xml:space="preserve"><value>Local IP / Port</value></data>
+  <data name="settings.linkly.mode.cloudDirectSync" xml:space="preserve"><value>Cloud direct sync</value></data>
+  <data name="settings.linkly.mode.cloudBackendAsync" xml:space="preserve"><value>Cloud backend async</value></data>
+  <data name="settings.linkly.localIp.title" xml:space="preserve"><value>Local Linkly IP Gateway</value></data>
+  <data name="settings.linkly.localIp.description" xml:space="preserve"><value>Connect this POS to the Windows Linkly EFT-Client by IP address and port.</value></data>
+  <data name="settings.linkly.localIp.ipAddress" xml:space="preserve"><value>IP Address</value></data>
+  <data name="settings.linkly.cloudDirect.title" xml:space="preserve"><value>Cloud direct sync</value></data>
+  <data name="settings.linkly.cloudDirect.description" xml:space="preserve"><value>Save the Cloud API test account on this POS, pair the terminal, then test the direct Cloud connection.</value></data>
+  <data name="settings.linkly.cloudBackend.title" xml:space="preserve"><value>Cloud backend async</value></data>
+  <data name="settings.linkly.cloudBackend.description" xml:space="preserve"><value>Use the backend Linkly workflow for asynchronous Cloud processing. Test this store and device against the backend before enabling Linkly.</value></data>
+  <data name="settings.linkly.cloudBackend.test" xml:space="preserve"><value>Test Backend</value></data>
   <data name="settings.linkly.cloud.secret" xml:space="preserve"><value>Cloud Pairing Secret</value></data>
   <data name="settings.linkly.cloud.secretStatus.cached" xml:space="preserve"><value>Paired secret is saved securely on this POS.</value></data>
   <data name="settings.linkly.cloud.secretStatus.missing" xml:space="preserve"><value>No paired secret saved for this POS.</value></data>
+  <data name="settings.linkly.cloud.credential" xml:space="preserve"><value>Cloud API Test Credential</value></data>
+  <data name="settings.linkly.cloud.credentialStatus.cached" xml:space="preserve"><value>Cloud API password is saved securely on this POS.</value></data>
+  <data name="settings.linkly.cloud.credentialStatus.missing" xml:space="preserve"><value>No Cloud API password saved on this POS.</value></data>
+  <data name="settings.linkly.cloud.terminalPairingTitle" xml:space="preserve"><value>Terminal Pairing</value></data>
+  <data name="settings.linkly.cloud.terminalPairingSubtitle" xml:space="preserve"><value>Enter Linkly Cloud details for this POS.</value></data>
+  <data name="settings.linkly.cloud.username" xml:space="preserve"><value>Cloud API Username</value></data>
+  <data name="settings.linkly.cloud.password" xml:space="preserve"><value>Cloud API Password</value></data>
+  <data name="settings.linkly.cloud.saveCredential" xml:space="preserve"><value>Save Test Account</value></data>
+  <data name="settings.linklyCloud.localCredentialMissing" xml:space="preserve"><value>Save the Linkly Cloud API username and password first.</value></data>
+  <data name="settings.linklyCloud.usernameRequired" xml:space="preserve"><value>Enter the Linkly Cloud API username first.</value></data>
+  <data name="settings.linklyCloud.passwordRequired" xml:space="preserve"><value>Enter the Linkly Cloud API password, or save it on this POS first.</value></data>
+  <data name="settings.linklyCloud.pairCodeRequired" xml:space="preserve"><value>Enter the Linkly VPP pair code first.</value></data>
   <data name="settings.linkly.cloud.pairCode" xml:space="preserve"><value>Pair Code</value></data>
   <data name="settings.linkly.cloud.pair" xml:space="preserve"><value>Pair Cloud</value></data>
+  <data name="settings.linkly.cloud.cancelPairing" xml:space="preserve"><value>Cancel</value></data>
   <data name="settings.linkly.host" xml:space="preserve"><value>Host</value></data>
   <data name="settings.linkly.port" xml:space="preserve"><value>Port</value></data>
   <data name="settings.linkly.test" xml:space="preserve"><value>Test Linkly</value></data>
@@ -67,7 +94,7 @@
   <data name="settings.linkly.sop.cloud.step5" xml:space="preserve"><value>Press Cancel to return to the main screen.</value></data>
   <data name="settings.linkly.sop.cloud.step6" xml:space="preserve"><value>When the terminal prompts for a Pairing Code, press Enter.</value></data>
   <data name="settings.linkly.sop.cloud.step7" xml:space="preserve"><value>Enter the 6-digit Pairing Code here and click Pair Cloud before it expires.</value></data>
-  <data name="settings.linkly.sop.cloud.step8" xml:space="preserve"><value>Cloud username and password are loaded from the backend for this store and are not shown on this POS.</value></data>
+  <data name="settings.linkly.sop.cloud.step8" xml:space="preserve"><value>Cloud API username and password are saved locally on this POS and used for pairing.</value></data>
   <data name="settings.linkly.sop.repair.title" xml:space="preserve"><value>Generate a new Pairing Code</value></data>
   <data name="settings.linkly.sop.repair.step1" xml:space="preserve"><value>On the terminal: Func -&gt; 8880 -&gt; OK / Enter.</value></data>
   <data name="settings.linkly.sop.repair.step2" xml:space="preserve"><value>After the terminal clears the old pairing, press Enter to generate a new 6-digit Pairing Code.</value></data>
@@ -122,6 +149,7 @@
   <data name="settings.status.linklyTestFailed" xml:space="preserve"><value>Linkly EFT-Client connection failed.</value></data>
   <data name="settings.status.linklyCloudPaired" xml:space="preserve"><value>Linkly Cloud terminal paired.</value></data>
   <data name="settings.status.linklyCloudPairFailed" xml:space="preserve"><value>Linkly Cloud pairing failed.</value></data>
+  <data name="settings.status.linklyCloudCredentialSaved" xml:space="preserve"><value>Linkly Cloud API test account saved securely on this POS.</value></data>
   <data name="settings.status.testLinklyBeforeSave" xml:space="preserve"><value>Test Linkly connection before enabling ANZ Linkly.</value></data>
   <data name="settings.status.linklySaved" xml:space="preserve"><value>ANZ Linkly terminal settings saved.</value></data>
   <data name="settings.status.receiptPrinterNotConfigured" xml:space="preserve"><value>Receipt printer service is not configured.</value></data>

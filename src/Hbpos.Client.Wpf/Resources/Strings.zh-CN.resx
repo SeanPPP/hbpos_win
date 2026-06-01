@@ -1434,8 +1434,14 @@
   <data name="settings.linklyCloud.unavailable" xml:space="preserve">
     <value>当前无法使用 Linkly Cloud 设置。</value>
   </data>
+  <data name="settings.linklyCloud.usernameRequired" xml:space="preserve">
+    <value>请先填写 Linkly Cloud API 账号。</value>
+  </data>
+  <data name="settings.linklyCloud.passwordRequired" xml:space="preserve">
+    <value>请先填写 Linkly Cloud API 密码，或先保存到本机。</value>
+  </data>
   <data name="settings.linklyCloud.pairCodeRequired" xml:space="preserve">
-    <value>必须输入配对码。</value>
+    <value>请先填写 Linkly VPP 配对码。</value>
   </data>
   <data name="settings.linklyCloud.vendorIdMissing" xml:space="preserve">
     <value>Linkly POS vendor id 未配置。</value>
@@ -1591,10 +1597,13 @@
     <value>ANZ Linkly 交易未通过。</value>
   </data>
   <data name="linkly.cloud.test.success" xml:space="preserve">
-    <value>Linkly Cloud 连接成功。</value>
+    <value>Linkly Cloud 登录成功。</value>
   </data>
   <data name="linkly.cloud.test.failed" xml:space="preserve">
-    <value>Linkly Cloud 状态检查失败。</value>
+    <value>Linkly Cloud 登录失败。</value>
+  </data>
+  <data name="linkly.cloud.test.notLoggedOn" xml:space="preserve">
+    <value>Linkly Cloud 已连接到终端，但终端尚未登录。</value>
   </data>
   <data name="linkly.cloud.pairingInvalid" xml:space="preserve">
     <value>Linkly Cloud 配对已失效，请重新配对终端。</value>
@@ -1625,5 +1634,23 @@
   </data>
   <data name="linkly.cloud.declined" xml:space="preserve">
     <value>ANZ Linkly Cloud 交易未通过。</value>
+  </data>
+  <data name="linkly.backend.dialog.title" xml:space="preserve">
+    <value>ANZ Linkly 刷卡机</value>
+  </data>
+  <data name="linkly.backend.dialog.status" xml:space="preserve">
+    <value>状态</value>
+  </data>
+  <data name="linkly.backend.dialog.display" xml:space="preserve">
+    <value>刷卡机显示</value>
+  </data>
+  <data name="linkly.backend.dialog.receipt" xml:space="preserve">
+    <value>小票</value>
+  </data>
+  <data name="linkly.backend.dialog.confirm" xml:space="preserve">
+    <value>确认</value>
+  </data>
+  <data name="linkly.backend.dialog.cancel" xml:space="preserve">
+    <value>取消</value>
   </data>
 </root>

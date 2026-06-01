@@ -26,6 +26,11 @@ public interface ILinklyCloudApiClient
         string token,
         CancellationToken cancellationToken = default);
 
+    Task<LinklyCloudLogonResult> SendLogonAsync(
+        CardTerminalSettings settings,
+        string token,
+        CancellationToken cancellationToken = default);
+
     Task<LinklyCloudTransactionResult> SendTransactionAsync(
         CardTerminalSettings settings,
         string token,
@@ -176,6 +181,45 @@ public sealed class LinklyCloudApiClient(HttpClient httpClient) : ILinklyCloudAp
             ReadString(result, "PinPadVersion"));
         Log($"status response parsed sessionId={sessionId} success={status.Succeeded} responseCode={LogValue(status.ResponseCode)} loggedOn={status.LoggedOn}");
         return status;
+    }
+
+    public async Task<LinklyCloudLogonResult> SendLogonAsync(
+        CardTerminalSettings settings,
+        string token,
+        CancellationToken cancellationToken = default)
+    {
+        var sessionId = Guid.NewGuid().ToString("D");
+        Log($"logon request start environment={settings.Environment} restHost={LogHost(settings.LinklyCloudRestBaseUrl)} sessionId={sessionId}");
+        using var response = await SendLinklyRequestAsync(
+            settings,
+            token,
+            "logon",
+            HttpMethod.Post,
+            new LinklyCloudApiRequest(new Dictionary<string, object?>
+            {
+                ["Merchant"] = "00",
+                ["LogonType"] = " ",
+                ["Application"] = "00",
+                ["ReceiptAutoPrint"] = "0",
+                ["CutReceipt"] = "0"
+            }),
+            sessionId,
+            cancellationToken);
+        var body = await response.Content.ReadAsStringAsync(cancellationToken);
+        Log($"logon response http={(int)response.StatusCode} sessionId={sessionId}");
+        EnsureSuccess(response, body, "Linkly Cloud logon request");
+
+        using var document = JsonDocument.Parse(body);
+        var result = ReadResponse(document.RootElement);
+        var logon = new LinklyCloudLogonResult(
+            ReadBool(result, "Success") == true,
+            ReadString(result, "ResponseCode"),
+            ReadString(result, "ResponseText"),
+            ReadString(result, "Catid"),
+            ReadString(result, "Caid"),
+            ReadString(result, "PinPadVersion"));
+        Log($"logon response parsed sessionId={sessionId} success={logon.Succeeded} responseCode={LogValue(logon.ResponseCode)}");
+        return logon;
     }
 
     public async Task<LinklyCloudTransactionResult> SendTransactionAsync(
@@ -561,6 +605,14 @@ public sealed record LinklyCloudStatusResult(
     string? Catid,
     string? Caid,
     string? PinPadSerialNumber,
+    string? PinPadVersion);
+
+public sealed record LinklyCloudLogonResult(
+    bool Succeeded,
+    string? ResponseCode,
+    string? ResponseText,
+    string? Catid,
+    string? Caid,
     string? PinPadVersion);
 
 public sealed record LinklyCloudTransactionRequest(

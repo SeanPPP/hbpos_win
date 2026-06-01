@@ -3,6 +3,8 @@ using System.Runtime.InteropServices;
 using System.Text;
 using Hbpos.Client.Wpf.Localization;
 using Hbpos.Client.Wpf.Models;
+using Hbpos.Contracts.Linkly;
+using Hbpos.Contracts.Orders;
 
 namespace Hbpos.Client.Wpf.Services;
 
@@ -149,6 +151,14 @@ public interface IReceiptPrintService
         CancellationToken cancellationToken = default);
 
     Task<ReceiptPrintResult> TestPrinterAsync(CancellationToken cancellationToken = default);
+}
+
+public interface ICardReceiptPrintedNotifier
+{
+    Task MarkReceiptPrintedAsync(
+        string environment,
+        string sessionId,
+        CancellationToken cancellationToken = default);
 }
 
 public interface ICashDrawerService
@@ -490,9 +500,12 @@ public sealed class ReceiptPrintService(
     IReceiptPrinterSettingsStore settingsStore,
     IReceiptTextFormatter formatter,
     IReceiptPrinterDriver driver,
+    IEnumerable<ICardReceiptPrintedNotifier>? cardReceiptPrintedNotifiers = null,
     ILocalizationService? localization = null) : IReceiptPrintService, IDisposable
 {
     private readonly SemaphoreSlim _printLock = new(1, 1);
+    private readonly IReadOnlyList<ICardReceiptPrintedNotifier> _cardReceiptPrintedNotifiers =
+        (cardReceiptPrintedNotifiers ?? []).ToArray();
 
     public async Task<ReceiptPrintResult> PrintLatestReceiptAsync(
         ReceiptPrintReason reason = ReceiptPrintReason.LastReceipt,
@@ -526,6 +539,11 @@ public sealed class ReceiptPrintService(
             var settings = await settingsStore.LoadAsync(cancellationToken);
             var document = formatter.Build(receipt, settings, receipt.SoldAt);
             var result = await driver.PrintAsync(document, settings, cancellationToken);
+            if (result.Succeeded)
+            {
+                await MarkCardReceiptsPrintedAsync(receipt, cancellationToken);
+            }
+
             return new ReceiptPrintResult(
                 result.Succeeded,
                 result.Succeeded ? T("receipt.print.success", "Receipt printed.") : result.Message,
@@ -538,6 +556,45 @@ public sealed class ReceiptPrintService(
         finally
         {
             _printLock.Release();
+        }
+    }
+
+    private async Task MarkCardReceiptsPrintedAsync(
+        ReceiptDetails receipt,
+        CancellationToken cancellationToken)
+    {
+        if (_cardReceiptPrintedNotifiers.Count == 0)
+        {
+            return;
+        }
+
+        var markers = receipt.Payments
+            .Where(payment => payment.Method == PaymentMethodKind.Card)
+            .Select(payment => payment.Reference)
+            .Select(reference => LinklyBackendPaymentReference.TryGetPrintMarker(reference, out var environment, out var sessionId)
+                ? (Environment: environment, SessionId: sessionId)
+                : (Environment: string.Empty, SessionId: string.Empty))
+            .Where(marker => !string.IsNullOrWhiteSpace(marker.Environment) && !string.IsNullOrWhiteSpace(marker.SessionId))
+            .Distinct()
+            .ToArray();
+        foreach (var marker in markers)
+        {
+            foreach (var notifier in _cardReceiptPrintedNotifiers)
+            {
+                // 小票已经实际打印成功；后端标记失败不能反向改写打印结果，只记录并允许后续恢复再补打。
+                try
+                {
+                    await notifier.MarkReceiptPrintedAsync(marker.Environment, marker.SessionId, cancellationToken);
+                }
+                catch (Exception ex) when (ex is not OperationCanceledException)
+                {
+                    Console.WriteLine($"[HBPOS][Client][Receipt] {DateTimeOffset.Now:O} card receipt printed marker failed session={marker.SessionId} error={ex.GetType().Name}");
+                }
+                catch (OperationCanceledException ex) when (!cancellationToken.IsCancellationRequested)
+                {
+                    Console.WriteLine($"[HBPOS][Client][Receipt] {DateTimeOffset.Now:O} card receipt printed marker timed out session={marker.SessionId} error={ex.GetType().Name}");
+                }
+            }
         }
     }
 

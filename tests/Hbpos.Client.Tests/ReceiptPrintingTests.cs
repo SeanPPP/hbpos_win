@@ -100,6 +100,7 @@ public sealed class ReceiptPrintingTests
     {
         var receipt = CreateReceipt(Guid.NewGuid());
         var query = new FakeReceiptQueryService { LatestReceipt = receipt };
+        var notifier = new RecordingCardReceiptPrintedNotifier();
         var driver = new RecordingReceiptPrinterDriver
         {
             PrintResult = new ReceiptPrinterDriverResult(false, "paper out")
@@ -108,12 +109,59 @@ public sealed class ReceiptPrintingTests
             query,
             new FakeReceiptPrinterSettingsStore(),
             new ReceiptTextFormatter(),
-            driver);
+            driver,
+            [notifier]);
 
         var result = await service.PrintReceiptAsync(receipt, ReceiptPrintReason.Manual);
 
         Assert.False(result.Succeeded);
         Assert.Equal("paper out", result.Message);
+        Assert.Equal(receipt.OrderGuid, result.OrderGuid);
+        Assert.Empty(notifier.Calls);
+    }
+
+    [Fact]
+    public async Task Receipt_print_service_marks_linkly_backend_receipt_printed_after_driver_success()
+    {
+        var receipt = CreateReceipt(
+            Guid.NewGuid(),
+            paymentReference: "ANZBACKEND:260601120001:session=11111111-2222-3333-4444-555555555555:environment=Sandbox");
+        var notifier = new RecordingCardReceiptPrintedNotifier();
+        var service = new ReceiptPrintService(
+            new FakeReceiptQueryService(),
+            new FakeReceiptPrinterSettingsStore(),
+            new ReceiptTextFormatter(),
+            new RecordingReceiptPrinterDriver(),
+            [notifier]);
+
+        var result = await service.PrintReceiptAsync(receipt, ReceiptPrintReason.CardAuto);
+
+        Assert.True(result.Succeeded);
+        var call = Assert.Single(notifier.Calls);
+        Assert.Equal("Sandbox", call.Environment);
+        Assert.Equal("11111111-2222-3333-4444-555555555555", call.SessionId);
+    }
+
+    [Fact]
+    public async Task Receipt_print_service_keeps_success_when_printed_marker_times_out()
+    {
+        var receipt = CreateReceipt(
+            Guid.NewGuid(),
+            paymentReference: "ANZBACKEND:260601120002:session=22222222-2222-4222-8222-222222222222:environment=Sandbox");
+        var notifier = new RecordingCardReceiptPrintedNotifier
+        {
+            Exception = new TaskCanceledException("backend timeout")
+        };
+        var service = new ReceiptPrintService(
+            new FakeReceiptQueryService(),
+            new FakeReceiptPrinterSettingsStore(),
+            new ReceiptTextFormatter(),
+            new RecordingReceiptPrinterDriver(),
+            [notifier]);
+
+        var result = await service.PrintReceiptAsync(receipt, ReceiptPrintReason.CardAuto);
+
+        Assert.True(result.Succeeded);
         Assert.Equal(receipt.OrderGuid, result.OrderGuid);
     }
 
@@ -221,7 +269,11 @@ public sealed class ReceiptPrintingTests
         Assert.Equal(80, loaded.CutDistance);
     }
 
-    private static ReceiptDetails CreateReceipt(Guid orderGuid, decimal? tenderedAmount = null, decimal? changeAmount = null)
+    private static ReceiptDetails CreateReceipt(
+        Guid orderGuid,
+        decimal? tenderedAmount = null,
+        decimal? changeAmount = null,
+        string paymentReference = "ANZ:123")
     {
         return new ReceiptDetails(
             orderGuid,
@@ -240,7 +292,7 @@ public sealed class ReceiptPrintingTests
                 new ReceiptPaymentLine(
                     PaymentMethodKind.Card,
                     9.00m,
-                    "ANZ:123",
+                    paymentReference,
                     [
                         new CardTransactionDto(
                             "Linkly",
@@ -260,6 +312,27 @@ public sealed class ReceiptPrintingTests
             ],
             tenderedAmount,
             changeAmount);
+    }
+
+    private sealed class RecordingCardReceiptPrintedNotifier : ICardReceiptPrintedNotifier
+    {
+        public List<(string Environment, string SessionId)> Calls { get; } = [];
+
+        public Exception? Exception { get; init; }
+
+        public Task MarkReceiptPrintedAsync(
+            string environment,
+            string sessionId,
+            CancellationToken cancellationToken = default)
+        {
+            Calls.Add((environment, sessionId));
+            if (Exception is not null)
+            {
+                return Task.FromException(Exception);
+            }
+
+            return Task.CompletedTask;
+        }
     }
 
     private sealed class FakeReceiptQueryService : IReceiptQueryService

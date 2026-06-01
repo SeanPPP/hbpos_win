@@ -25,8 +25,13 @@ public enum CardTerminalEnvironment
 
 public enum LinklyConnectionMode
 {
-    Local,
-    Cloud
+    LocalIp = 0,
+    CloudDirectSync = 1,
+    CloudBackendAsync = 2,
+
+    // 旧配置兼容：历史 Local 等同于本地 IP 接口，历史 Cloud 等同于 Cloud 同步直连。
+    Local = LocalIp,
+    Cloud = CloudDirectSync
 }
 
 public sealed record CardTerminalConfiguration(
@@ -38,7 +43,7 @@ public sealed record CardTerminalConfiguration(
     string? SquareDeviceId,
     bool HasProtectedSquareAccessToken,
     int TerminalTimeoutSeconds,
-    LinklyConnectionMode LinklyConnectionMode = LinklyConnectionMode.Local,
+    LinklyConnectionMode LinklyConnectionMode = LinklyConnectionMode.LocalIp,
     bool HasProtectedLinklyCloudSecret = false)
 {
     public static CardTerminalConfiguration Default { get; } = new(
@@ -50,7 +55,7 @@ public sealed record CardTerminalConfiguration(
         null,
         false,
         90,
-        LinklyConnectionMode.Local,
+        LinklyConnectionMode.LocalIp,
         false);
 }
 
@@ -64,7 +69,7 @@ public sealed record CardTerminalSettings(
     string? SquareDeviceId,
     string SquareApiBaseUrl,
     TimeSpan TerminalTimeout,
-    LinklyConnectionMode LinklyConnectionMode = LinklyConnectionMode.Local,
+    LinklyConnectionMode LinklyConnectionMode = LinklyConnectionMode.LocalIp,
     string? LinklyCloudSecret = null,
     string LinklyCloudAuthBaseUrl = "https://auth.cloud.pceftpos.com/v1/",
     string LinklyCloudRestBaseUrl = "https://rest.pos.cloud.pceftpos.com/v1/",
@@ -75,6 +80,7 @@ public sealed record CardTerminalSettings(
     public const string SquareVersion = "2026-01-22";
     public const string DefaultLinklyPosName = "HotBargainPOS";
     public const string DefaultLinklyPosVersion = "2026.5.1";
+    public const string SandboxPlaceholderLinklyPosVendorId = "11111111-1111-4111-8111-111111111111";
 
     public static CardTerminalSettings FromEnvironment()
     {
@@ -88,8 +94,6 @@ public sealed record CardTerminalSettings(
 
         var terminalEnvironment = ReadEnvironment();
         var apiBase = System.Environment.GetEnvironmentVariable("HBPOS_SQUARE_API_BASE_URL")?.Trim();
-        var linklyAuthBase = System.Environment.GetEnvironmentVariable("HBPOS_LINKLY_CLOUD_AUTH_BASE_URL")?.Trim();
-        var linklyRestBase = System.Environment.GetEnvironmentVariable("HBPOS_LINKLY_CLOUD_REST_BASE_URL")?.Trim();
 
         return new CardTerminalSettings(
             processor,
@@ -108,15 +112,11 @@ public sealed record CardTerminalSettings(
                     : 90),
             ReadLinklyConnectionMode(),
             null,
-            string.IsNullOrWhiteSpace(linklyAuthBase)
-                ? GetLinklyCloudAuthBaseUrl(terminalEnvironment)
-                : NormalizeBaseUrl(linklyAuthBase),
-            string.IsNullOrWhiteSpace(linklyRestBase)
-                ? GetLinklyCloudRestBaseUrl(terminalEnvironment)
-                : NormalizeBaseUrl(linklyRestBase),
+            ResolveLinklyCloudAuthBaseUrl(terminalEnvironment),
+            ResolveLinklyCloudRestBaseUrl(terminalEnvironment),
             ReadText("HBPOS_LINKLY_POS_NAME", DefaultLinklyPosName),
             ReadText("HBPOS_LINKLY_POS_VERSION", DefaultLinklyPosVersion),
-            NormalizeOptional(System.Environment.GetEnvironmentVariable("HBPOS_LINKLY_POS_VENDOR_ID")));
+            ResolveLinklyPosVendorId(terminalEnvironment));
     }
 
     public static string GetSquareApiBaseUrl(CardTerminalEnvironment environment)
@@ -157,6 +157,26 @@ public sealed record CardTerminalSettings(
             : "https://rest.pos.cloud.pceftpos.com/v1/";
     }
 
+    public static string ResolveLinklyCloudAuthBaseUrl(CardTerminalEnvironment environment)
+    {
+        return ResolveLinklyCloudBaseUrl(
+            environment,
+            "HBPOS_LINKLY_CLOUD_AUTH_BASE_URL",
+            "HBPOS_LINKLY_CLOUD_AUTH_BASE_URL_PRODUCTION",
+            "HBPOS_LINKLY_CLOUD_AUTH_BASE_URL_SANDBOX",
+            GetLinklyCloudAuthBaseUrl(environment));
+    }
+
+    public static string ResolveLinklyCloudRestBaseUrl(CardTerminalEnvironment environment)
+    {
+        return ResolveLinklyCloudBaseUrl(
+            environment,
+            "HBPOS_LINKLY_CLOUD_REST_BASE_URL",
+            "HBPOS_LINKLY_CLOUD_REST_BASE_URL_PRODUCTION",
+            "HBPOS_LINKLY_CLOUD_REST_BASE_URL_SANDBOX",
+            GetLinklyCloudRestBaseUrl(environment));
+    }
+
     private static CardTerminalEnvironment ReadEnvironment()
     {
         var environmentText = System.Environment.GetEnvironmentVariable("HBPOS_CARD_TERMINAL_ENVIRONMENT") ??
@@ -177,17 +197,138 @@ public sealed record CardTerminalSettings(
             System.Environment.GetEnvironmentVariable("HBPOS_LINKLY_MODE") ??
             string.Empty;
 
-        return modeText.Trim().ToUpperInvariant() switch
+        return NormalizeLinklyConnectionMode(modeText, LinklyConnectionMode.LocalIp);
+    }
+
+    public static LinklyConnectionMode NormalizeLinklyConnectionMode(
+        string? value,
+        LinklyConnectionMode fallback)
+    {
+        var normalizedFallback = NormalizeLinklyConnectionMode(fallback);
+        var modeKey = NormalizeLinklyConnectionModeKey(value);
+
+        return modeKey switch
         {
-            "CLOUD" => LinklyConnectionMode.Cloud,
-            _ => LinklyConnectionMode.Local
+            "LOCAL" or "LOCALIP" => LinklyConnectionMode.LocalIp,
+            "CLOUD" or "CLOUDDIRECTSYNC" => LinklyConnectionMode.CloudDirectSync,
+            "CLOUDBACKENDASYNC" or "CLOUDAPIASYNC" => LinklyConnectionMode.CloudBackendAsync,
+            _ => normalizedFallback
         };
+    }
+
+    public static LinklyConnectionMode NormalizeLinklyConnectionMode(LinklyConnectionMode mode)
+    {
+        return (int)mode switch
+        {
+            0 => LinklyConnectionMode.LocalIp,
+            1 => LinklyConnectionMode.CloudDirectSync,
+            2 => LinklyConnectionMode.CloudBackendAsync,
+            _ => LinklyConnectionMode.LocalIp
+        };
+    }
+
+    public static string FormatLinklyConnectionMode(LinklyConnectionMode mode)
+    {
+        return NormalizeLinklyConnectionMode(mode) switch
+        {
+            LinklyConnectionMode.CloudDirectSync => nameof(LinklyConnectionMode.CloudDirectSync),
+            LinklyConnectionMode.CloudBackendAsync => nameof(LinklyConnectionMode.CloudBackendAsync),
+            _ => nameof(LinklyConnectionMode.LocalIp)
+        };
+    }
+
+    public static string? ResolveLinklyPosVendorId(
+        CardTerminalEnvironment environment,
+        string? configuredVendorId = null)
+    {
+        var configured = NormalizeOptional(configuredVendorId)
+            ?? NormalizeOptional(System.Environment.GetEnvironmentVariable("HBPOS_LINKLY_POS_VENDOR_ID"));
+        if (!string.IsNullOrWhiteSpace(configured))
+        {
+            return configured;
+        }
+
+        return environment == CardTerminalEnvironment.Sandbox
+            ? SandboxPlaceholderLinklyPosVendorId
+            : null;
     }
 
     private static string NormalizeBaseUrl(string baseUrl)
     {
         var trimmed = baseUrl.Trim();
         return trimmed.EndsWith("/", StringComparison.Ordinal) ? trimmed : trimmed + "/";
+    }
+
+    private static string ResolveLinklyCloudBaseUrl(
+        CardTerminalEnvironment environment,
+        string globalKey,
+        string productionKey,
+        string sandboxKey,
+        string fallback)
+    {
+        var environmentKey = environment == CardTerminalEnvironment.Sandbox ? sandboxKey : productionKey;
+        var value = System.Environment.GetEnvironmentVariable(environmentKey);
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            value = System.Environment.GetEnvironmentVariable(globalKey);
+        }
+
+        return string.IsNullOrWhiteSpace(value) ? fallback : NormalizeBaseUrl(value);
+    }
+
+    public static string? ValidateLinklyCloudAuthBaseUrl(
+        CardTerminalEnvironment environment,
+        string baseUrl)
+    {
+        return ValidateLinklyCloudBaseUrl(
+            environment,
+            baseUrl,
+            "Auth",
+            GetLinklyCloudAuthBaseUrl(CardTerminalEnvironment.Production),
+            GetLinklyCloudAuthBaseUrl(CardTerminalEnvironment.Sandbox));
+    }
+
+    public static string? ValidateLinklyCloudRestBaseUrl(
+        CardTerminalEnvironment environment,
+        string baseUrl)
+    {
+        return ValidateLinklyCloudBaseUrl(
+            environment,
+            baseUrl,
+            "REST",
+            GetLinklyCloudRestBaseUrl(CardTerminalEnvironment.Production),
+            GetLinklyCloudRestBaseUrl(CardTerminalEnvironment.Sandbox));
+    }
+
+    private static string? ValidateLinklyCloudBaseUrl(
+        CardTerminalEnvironment environment,
+        string baseUrl,
+        string endpointName,
+        string productionBaseUrl,
+        string sandboxBaseUrl)
+    {
+        if (!Uri.TryCreate(baseUrl, UriKind.Absolute, out var configuredUri))
+        {
+            return $"Linkly Cloud {endpointName} endpoint is not a valid absolute URL. Update the configured host and try again.";
+        }
+
+        var productionHost = new Uri(productionBaseUrl).Host;
+        var sandboxHost = new Uri(sandboxBaseUrl).Host;
+
+        // 仅拦截官方生产/沙箱 host 的环境错配，自定义代理域名保持兼容。
+        if (environment == CardTerminalEnvironment.Production &&
+            string.Equals(configuredUri.Host, sandboxHost, StringComparison.OrdinalIgnoreCase))
+        {
+            return $"Linkly Cloud {endpointName} endpoint does not match the selected Production environment. Update the configured host and try again.";
+        }
+
+        if (environment == CardTerminalEnvironment.Sandbox &&
+            string.Equals(configuredUri.Host, productionHost, StringComparison.OrdinalIgnoreCase))
+        {
+            return $"Linkly Cloud {endpointName} endpoint does not match the selected Sandbox environment. Update the configured host and try again.";
+        }
+
+        return null;
     }
 
     private static string ReadText(string key, string fallback)
@@ -200,7 +341,19 @@ public sealed record CardTerminalSettings(
     {
         return string.IsNullOrWhiteSpace(value) ? null : value.Trim();
     }
+
+    private static string NormalizeLinklyConnectionModeKey(string? value)
+    {
+        return string.IsNullOrWhiteSpace(value)
+            ? string.Empty
+            : string.Concat(value.Trim().Where(char.IsLetterOrDigit)).ToUpperInvariant();
+    }
 }
+
+public sealed record LinklyCloudCredentialSettings(
+    string? Username,
+    string? Password,
+    bool HasProtectedPassword);
 
 public interface ICardTerminalSettingsProvider
 {
@@ -238,8 +391,19 @@ public interface ILinklyCloudSecretStore
         CancellationToken cancellationToken = default);
 
     Task<string> GetOrCreateLinklyCloudPosIdAsync(
+        CardTerminalEnvironment environment,
         string storeCode,
         string deviceCode,
+        CancellationToken cancellationToken = default);
+
+    Task<LinklyCloudCredentialSettings> GetLinklyCloudCredentialAsync(
+        CardTerminalEnvironment environment,
+        CancellationToken cancellationToken = default);
+
+    Task SaveLinklyCloudCredentialAsync(
+        CardTerminalEnvironment environment,
+        string username,
+        string password,
         CancellationToken cancellationToken = default);
 }
 

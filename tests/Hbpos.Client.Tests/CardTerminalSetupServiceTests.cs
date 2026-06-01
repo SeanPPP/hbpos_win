@@ -4,6 +4,7 @@ using Hbpos.Contracts.Linkly;
 
 namespace Hbpos.Client.Tests;
 
+[Collection(EnvironmentVariableTestCollection.Name)]
 public sealed class CardTerminalSetupServiceTests
 {
     private const string LocalToken = "opaque-local-setup-token";
@@ -83,11 +84,74 @@ public sealed class CardTerminalSetupServiceTests
     }
 
     [Fact]
-    public async Task PairLinklyCloudAsync_fetches_store_credentials_and_saves_protected_secret()
+    public async Task PairLinklyCloudAsync_uses_local_credentials_and_saves_protected_secret()
+    {
+        var store = new FakeCardTerminalSettingsStore();
+        store.LinklyCloudCredentials[CardTerminalEnvironment.Production] =
+            new LinklyCloudCredentialSettings("local-user", "local-password", true);
+        var cloudApi = new FakeLinklyCloudApiClient { PairSecret = "cloud-secret" };
+        var service = new CardTerminalSetupService(
+            store,
+            new FakeSquareTerminalSetupClient(),
+            new FakeLinklyTerminalClient(),
+            linklyCloudApiClient: cloudApi);
+
+        var result = await service.PairLinklyCloudAsync(CardTerminalEnvironment.Production, "12345", null, null);
+
+        Assert.True(result.Succeeded);
+        Assert.Equal("local-user", cloudApi.LastUsername);
+        Assert.Equal("local-password", cloudApi.LastPassword);
+        Assert.Equal("12345", cloudApi.LastPairCode);
+        Assert.Equal("cloud-secret", store.SavedLinklyCloudSecret);
+    }
+
+    [Fact]
+    public async Task PairLinklyCloudAsync_uses_current_input_before_saved_credentials()
+    {
+        var store = new FakeCardTerminalSettingsStore();
+        store.LinklyCloudCredentials[CardTerminalEnvironment.Sandbox] =
+            new LinklyCloudCredentialSettings("saved-user", "saved-password", true);
+        var cloudApi = new FakeLinklyCloudApiClient { PairSecret = "cloud-secret" };
+        var service = new CardTerminalSetupService(
+            store,
+            new FakeSquareTerminalSetupClient(),
+            new FakeLinklyTerminalClient(),
+            linklyCloudApiClient: cloudApi);
+
+        var result = await service.PairLinklyCloudAsync(
+            CardTerminalEnvironment.Sandbox,
+            "12345",
+            "current-user",
+            "current-password");
+
+        Assert.True(result.Succeeded);
+        Assert.Equal("current-user", cloudApi.LastUsername);
+        Assert.Equal("current-password", cloudApi.LastPassword);
+    }
+
+    [Fact]
+    public async Task PairLinklyCloudAsync_blocks_missing_local_credentials()
+    {
+        var cloudApi = new FakeLinklyCloudApiClient { PairSecret = "cloud-secret" };
+        var service = new CardTerminalSetupService(
+            new FakeCardTerminalSettingsStore(),
+            new FakeSquareTerminalSetupClient(),
+            new FakeLinklyTerminalClient(),
+            linklyCloudApiClient: cloudApi);
+
+        var result = await service.PairLinklyCloudAsync(CardTerminalEnvironment.Production, "12345", null, null);
+
+        Assert.False(result.Succeeded);
+        Assert.Equal("Save the Linkly Cloud API username and password first.", result.Message);
+        Assert.Null(cloudApi.LastPairCode);
+    }
+
+    [Fact]
+    public async Task PairLinklyCloudAsync_does_not_require_pos_vendor_id()
     {
         using var variables = new EnvironmentVariableScope(new Dictionary<string, string?>
         {
-            ["HBPOS_LINKLY_POS_VENDOR_ID"] = "a256b7ec-709d-4c7d-8ffe-57cc7ca1fd22"
+            ["HBPOS_LINKLY_POS_VENDOR_ID"] = null
         });
         var store = new FakeCardTerminalSettingsStore();
         var cloudApi = new FakeLinklyCloudApiClient { PairSecret = "cloud-secret" };
@@ -95,38 +159,42 @@ public sealed class CardTerminalSetupServiceTests
             store,
             new FakeSquareTerminalSetupClient(),
             new FakeLinklyTerminalClient(),
-            new FakeLinklyCloudCredentialApiClient(),
             cloudApi);
 
-        var result = await service.PairLinklyCloudAsync(CardTerminalEnvironment.Production, "12345");
+        var result = await service.PairLinklyCloudAsync(CardTerminalEnvironment.Production, "12345", "user", "password");
 
         Assert.True(result.Succeeded);
-        Assert.Equal("store-user", cloudApi.LastUsername);
-        Assert.Equal("store-password", cloudApi.LastPassword);
+        Assert.Equal("user", cloudApi.LastUsername);
+        Assert.Equal("password", cloudApi.LastPassword);
         Assert.Equal("12345", cloudApi.LastPairCode);
         Assert.Equal("cloud-secret", store.SavedLinklyCloudSecret);
     }
 
     [Fact]
-    public async Task PairLinklyCloudAsync_blocks_missing_pos_vendor_id()
+    public async Task PairLinklyCloudAsync_rejects_sandbox_auth_host_for_production_environment()
     {
         using var variables = new EnvironmentVariableScope(new Dictionary<string, string?>
         {
-            ["HBPOS_LINKLY_POS_VENDOR_ID"] = null
+            ["HBPOS_LINKLY_CLOUD_AUTH_BASE_URL_PRODUCTION"] = "https://auth.sandbox.cloud.pceftpos.com/v1/"
         });
+        var store = new FakeCardTerminalSettingsStore();
+        store.LinklyCloudCredentials[CardTerminalEnvironment.Production] =
+            new LinklyCloudCredentialSettings("local-user", "local-password", true);
         var cloudApi = new FakeLinklyCloudApiClient { PairSecret = "cloud-secret" };
         var service = new CardTerminalSetupService(
-            new FakeCardTerminalSettingsStore(),
+            store,
             new FakeSquareTerminalSetupClient(),
             new FakeLinklyTerminalClient(),
-            new FakeLinklyCloudCredentialApiClient(),
-            cloudApi);
+            linklyCloudApiClient: cloudApi);
 
-        var result = await service.PairLinklyCloudAsync(CardTerminalEnvironment.Production, "12345");
+        var result = await service.PairLinklyCloudAsync(CardTerminalEnvironment.Production, "12345", null, null);
 
         Assert.False(result.Succeeded);
-        Assert.Equal("Linkly POS vendor id is not configured.", result.Message);
+        Assert.Equal(
+            "Linkly Cloud Auth endpoint does not match the selected Production environment. Update the configured host and try again.",
+            result.Message);
         Assert.Null(cloudApi.LastPairCode);
+        Assert.Null(store.SavedLinklyCloudSecret);
     }
 
     [Fact]
@@ -146,7 +214,26 @@ public sealed class CardTerminalSetupServiceTests
 
         Assert.NotNull(store.SavedConfiguration);
         Assert.Equal(CardProcessorKind.Linkly, store.SavedConfiguration!.Processor);
-        Assert.Equal(LinklyConnectionMode.Cloud, store.SavedConfiguration.LinklyConnectionMode);
+        Assert.Equal(LinklyConnectionMode.CloudDirectSync, store.SavedConfiguration.LinklyConnectionMode);
+    }
+
+    [Fact]
+    public async Task SaveLinklyCloudAsync_preserves_backend_async_mode()
+    {
+        var store = new FakeCardTerminalSettingsStore();
+        var service = new CardTerminalSetupService(
+            store,
+            new FakeSquareTerminalSetupClient(),
+            new FakeLinklyTerminalClient());
+
+        await service.SaveLinklyCloudAsync(CardTerminalConfiguration.Default with
+        {
+            Processor = CardProcessorKind.Linkly,
+            LinklyConnectionMode = LinklyConnectionMode.CloudBackendAsync
+        });
+
+        Assert.NotNull(store.SavedConfiguration);
+        Assert.Equal(LinklyConnectionMode.CloudBackendAsync, store.SavedConfiguration!.LinklyConnectionMode);
     }
 
     [Fact]
@@ -176,8 +263,40 @@ public sealed class CardTerminalSetupServiceTests
         Assert.Equal("sandbox-secret", cloudTerminal.LastSettings.LinklyCloudSecret);
         Assert.Equal("https://auth.sandbox.cloud.pceftpos.com/v1/", cloudTerminal.LastSettings.LinklyCloudAuthBaseUrl);
         Assert.Equal("https://rest.pos.sandbox.cloud.pceftpos.com/v1/", cloudTerminal.LastSettings.LinklyCloudRestBaseUrl);
+        Assert.Equal(CardTerminalSettings.SandboxPlaceholderLinklyPosVendorId, cloudTerminal.LastSettings.LinklyPosVendorId);
         Assert.Equal("S01", cloudTerminal.LastStoreCode);
         Assert.Equal("TERM-1", cloudTerminal.LastDeviceCode);
+    }
+
+    [Fact]
+    public async Task TestLinklyCloudConnectionAsync_rejects_production_rest_host_for_sandbox_environment()
+    {
+        using var variables = new EnvironmentVariableScope(new Dictionary<string, string?>
+        {
+            ["HBPOS_LINKLY_CLOUD_REST_BASE_URL_SANDBOX"] = "https://rest.pos.cloud.pceftpos.com/v1/"
+        });
+        var store = new FakeCardTerminalSettingsStore();
+        store.LinklyCloudSecrets[CardTerminalEnvironment.Sandbox] = "sandbox-secret";
+        var cloudTerminal = new FakeLinklyCloudTerminalClient
+        {
+            TestResult = new LinklyConnectionTestResult(true, "sandbox ready")
+        };
+        var deviceState = new DeviceAuthorizationState();
+        deviceState.Set(new DeviceAuthorizationContext("TERM-1", "S01", "HW-1", "AUTH-1"));
+        var service = new CardTerminalSetupService(
+            store,
+            new FakeSquareTerminalSetupClient(),
+            new FakeLinklyTerminalClient(),
+            linklyCloudTerminalClient: cloudTerminal,
+            deviceAuthorizationState: deviceState);
+
+        var result = await service.TestLinklyCloudConnectionAsync(CardTerminalEnvironment.Sandbox);
+
+        Assert.False(result.Succeeded);
+        Assert.Equal(
+            "Linkly Cloud REST endpoint does not match the selected Sandbox environment. Update the configured host and try again.",
+            result.Message);
+        Assert.Null(cloudTerminal.LastSettings);
     }
 
     private sealed class FakeCardTerminalSettingsStore : ICardTerminalSettingsStore
@@ -189,6 +308,10 @@ public sealed class CardTerminalSetupServiceTests
         public string? SavedLinklyCloudSecret { get; private set; }
 
         public Dictionary<CardTerminalEnvironment, string?> LinklyCloudSecrets { get; } = [];
+
+        public Dictionary<CardTerminalEnvironment, LinklyCloudCredentialSettings> LinklyCloudCredentials { get; } = [];
+
+        public (CardTerminalEnvironment Environment, string Username, string Password)? SavedLinklyCloudCredential { get; private set; }
 
         public Task<CardTerminalConfiguration> LoadAsync(CancellationToken cancellationToken = default)
         {
@@ -269,11 +392,33 @@ public sealed class CardTerminalSetupServiceTests
         }
 
         public Task<string> GetOrCreateLinklyCloudPosIdAsync(
+            CardTerminalEnvironment environment,
             string storeCode,
             string deviceCode,
             CancellationToken cancellationToken = default)
         {
             return Task.FromResult(Guid.NewGuid().ToString("D"));
+        }
+
+        public Task<LinklyCloudCredentialSettings> GetLinklyCloudCredentialAsync(
+            CardTerminalEnvironment environment,
+            CancellationToken cancellationToken = default)
+        {
+            return Task.FromResult(LinklyCloudCredentials.TryGetValue(environment, out var credential)
+                ? credential
+                : new LinklyCloudCredentialSettings(null, null, false));
+        }
+
+        public Task SaveLinklyCloudCredentialAsync(
+            CardTerminalEnvironment environment,
+            string username,
+            string password,
+            CancellationToken cancellationToken = default)
+        {
+            var credential = new LinklyCloudCredentialSettings(username, password, true);
+            LinklyCloudCredentials[environment] = credential;
+            SavedLinklyCloudCredential = (environment, username, password);
+            return Task.CompletedTask;
         }
     }
 
@@ -464,10 +609,13 @@ public sealed class CardTerminalSetupServiceTests
 
     private sealed class FakeLinklyCloudCredentialApiClient : ILinklyCloudCredentialApiClient
     {
-        public Task<LinklyCloudCredentialResponse> GetCredentialAsync(CancellationToken cancellationToken = default)
+        public Task<LinklyCloudCredentialResponse> GetCredentialAsync(
+            CardTerminalEnvironment environment,
+            CancellationToken cancellationToken = default)
         {
             return Task.FromResult(new LinklyCloudCredentialResponse(
                 "S01",
+                environment.ToString(),
                 "store-user",
                 "store-password",
                 DateTimeOffset.UtcNow));
@@ -506,6 +654,14 @@ public sealed class CardTerminalSetupServiceTests
         }
 
         public Task<LinklyCloudStatusResult> SendStatusAsync(
+            CardTerminalSettings settings,
+            string token,
+            CancellationToken cancellationToken = default)
+        {
+            throw new NotSupportedException();
+        }
+
+        public Task<LinklyCloudLogonResult> SendLogonAsync(
             CardTerminalSettings settings,
             string token,
             CancellationToken cancellationToken = default)

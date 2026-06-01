@@ -81,7 +81,15 @@ public sealed class LocalizationAndSettingsTests
             "settings.linkly.sop.local.step10",
             "settings.linkly.sop.mode.title",
             "settings.linkly.sop.mode.cloud",
-            "settings.linkly.sop.mode.local"
+            "settings.linkly.sop.mode.local",
+            "settings.linkly.mode.localIp",
+            "settings.linkly.mode.cloudDirectSync",
+            "settings.linkly.mode.cloudBackendAsync",
+            "settings.linkly.localIp.title",
+            "settings.linkly.cloudDirect.title",
+            "settings.linkly.cloudBackend.title",
+            "settings.linkly.cloudBackend.description",
+            "settings.linkly.cloudBackend.test"
         ];
         var localization = new LocalizationService();
 

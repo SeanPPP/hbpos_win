@@ -15,6 +15,13 @@ public enum SettingsCategory
     DeviceRegistration
 }
 
+public enum LinklySettingsMode
+{
+    LocalIp,
+    CloudDirectSync,
+    CloudBackendAsync
+}
+
 public sealed partial class SettingsViewModel : ObservableObject
 {
     private const string DefaultSquareDeviceCodeName = "HBPOS Terminal";
@@ -40,6 +47,8 @@ public sealed partial class SettingsViewModel : ObservableObject
     private string? _receiptPrinterTestStatusOverride;
     private string _lastSquareDeviceCodeNameSuggestion = DefaultSquareDeviceCodeName;
     private int _linklySecretStatusVersion;
+    private int _linklyCredentialStatusVersion;
+    private int _linklyCredentialEditVersion;
 
     [ObservableProperty]
     private SettingsCategory _selectedCategory = SettingsCategory.DataMaintenance;
@@ -69,10 +78,19 @@ public sealed partial class SettingsViewModel : ObservableObject
     private string _linklyPortText = CardTerminalConfiguration.Default.LinklyPort.ToString();
 
     [ObservableProperty]
-    private bool _isLinklyCloudMode;
+    private LinklySettingsMode _selectedLinklyMode = LinklySettingsMode.LocalIp;
 
     [ObservableProperty]
     private string _linklyPairCodeText = string.Empty;
+
+    [ObservableProperty]
+    private string _linklyCloudUsernameText = string.Empty;
+
+    [ObservableProperty]
+    private string _linklyCloudPasswordText = string.Empty;
+
+    [ObservableProperty]
+    private bool _hasSavedLinklyCloudPassword;
 
     [ObservableProperty]
     private bool _hasSavedLinklyCloudSecret;
@@ -151,6 +169,8 @@ public sealed partial class SettingsViewModel : ObservableObject
         CreateDeviceCodeCommand = new AsyncRelayCommand(CreateDeviceCodeAsync, CanCreateDeviceCode);
         RefreshDeviceCodeStatusCommand = new AsyncRelayCommand(RefreshDeviceCodeStatusAsync, CanRefreshDeviceCodeStatus);
         PairLinklyCloudCommand = new AsyncRelayCommand(PairLinklyCloudAsync, CanPairLinklyCloud);
+        SaveLinklyCloudCredentialCommand = new AsyncRelayCommand(SaveLinklyCloudCredentialAsync, CanSaveLinklyCloudCredential);
+        CancelLinklyCloudPairingCommand = new RelayCommand(CancelLinklyCloudPairing, CanCancelLinklyCloudPairing);
         TestLinklyCommand = new AsyncRelayCommand(TestLinklyAsync, CanTestLinkly);
         SaveLinklyCommand = new AsyncRelayCommand(SaveLinklyAsync, CanSaveLinkly);
         SaveReceiptPrinterCommand = new AsyncRelayCommand(SaveReceiptPrinterAsync, CanSaveReceiptPrinter);
@@ -183,6 +203,10 @@ public sealed partial class SettingsViewModel : ObservableObject
     public IAsyncRelayCommand RefreshDeviceCodeStatusCommand { get; }
 
     public IAsyncRelayCommand PairLinklyCloudCommand { get; }
+
+    public IAsyncRelayCommand SaveLinklyCloudCredentialCommand { get; }
+
+    public IRelayCommand CancelLinklyCloudPairingCommand { get; }
 
     public IAsyncRelayCommand TestLinklyCommand { get; }
 
@@ -249,11 +273,61 @@ public sealed partial class SettingsViewModel : ObservableObject
 
     public string SquareDeviceCodesUnavailableText => T("settings.square.deviceCodes.unsupported");
 
-    public bool IsLinklyLocalMode => !IsLinklyCloudMode;
+    public bool CanChangeEnvironment => !IsBusy;
+
+    public bool IsLinklyCloudMode
+    {
+        get => SelectedLinklyMode is LinklySettingsMode.CloudDirectSync or LinklySettingsMode.CloudBackendAsync;
+        set => SelectedLinklyMode = value ? LinklySettingsMode.CloudDirectSync : LinklySettingsMode.LocalIp;
+    }
+
+    public bool IsLinklyLocalMode => IsLinklyLocalIpMode;
+
+    public bool IsLinklyLocalIpMode
+    {
+        get => SelectedLinklyMode == LinklySettingsMode.LocalIp;
+        set
+        {
+            if (value)
+            {
+                SelectedLinklyMode = LinklySettingsMode.LocalIp;
+            }
+        }
+    }
+
+    public bool IsLinklyCloudDirectSyncMode
+    {
+        get => SelectedLinklyMode == LinklySettingsMode.CloudDirectSync;
+        set
+        {
+            if (value)
+            {
+                SelectedLinklyMode = LinklySettingsMode.CloudDirectSync;
+            }
+        }
+    }
+
+    public bool IsLinklyCloudBackendAsyncMode
+    {
+        get => SelectedLinklyMode == LinklySettingsMode.CloudBackendAsync;
+        set
+        {
+            if (value)
+            {
+                SelectedLinklyMode = LinklySettingsMode.CloudBackendAsync;
+            }
+        }
+    }
+
+    public bool IsLinklyStandardActionMode => !IsLinklyCloudBackendAsyncMode;
 
     public string LinklyCloudSecretStatusText => HasSavedLinklyCloudSecret
         ? T("settings.linkly.cloud.secretStatus.cached")
         : T("settings.linkly.cloud.secretStatus.missing");
+
+    public string LinklyCloudCredentialStatusText => HasSavedLinklyCloudPassword
+        ? T("settings.linkly.cloud.credentialStatus.cached")
+        : T("settings.linkly.cloud.credentialStatus.missing");
 
     public CardTerminalEnvironment SelectedEnvironment => IsSandbox
         ? CardTerminalEnvironment.Sandbox
@@ -268,7 +342,8 @@ public sealed partial class SettingsViewModel : ObservableObject
             IsSandbox = _loadedConfiguration.Environment == CardTerminalEnvironment.Sandbox;
             LinklyHostText = _loadedConfiguration.LinklyHost;
             LinklyPortText = _loadedConfiguration.LinklyPort.ToString();
-            IsLinklyCloudMode = _loadedConfiguration.LinklyConnectionMode == LinklyConnectionMode.Cloud;
+            SelectedLinklyMode = ToSettingsMode(_loadedConfiguration.LinklyConnectionMode);
+            await LoadLinklyCloudCredentialFieldsAsync(SelectedEnvironment);
             HasSavedLinklyCloudSecret = _loadedConfiguration.HasProtectedLinklyCloudSecret;
             LinklyPairCodeText = string.Empty;
             TimeoutSecondsText = _loadedConfiguration.TerminalTimeoutSeconds.ToString();
@@ -489,12 +564,23 @@ public sealed partial class SettingsViewModel : ObservableObject
         {
             LinklyConnectionSucceeded = false;
             ClearLinklyTestStatus();
-            var result = IsLinklyCloudMode
-                ? await _setupService.TestLinklyCloudConnectionAsync(SelectedEnvironment)
-                : await _setupService.TestLinklyConnectionAsync(
+            LinklyConnectionTestResult result;
+            if (IsLinklyCloudBackendAsyncMode)
+            {
+                result = await _setupService.TestLinklyCloudBackendConnectionAsync(SelectedEnvironment);
+            }
+            else if (IsLinklyCloudDirectSyncMode)
+            {
+                result = await _setupService.TestLinklyCloudConnectionAsync(SelectedEnvironment);
+            }
+            else
+            {
+                result = await _setupService.TestLinklyConnectionAsync(
                     NormalizeHost(LinklyHostText),
                     ParsePort(LinklyPortText),
                     TimeSpan.FromSeconds(ParseTimeoutSeconds(TimeoutSecondsText)));
+            }
+
             LinklyConnectionSucceeded = result.Succeeded;
 
             if (string.IsNullOrWhiteSpace(result.Message))
@@ -515,14 +601,32 @@ public sealed partial class SettingsViewModel : ObservableObject
 
     private async Task PairLinklyCloudAsync()
     {
+        var pairingEnvironment = SelectedEnvironment;
+        var pairCode = LinklyPairCodeText;
+        var username = LinklyCloudUsernameText;
+        var password = LinklyCloudPasswordText;
+        LogLinklyCloudSettings(
+            $"pair clicked environment={pairingEnvironment} hasUsername={!string.IsNullOrWhiteSpace(username)} hasCurrentPassword={!string.IsNullOrWhiteSpace(password)} hasSavedPassword={HasSavedLinklyCloudPassword} hasPairCode={!string.IsNullOrWhiteSpace(pairCode)}");
+        if (!ValidateLinklyCloudPairingInput())
+        {
+            return;
+        }
+
         await RunBusyAsync(async () =>
         {
             LinklyConnectionSucceeded = false;
             ClearLinklyTestStatus();
             var result = await _setupService.PairLinklyCloudAsync(
-                SelectedEnvironment,
-                LinklyPairCodeText);
-            HasSavedLinklyCloudSecret = result.Succeeded || HasSavedLinklyCloudSecret;
+                pairingEnvironment,
+                pairCode,
+                username,
+                password);
+            LogLinklyCloudSettings($"pair completed environment={pairingEnvironment} currentEnvironment={SelectedEnvironment} success={result.Succeeded} hasMessage={!string.IsNullOrWhiteSpace(result.Message)}");
+            if (SelectedEnvironment == pairingEnvironment)
+            {
+                HasSavedLinklyCloudSecret = result.Succeeded || HasSavedLinklyCloudSecret;
+            }
+
             if (string.IsNullOrWhiteSpace(result.Message))
             {
                 var key = result.Succeeded
@@ -539,6 +643,68 @@ public sealed partial class SettingsViewModel : ObservableObject
         });
     }
 
+    private bool ValidateLinklyCloudPairingInput()
+    {
+        if (string.IsNullOrWhiteSpace(LinklyCloudUsernameText))
+        {
+            LogLinklyCloudSettings($"pair validation blocked environment={SelectedEnvironment} reason=missing-username");
+            SetLinklyTestStatus("settings.linklyCloud.usernameRequired");
+            SetStatus("settings.linklyCloud.usernameRequired");
+            return false;
+        }
+
+        if (string.IsNullOrWhiteSpace(LinklyCloudPasswordText) && !HasSavedLinklyCloudPassword)
+        {
+            LogLinklyCloudSettings($"pair validation blocked environment={SelectedEnvironment} reason=missing-password");
+            SetLinklyTestStatus("settings.linklyCloud.passwordRequired");
+            SetStatus("settings.linklyCloud.passwordRequired");
+            return false;
+        }
+
+        if (string.IsNullOrWhiteSpace(LinklyPairCodeText))
+        {
+            LogLinklyCloudSettings($"pair validation blocked environment={SelectedEnvironment} reason=missing-pair-code");
+            SetLinklyTestStatus("settings.linklyCloud.pairCodeRequired");
+            SetStatus("settings.linklyCloud.pairCodeRequired");
+            return false;
+        }
+
+        return true;
+    }
+
+    private async Task SaveLinklyCloudCredentialAsync()
+    {
+        var credentialEnvironment = SelectedEnvironment;
+        var username = LinklyCloudUsernameText;
+        var password = LinklyCloudPasswordText;
+        await RunBusyAsync(async () =>
+        {
+            LogLinklyCloudSettings($"save credential clicked environment={credentialEnvironment} hasUsername={!string.IsNullOrWhiteSpace(username)} hasPassword={!string.IsNullOrWhiteSpace(password)}");
+            await _setupService.SaveLinklyCloudCredentialAsync(
+                credentialEnvironment,
+                username,
+                password);
+            if (SelectedEnvironment == credentialEnvironment)
+            {
+                HasSavedLinklyCloudPassword = true;
+                LinklyCloudPasswordText = string.Empty;
+            }
+
+            LogLinklyCloudSettings($"save credential completed environment={credentialEnvironment} currentEnvironment={SelectedEnvironment} success=true");
+            SetStatus("settings.status.linklyCloudCredentialSaved");
+        }, operationName: "save linkly cloud credential");
+    }
+
+    private void CancelLinklyCloudPairing()
+    {
+        // 取消配对只清空本次输入，不删除本机已保存的 Cloud API 测试账号。
+        LogLinklyCloudSettings($"pair cancel clicked environment={SelectedEnvironment} hadPassword={!string.IsNullOrWhiteSpace(LinklyCloudPasswordText)} hadPairCode={!string.IsNullOrWhiteSpace(LinklyPairCodeText)}");
+        LinklyPairCodeText = string.Empty;
+        LinklyCloudPasswordText = string.Empty;
+        ResetLinklyConnectionTest();
+        RaiseCommandStates();
+    }
+
     private async Task SaveLinklyAsync()
     {
         if (!LinklyConnectionSucceeded)
@@ -552,7 +718,8 @@ public sealed partial class SettingsViewModel : ObservableObject
             var configuration = _loadedConfiguration with
             {
                 Processor = CardProcessorKind.Linkly,
-                LinklyConnectionMode = IsLinklyCloudMode ? LinklyConnectionMode.Cloud : LinklyConnectionMode.Local,
+                Environment = SelectedEnvironment,
+                LinklyConnectionMode = ToConnectionMode(SelectedLinklyMode),
                 LinklyHost = NormalizeHost(LinklyHostText),
                 LinklyPort = ParsePort(LinklyPortText),
                 TerminalTimeoutSeconds = ParseTimeoutSeconds(TimeoutSecondsText),
@@ -705,7 +872,7 @@ public sealed partial class SettingsViewModel : ObservableObject
 
     private bool CanTestLinkly()
     {
-        return !IsBusy && (!IsLinklyCloudMode || HasSavedLinklyCloudSecret);
+        return !IsBusy && (!IsLinklyCloudDirectSyncMode || HasSavedLinklyCloudSecret);
     }
 
     private bool CanSaveLinkly()
@@ -715,7 +882,23 @@ public sealed partial class SettingsViewModel : ObservableObject
 
     private bool CanPairLinklyCloud()
     {
-        return !IsBusy && IsLinklyCloudMode && !string.IsNullOrWhiteSpace(LinklyPairCodeText);
+        return !IsBusy && IsLinklyCloudDirectSyncMode;
+    }
+
+    private bool CanSaveLinklyCloudCredential()
+    {
+        return !IsBusy &&
+            IsLinklyCloudDirectSyncMode &&
+            !string.IsNullOrWhiteSpace(LinklyCloudUsernameText) &&
+            !string.IsNullOrWhiteSpace(LinklyCloudPasswordText);
+    }
+
+    private bool CanCancelLinklyCloudPairing()
+    {
+        return !IsBusy &&
+            IsLinklyCloudDirectSyncMode &&
+            (!string.IsNullOrWhiteSpace(LinklyPairCodeText) ||
+             !string.IsNullOrWhiteSpace(LinklyCloudPasswordText));
     }
 
     private bool CanSaveReceiptPrinter()
@@ -787,6 +970,7 @@ public sealed partial class SettingsViewModel : ObservableObject
         OnPropertyChanged(nameof(SquareTitleText));
         OnPropertyChanged(nameof(LinklyTitleText));
         OnPropertyChanged(nameof(LinklyCloudSecretStatusText));
+        OnPropertyChanged(nameof(LinklyCloudCredentialStatusText));
         OnPropertyChanged(nameof(ReceiptPrinterTitleText));
         OnPropertyChanged(nameof(SquareTokenStatusText));
         OnPropertyChanged(nameof(SquareDeviceCodesUnavailableText));
@@ -843,12 +1027,18 @@ public sealed partial class SettingsViewModel : ObservableObject
         SquareLocations.Clear();
         SquareDevices.Clear();
         ResetSquareDeviceCodes();
+        // 切环境时先同步清空当前界面字段，避免旧环境数据在异步刷新完成前继续停留在界面上。
         ResetLinklyConnectionTest();
+        LinklyCloudUsernameText = string.Empty;
         HasSavedLinklyCloudSecret = false;
+        HasSavedLinklyCloudPassword = false;
+        LinklyCloudPasswordText = string.Empty;
+        LinklyPairCodeText = string.Empty;
         _devicesLoadedForLocationId = null;
         SelectedSquareLocation = null;
         SelectedSquareDevice = null;
         _ = RefreshLinklyCloudSecretStatusAsync(SelectedEnvironment);
+        _ = RefreshLinklyCloudCredentialStatusAsync(SelectedEnvironment);
         RaiseCommandStates();
         OnPropertyChanged(nameof(SelectedEnvironment));
         OnPropertyChanged(nameof(IsSquareDeviceCodesSupported));
@@ -862,11 +1052,36 @@ public sealed partial class SettingsViewModel : ObservableObject
         OnPropertyChanged(nameof(SquareTokenStatusText));
     }
 
-    partial void OnIsLinklyCloudModeChanged(bool value)
+    partial void OnSelectedLinklyModeChanged(LinklySettingsMode value)
     {
         ResetLinklyConnectionTest();
         RaiseCommandStates();
+        OnPropertyChanged(nameof(IsLinklyCloudMode));
         OnPropertyChanged(nameof(IsLinklyLocalMode));
+        OnPropertyChanged(nameof(IsLinklyLocalIpMode));
+        OnPropertyChanged(nameof(IsLinklyCloudDirectSyncMode));
+        OnPropertyChanged(nameof(IsLinklyCloudBackendAsyncMode));
+        OnPropertyChanged(nameof(IsLinklyStandardActionMode));
+    }
+
+    partial void OnLinklyCloudUsernameTextChanged(string value)
+    {
+        Interlocked.Increment(ref _linklyCredentialEditVersion);
+        ResetLinklyConnectionTest();
+        RaiseCommandStates();
+    }
+
+    partial void OnLinklyCloudPasswordTextChanged(string value)
+    {
+        Interlocked.Increment(ref _linklyCredentialEditVersion);
+        ResetLinklyConnectionTest();
+        RaiseCommandStates();
+    }
+
+    partial void OnHasSavedLinklyCloudPasswordChanged(bool value)
+    {
+        RaiseCommandStates();
+        OnPropertyChanged(nameof(LinklyCloudCredentialStatusText));
     }
 
     partial void OnLinklyPairCodeTextChanged(string value)
@@ -894,6 +1109,73 @@ public sealed partial class SettingsViewModel : ObservableObject
         catch (Exception ex)
         {
             LogSquareSettings($"refresh linkly cloud secret status failed environment={environment} message={LogValue(ex.Message)}");
+        }
+    }
+
+    private static void ApplyLinklyCloudCredentialFields(
+        LinklyCloudCredentialSettings credential,
+        Action<string> setUsername,
+        Action<string> setPassword,
+        Action<bool> setHasSavedPassword)
+    {
+        setUsername(credential.Username ?? string.Empty);
+        setPassword(string.Empty);
+        setHasSavedPassword(credential.HasProtectedPassword);
+    }
+
+    private void ClearLinklyCloudCredentialFields()
+    {
+        LinklyCloudUsernameText = string.Empty;
+        LinklyCloudPasswordText = string.Empty;
+        HasSavedLinklyCloudPassword = false;
+    }
+
+    private async Task LoadLinklyCloudCredentialFieldsAsync(CardTerminalEnvironment environment)
+    {
+        try
+        {
+            var credential = await _setupService.LoadLinklyCloudCredentialAsync(environment);
+            ApplyLinklyCloudCredentialFields(
+                credential,
+                username => LinklyCloudUsernameText = username,
+                password => LinklyCloudPasswordText = password,
+                hasSavedPassword => HasSavedLinklyCloudPassword = hasSavedPassword);
+        }
+        catch (Exception ex)
+        {
+            LogSquareSettings($"load linkly cloud credential failed environment={environment} message={LogValue(ex.Message)}");
+            ClearLinklyCloudCredentialFields();
+        }
+    }
+
+    private async Task RefreshLinklyCloudCredentialStatusAsync(CardTerminalEnvironment environment)
+    {
+        var version = Interlocked.Increment(ref _linklyCredentialStatusVersion);
+        var editVersion = _linklyCredentialEditVersion;
+        try
+        {
+            var credential = await _setupService.LoadLinklyCloudCredentialAsync(environment);
+            // 只有最新刷新、环境仍匹配且用户没有继续编辑时才回写，避免异步结果覆盖正在输入的凭据。
+            if (version == _linklyCredentialStatusVersion &&
+                editVersion == _linklyCredentialEditVersion &&
+                SelectedEnvironment == environment)
+            {
+                ApplyLinklyCloudCredentialFields(
+                    credential,
+                    username => LinklyCloudUsernameText = username,
+                    password => LinklyCloudPasswordText = password,
+                    hasSavedPassword => HasSavedLinklyCloudPassword = hasSavedPassword);
+            }
+        }
+        catch (Exception ex)
+        {
+            LogSquareSettings($"refresh linkly cloud credential status failed environment={environment} message={LogValue(ex.Message)}");
+            if (version == _linklyCredentialStatusVersion &&
+                editVersion == _linklyCredentialEditVersion &&
+                SelectedEnvironment == environment)
+            {
+                ClearLinklyCloudCredentialFields();
+            }
         }
     }
 
@@ -961,6 +1243,7 @@ public sealed partial class SettingsViewModel : ObservableObject
     partial void OnIsBusyChanged(bool value)
     {
         RaiseCommandStates();
+        OnPropertyChanged(nameof(CanChangeEnvironment));
     }
 
     private void RaiseCommandStates()
@@ -972,6 +1255,8 @@ public sealed partial class SettingsViewModel : ObservableObject
         CreateDeviceCodeCommand.NotifyCanExecuteChanged();
         RefreshDeviceCodeStatusCommand.NotifyCanExecuteChanged();
         PairLinklyCloudCommand.NotifyCanExecuteChanged();
+        SaveLinklyCloudCredentialCommand.NotifyCanExecuteChanged();
+        CancelLinklyCloudPairingCommand.NotifyCanExecuteChanged();
         TestLinklyCommand.NotifyCanExecuteChanged();
         SaveLinklyCommand.NotifyCanExecuteChanged();
         SaveReceiptPrinterCommand.NotifyCanExecuteChanged();
@@ -1070,6 +1355,26 @@ public sealed partial class SettingsViewModel : ObservableObject
             : CardTerminalConfiguration.Default.TerminalTimeoutSeconds;
     }
 
+    private static LinklySettingsMode ToSettingsMode(LinklyConnectionMode mode)
+    {
+        return CardTerminalSettings.NormalizeLinklyConnectionMode(mode) switch
+        {
+            LinklyConnectionMode.CloudDirectSync => LinklySettingsMode.CloudDirectSync,
+            LinklyConnectionMode.CloudBackendAsync => LinklySettingsMode.CloudBackendAsync,
+            _ => LinklySettingsMode.LocalIp
+        };
+    }
+
+    private static LinklyConnectionMode ToConnectionMode(LinklySettingsMode mode)
+    {
+        return mode switch
+        {
+            LinklySettingsMode.CloudDirectSync => LinklyConnectionMode.CloudDirectSync,
+            LinklySettingsMode.CloudBackendAsync => LinklyConnectionMode.CloudBackendAsync,
+            _ => LinklyConnectionMode.LocalIp
+        };
+    }
+
     private async Task LoadSquareDevicesForLocationAsync(string locationId, bool selectSavedDevice)
     {
         SquareDevices.ReplaceWith(await _setupService.ListSquareDevicesAsync(
@@ -1128,6 +1433,11 @@ public sealed partial class SettingsViewModel : ObservableObject
     private static void LogSquareSettings(string message)
     {
         ConsoleLog.Write("Square", $"settings ui {message}");
+    }
+
+    private static void LogLinklyCloudSettings(string message)
+    {
+        ConsoleLog.Write("LinklyCloud", $"settings ui {message}");
     }
 
     private static string LogValue(string? value)

@@ -15,18 +15,75 @@ public interface ILinklyCloudCredentialSchemaSqlExecutor
 public sealed class SqlSugarLinklyCloudCredentialSchemaInitializer(
     ILinklyCloudCredentialSchemaSqlExecutor sqlExecutor) : ILinklyCloudCredentialSchemaInitializer
 {
+    // 旧表升级时补齐环境维度，并保持脚本可重复执行。
     internal const string EnsureTableSql = """
         IF OBJECT_ID(N'[dbo].[POSM_LinklyCloudCredential]', N'U') IS NULL
         BEGIN
             CREATE TABLE [dbo].[POSM_LinklyCloudCredential] (
                 [Id] BIGINT IDENTITY(1,1) NOT NULL CONSTRAINT [PK_POSM_LinklyCloudCredential] PRIMARY KEY,
                 [StoreCode] NVARCHAR(32) NOT NULL,
+                [Environment] NVARCHAR(32) NOT NULL CONSTRAINT [DF_POSM_LinklyCloudCredential_Environment] DEFAULT (N'Production'),
                 [Username] NVARCHAR(256) NOT NULL,
                 [Password] NVARCHAR(256) NOT NULL,
                 [UpdatedAt] DATETIME2(7) NOT NULL CONSTRAINT [DF_POSM_LinklyCloudCredential_UpdatedAt] DEFAULT (SYSUTCDATETIME()),
                 [UpdatedBy] NVARCHAR(128) NULL,
-                CONSTRAINT [UX_POSM_LinklyCloudCredential_StoreCode] UNIQUE ([StoreCode])
+                CONSTRAINT [CK_POSM_LinklyCloudCredential_Environment] CHECK ([Environment] IN (N'Production', N'Sandbox')),
+                CONSTRAINT [UX_POSM_LinklyCloudCredential_StoreCode_Environment] UNIQUE ([StoreCode], [Environment])
             );
+        END;
+
+        IF OBJECT_ID(N'[dbo].[POSM_LinklyCloudCredential]', N'U') IS NOT NULL
+        BEGIN
+            IF COL_LENGTH(N'dbo.POSM_LinklyCloudCredential', N'Environment') IS NULL
+            BEGIN
+                ALTER TABLE [dbo].[POSM_LinklyCloudCredential]
+                    ADD [Environment] NVARCHAR(32) NOT NULL
+                    CONSTRAINT [DF_POSM_LinklyCloudCredential_Environment] DEFAULT (N'Production') WITH VALUES;
+            END
+            ELSE
+            BEGIN
+                UPDATE [dbo].[POSM_LinklyCloudCredential]
+                SET [Environment] = N'Production'
+                WHERE NULLIF(LTRIM(RTRIM([Environment])), N'') IS NULL;
+
+                IF EXISTS (
+                    SELECT 1
+                    FROM sys.columns
+                    WHERE [object_id] = OBJECT_ID(N'[dbo].[POSM_LinklyCloudCredential]', N'U')
+                      AND [name] = N'Environment'
+                      AND [is_nullable] = 1)
+                BEGIN
+                    ALTER TABLE [dbo].[POSM_LinklyCloudCredential]
+                        ALTER COLUMN [Environment] NVARCHAR(32) NOT NULL;
+                END;
+            END;
+
+            IF OBJECT_ID(N'[dbo].[DF_POSM_LinklyCloudCredential_Environment]', N'D') IS NULL
+            BEGIN
+                ALTER TABLE [dbo].[POSM_LinklyCloudCredential]
+                    ADD CONSTRAINT [DF_POSM_LinklyCloudCredential_Environment]
+                    DEFAULT (N'Production') FOR [Environment];
+            END;
+
+            IF OBJECT_ID(N'[dbo].[UX_POSM_LinklyCloudCredential_StoreCode]', N'UQ') IS NOT NULL
+            BEGIN
+                ALTER TABLE [dbo].[POSM_LinklyCloudCredential]
+                    DROP CONSTRAINT [UX_POSM_LinklyCloudCredential_StoreCode];
+            END;
+
+            IF OBJECT_ID(N'[dbo].[CK_POSM_LinklyCloudCredential_Environment]', N'C') IS NULL
+            BEGIN
+                ALTER TABLE [dbo].[POSM_LinklyCloudCredential] WITH CHECK
+                    ADD CONSTRAINT [CK_POSM_LinklyCloudCredential_Environment]
+                    CHECK ([Environment] IN (N'Production', N'Sandbox'));
+            END;
+
+            IF OBJECT_ID(N'[dbo].[UX_POSM_LinklyCloudCredential_StoreCode_Environment]', N'UQ') IS NULL
+            BEGIN
+                ALTER TABLE [dbo].[POSM_LinklyCloudCredential]
+                    ADD CONSTRAINT [UX_POSM_LinklyCloudCredential_StoreCode_Environment]
+                    UNIQUE ([StoreCode], [Environment]);
+            END;
         END;
         """;
 

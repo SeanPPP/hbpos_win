@@ -48,13 +48,20 @@ public sealed class LinklyCloudTerminalClient(
         Log($"test start environment={settings.Environment} store={LogValue(storeCode)} device={LogValue(deviceCode)} hasSecret={!string.IsNullOrWhiteSpace(settings.LinklyCloudSecret)} hasVendorId={!string.IsNullOrWhiteSpace(settings.LinklyPosVendorId)}");
         try
         {
+            var endpointValidationMessage = ValidateEndpointSettings(settings);
+            if (!string.IsNullOrWhiteSpace(endpointValidationMessage))
+            {
+                Log($"test blocked environment={settings.Environment} reason=invalid-endpoint");
+                return new LinklyConnectionTestResult(false, endpointValidationMessage);
+            }
+
             var token = await GetTokenAsync(settings, storeCode, deviceCode, cancellationToken);
-            var result = await apiClient.SendStatusAsync(settings, token.Token, cancellationToken);
+            var result = await apiClient.SendLogonAsync(settings, token.Token, cancellationToken);
             var message = FormatResponseMessage(result.ResponseText, result.ResponseCode);
-            Log($"test completed environment={settings.Environment} store={LogValue(storeCode)} device={LogValue(deviceCode)} success={result.Succeeded} responseCode={LogValue(result.ResponseCode)} loggedOn={result.LoggedOn}");
+            Log($"test logon completed environment={settings.Environment} store={LogValue(storeCode)} device={LogValue(deviceCode)} success={result.Succeeded} responseCode={LogValue(result.ResponseCode)}");
             return result.Succeeded
-                ? new LinklyConnectionTestResult(true, string.IsNullOrWhiteSpace(message) ? T("linkly.cloud.test.success", "Linkly Cloud connection succeeded.") : message)
-                : new LinklyConnectionTestResult(false, string.IsNullOrWhiteSpace(message) ? T("linkly.cloud.test.failed", "Linkly Cloud status check failed.") : message);
+                ? new LinklyConnectionTestResult(true, string.IsNullOrWhiteSpace(message) ? T("linkly.cloud.test.success", "Linkly Cloud logon succeeded.") : message)
+                : new LinklyConnectionTestResult(false, string.IsNullOrWhiteSpace(message) ? T("linkly.cloud.test.failed", "Linkly Cloud logon failed.") : message);
         }
         catch (LinklyCloudApiException ex)
         {
@@ -123,6 +130,13 @@ public sealed class LinklyCloudTerminalClient(
         {
             Log($"transaction blocked txnType={txnType} store={LogValue(session.StoreCode)} device={LogValue(session.DeviceCode)} reason=missing-pos-vendor-id");
             return new PaymentAuthorizationResult(false, null, T("linkly.cloud.vendorIdMissing", "Linkly POS vendor id is not configured."));
+        }
+
+        var endpointValidationMessage = ValidateEndpointSettings(settings);
+        if (!string.IsNullOrWhiteSpace(endpointValidationMessage))
+        {
+            Log($"transaction blocked txnType={txnType} environment={settings.Environment} store={LogValue(session.StoreCode)} device={LogValue(session.DeviceCode)} reason=invalid-endpoint");
+            return new PaymentAuthorizationResult(false, null, endpointValidationMessage);
         }
 
         using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
@@ -243,9 +257,23 @@ public sealed class LinklyCloudTerminalClient(
         string deviceCode,
         CancellationToken cancellationToken)
     {
-        var posId = await secretStore.GetOrCreateLinklyCloudPosIdAsync(storeCode, deviceCode, cancellationToken);
+        var posId = await secretStore.GetOrCreateLinklyCloudPosIdAsync(
+            settings.Environment,
+            storeCode,
+            deviceCode,
+            cancellationToken);
         Log($"token resolve start environment={settings.Environment} store={LogValue(storeCode)} device={LogValue(deviceCode)} posId={ShortId(posId)}");
         return await apiClient.GetTokenAsync(settings, posId, cancellationToken);
+    }
+
+    private static string? ValidateEndpointSettings(CardTerminalSettings settings)
+    {
+        return CardTerminalSettings.ValidateLinklyCloudAuthBaseUrl(
+                settings.Environment,
+                settings.LinklyCloudAuthBaseUrl)
+            ?? CardTerminalSettings.ValidateLinklyCloudRestBaseUrl(
+                settings.Environment,
+                settings.LinklyCloudRestBaseUrl);
     }
 
     private PaymentAuthorizationResult ToAuthorizationResult(
@@ -392,7 +420,8 @@ public sealed class LinklyCloudTerminalClient(
 
 public sealed class ConfiguredLinklyTerminalClient(
     LinklyTerminalClient localClient,
-    ILinklyCloudTerminalClient cloudClient) : ILinklyTerminalClient
+    ILinklyCloudTerminalClient cloudClient,
+    ILinklyBackendTerminalClient? backendClient = null) : ILinklyTerminalClient
 {
     public Task<LinklyConnectionTestResult> TestConnectionAsync(
         string host,
@@ -409,9 +438,15 @@ public sealed class ConfiguredLinklyTerminalClient(
         CardTerminalSettings settings,
         CancellationToken cancellationToken = default)
     {
-        return settings.LinklyConnectionMode == LinklyConnectionMode.Cloud
-            ? cloudClient.PurchaseAsync(amount, session, settings, cancellationToken)
-            : localClient.PurchaseAsync(amount, session, settings, cancellationToken);
+        // 运行时路由集中在终端适配层，付款流程只依赖统一的 Linkly client。
+        return CardTerminalSettings.NormalizeLinklyConnectionMode(settings.LinklyConnectionMode) switch
+        {
+            LinklyConnectionMode.CloudDirectSync => cloudClient.PurchaseAsync(amount, session, settings, cancellationToken),
+            LinklyConnectionMode.CloudBackendAsync => backendClient is null
+                ? Task.FromResult(BackendUnavailable())
+                : backendClient.PurchaseAsync(amount, session, settings, cancellationToken),
+            _ => localClient.PurchaseAsync(amount, session, settings, cancellationToken)
+        };
     }
 
     public Task<PaymentAuthorizationResult> RefundAsync(
@@ -421,9 +456,15 @@ public sealed class ConfiguredLinklyTerminalClient(
         string? originalReference,
         CancellationToken cancellationToken = default)
     {
-        return settings.LinklyConnectionMode == LinklyConnectionMode.Cloud
-            ? cloudClient.RefundAsync(amount, session, settings, originalReference, cancellationToken)
-            : localClient.RefundAsync(amount, session, settings, originalReference, cancellationToken);
+        // 退款沿用同一分派规则，避免上层 UI 直接理解 Linkly 模式。
+        return CardTerminalSettings.NormalizeLinklyConnectionMode(settings.LinklyConnectionMode) switch
+        {
+            LinklyConnectionMode.CloudDirectSync => cloudClient.RefundAsync(amount, session, settings, originalReference, cancellationToken),
+            LinklyConnectionMode.CloudBackendAsync => backendClient is null
+                ? Task.FromResult(BackendUnavailable())
+                : backendClient.RefundAsync(amount, session, settings, originalReference, cancellationToken),
+            _ => localClient.RefundAsync(amount, session, settings, originalReference, cancellationToken)
+        };
     }
 
     public Task<PaymentAuthorizationResult> VoidAsync(
@@ -434,5 +475,10 @@ public sealed class ConfiguredLinklyTerminalClient(
         CancellationToken cancellationToken = default)
     {
         return localClient.VoidAsync(amount, session, settings, originalReference, cancellationToken);
+    }
+
+    private static PaymentAuthorizationResult BackendUnavailable()
+    {
+        return new PaymentAuthorizationResult(false, null, "ANZ Linkly backend terminal adapter is unavailable.");
     }
 }

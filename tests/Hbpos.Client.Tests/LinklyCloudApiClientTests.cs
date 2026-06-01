@@ -39,6 +39,28 @@ public sealed class LinklyCloudApiClientTests
     }
 
     [Fact]
+    public async Task PairAsync_uses_development_sandbox_pairing_endpoint()
+    {
+        HttpRequestMessage? capturedRequest = null;
+        var client = new LinklyCloudApiClient(new HttpClient(new StubHttpMessageHandler(request =>
+        {
+            capturedRequest = CloneRequestWithBody(request);
+            return JsonResponse("""{ "secret": "paired-secret" }""");
+        })));
+
+        await client.PairAsync(
+            CardTerminalSettings.GetLinklyCloudAuthBaseUrl(CardTerminalEnvironment.Sandbox),
+            "sandbox-user",
+            "sandbox-password",
+            "123456");
+
+        Assert.NotNull(capturedRequest);
+        Assert.Equal(
+            "https://auth.sandbox.cloud.pceftpos.com/v1/pairing/cloudpos",
+            capturedRequest!.RequestUri!.AbsoluteUri);
+    }
+
+    [Fact]
     public async Task GetTokenAsync_posts_secret_and_pos_identity()
     {
         using var logs = new ConsoleLogCapture();
@@ -123,6 +145,51 @@ public sealed class LinklyCloudApiClientTests
         Assert.Equal("bearer-token", capturedRequest.Headers.Authorization?.Parameter);
         var body = await capturedRequest.Content!.ReadAsStringAsync();
         Assert.Equal("0", ReadNestedJsonString(body, "Request", "StatusType"));
+    }
+
+    [Fact]
+    public async Task SendLogonAsync_posts_logon_request_and_parses_response()
+    {
+        HttpRequestMessage? capturedRequest = null;
+        var client = new LinklyCloudApiClient(new HttpClient(new StubHttpMessageHandler(request =>
+        {
+            capturedRequest = CloneRequestWithBody(request);
+            return JsonResponse(
+                """
+                {
+                  "SessionId": "session-1",
+                  "ResponseType": "logon",
+                  "Response": {
+                    "Success": true,
+                    "ResponseCode": "00",
+                    "ResponseText": "APPROVED",
+                    "Catid": "TERM",
+                    "Caid": "MERCHANT",
+                    "PinPadVersion": "100800"
+                  }
+                }
+                """);
+        })));
+
+        var result = await client.SendLogonAsync(CreateCloudSettings(), "bearer-token");
+
+        Assert.True(result.Succeeded);
+        Assert.Equal("00", result.ResponseCode);
+        Assert.Equal("APPROVED", result.ResponseText);
+        Assert.Equal("TERM", result.Catid);
+        Assert.Equal("MERCHANT", result.Caid);
+        Assert.Equal("100800", result.PinPadVersion);
+        Assert.NotNull(capturedRequest);
+        Assert.Equal(HttpMethod.Post, capturedRequest!.Method);
+        Assert.Contains("/logon?async=false", capturedRequest.RequestUri!.AbsoluteUri, StringComparison.Ordinal);
+        Assert.Equal("Bearer", capturedRequest.Headers.Authorization?.Scheme);
+        Assert.Equal("bearer-token", capturedRequest.Headers.Authorization?.Parameter);
+        var body = await capturedRequest.Content!.ReadAsStringAsync();
+        Assert.Equal("00", ReadNestedJsonString(body, "Request", "Merchant"));
+        Assert.Equal(" ", ReadNestedJsonString(body, "Request", "LogonType"));
+        Assert.Equal("00", ReadNestedJsonString(body, "Request", "Application"));
+        Assert.Equal("0", ReadNestedJsonString(body, "Request", "ReceiptAutoPrint"));
+        Assert.Equal("0", ReadNestedJsonString(body, "Request", "CutReceipt"));
     }
 
     [Fact]

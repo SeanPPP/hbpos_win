@@ -134,6 +134,19 @@ public static class ServiceRegistration
             client.Timeout = TimeSpan.FromSeconds(120);
         });
         services.AddSingleton<ILinklyCloudTerminalClient, LinklyCloudTerminalClient>();
+        services.AddHttpClient<ILinklyBackendTerminalClient, LinklyBackendTerminalClient>(client =>
+        {
+            client.BaseAddress = GetApiBaseAddress();
+            client.Timeout = TimeSpan.FromSeconds(120);
+        })
+        .AddHttpMessageHandler<DeviceAuthorizationMessageHandler>();
+        services.AddHttpClient(LinklyBackendReceiptPrintedNotifier.HttpClientName, client =>
+        {
+            client.BaseAddress = GetApiBaseAddress();
+            client.Timeout = TimeSpan.FromSeconds(10);
+        })
+        .AddHttpMessageHandler<DeviceAuthorizationMessageHandler>();
+        services.AddSingleton<ICardReceiptPrintedNotifier, LinklyBackendReceiptPrintedNotifier>();
         services.AddSingleton<ILinklyTerminalClient, ConfiguredLinklyTerminalClient>();
         services.AddHttpClient<ISquareTerminalSetupClient, SquareTerminalSetupClient>(client =>
         {
@@ -143,9 +156,9 @@ public static class ServiceRegistration
             sp.GetRequiredService<ICardTerminalSettingsStore>(),
             sp.GetRequiredService<ISquareTerminalSetupClient>(),
             sp.GetRequiredService<ILinklyTerminalClient>(),
-            sp.GetRequiredService<ILinklyCloudCredentialApiClient>(),
             sp.GetRequiredService<ILinklyCloudApiClient>(),
             sp.GetRequiredService<ILinklyCloudTerminalClient>(),
+            sp.GetRequiredService<ILinklyBackendTerminalClient>(),
             sp.GetRequiredService<DeviceAuthorizationState>()));
         services.AddHttpClient<ICardTerminalClient, ConfiguredCardTerminalClient>(client =>
         {
@@ -159,6 +172,7 @@ public static class ServiceRegistration
         services.AddSingleton<IUserFeedbackService, WindowsMessageBeepUserFeedbackService>();
         services.AddSingleton<IApplicationExitService, WpfApplicationExitService>();
         services.AddSingleton<IConfirmationDialogService, WpfConfirmationDialogService>();
+        services.AddSingleton<ILinklyTerminalDialogService, WpfLinklyTerminalDialogService>();
         services.AddTransient<IPosTerminalWorkflowService>(sp => new PosTerminalWorkflowService(
             sp.GetRequiredService<LocalSellableItemIndex>(),
             sp.GetRequiredService<PosCartService>(),
