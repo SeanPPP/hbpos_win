@@ -41,7 +41,7 @@
                 <TextBlock x:Name="StatusLabelTextBlock"
                            FontSize="13"
                            FontWeight="SemiBold"
-                           Foreground="{StaticResource PosMutedTextBrush}" />
+                           Foreground="{StaticResource PosMutedForegroundBrush}" />
                 <TextBlock x:Name="StatusTextBlock"
                            Grid.Column="1"
                            Margin="12,0,0,0"
@@ -56,7 +56,7 @@
             <TextBlock x:Name="DisplayLabelTextBlock"
                        FontSize="13"
                        FontWeight="SemiBold"
-                       Foreground="{StaticResource PosMutedTextBrush}" />
+                       Foreground="{StaticResource PosMutedForegroundBrush}" />
             <TextBlock x:Name="DisplayTextBlock"
                        Margin="0,6,0,0"
                        MinHeight="54"
@@ -74,7 +74,7 @@
                        Margin="0,0,0,6"
                        FontSize="13"
                        FontWeight="SemiBold"
-                       Foreground="{StaticResource PosMutedTextBrush}" />
+                       Foreground="{StaticResource PosMutedForegroundBrush}" />
             <TextBox x:Name="ReceiptTextBox"
                      IsReadOnly="True"
                      BorderBrush="#FFE0E4EA"
