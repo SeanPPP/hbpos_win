@@ -92,6 +92,50 @@ public sealed class LinklyBackendTerminalClientTests
     }
 
     [Fact]
+    public async Task TestConnectionAsync_combines_multiple_backend_health_failures_and_logs_failed_codes()
+    {
+        using var logs = new ConsoleLogCapture();
+        var handler = new StubHttpMessageHandler(_ => JsonResponse(
+            """
+            {
+              "success": true,
+              "data": {
+                "environment": "Sandbox",
+                "storeCode": "S01",
+                "deviceCode": "TERM-1",
+                "isReady": false,
+                "checks": [
+                  {
+                    "code": "STORE_CREDENTIAL",
+                    "isReady": false,
+                    "message": "Linkly Cloud store credential is missing for this store."
+                  },
+                  {
+                    "code": "TERMINAL_SECRET",
+                    "isReady": false,
+                    "message": "Linkly Cloud terminal secret is missing for this terminal."
+                  }
+                ]
+              }
+            }
+            """));
+        var client = CreateClient(handler, new FakeLinklyTerminalDialogService());
+
+        var result = await client.TestConnectionAsync(CardTerminalEnvironment.Sandbox);
+
+        Assert.False(result.Succeeded);
+        Assert.Equal(
+            string.Join(
+                Environment.NewLine,
+                "Linkly Cloud store credential is missing for this store.",
+                "Linkly Cloud terminal secret is missing for this terminal."),
+            result.Message);
+        Assert.Contains(
+            logs.Lines,
+            line => line.Contains("failedChecks=STORE_CREDENTIAL,TERMINAL_SECRET", StringComparison.Ordinal));
+    }
+
+    [Fact]
     public async Task TestConnectionAsync_does_not_treat_missing_health_config_endpoint_as_success()
     {
         var requests = new List<HttpRequestMessage>();
@@ -1286,6 +1330,26 @@ public sealed class LinklyBackendTerminalClientTests
         {
             CloseCallCount++;
             return Task.CompletedTask;
+        }
+    }
+
+    private sealed class ConsoleLogCapture : IDisposable
+    {
+        public List<string> Lines { get; } = [];
+
+        public ConsoleLogCapture()
+        {
+            ConsoleLog.LineWritten += OnLineWritten;
+        }
+
+        public void Dispose()
+        {
+            ConsoleLog.LineWritten -= OnLineWritten;
+        }
+
+        private void OnLineWritten(string line)
+        {
+            Lines.Add(line);
         }
     }
 }

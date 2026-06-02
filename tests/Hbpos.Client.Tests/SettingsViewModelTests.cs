@@ -633,6 +633,44 @@ public sealed class SettingsViewModelTests
     }
 
     [Fact]
+    public async Task CloudBackendAsync_mode_reuses_credential_save_and_pair_commands()
+    {
+        var service = new FakeCardTerminalSetupService
+        {
+            LinklyCloudPairResult = new LinklyConnectionTestResult(true, "paired")
+        };
+        var viewModel = new SettingsViewModel(service)
+        {
+            SelectedLinklyMode = LinklySettingsMode.CloudBackendAsync,
+            IsSandbox = true,
+            LinklyCloudUsernameText = "cloud-user",
+            LinklyCloudPasswordText = "cloud-password",
+            LinklyPairCodeText = "12345"
+        };
+
+        Assert.True(viewModel.SaveLinklyCloudCredentialCommand.CanExecute(null));
+        Assert.True(viewModel.PairLinklyCloudCommand.CanExecute(null));
+
+        await viewModel.SaveLinklyCloudCredentialCommand.ExecuteAsync(null);
+
+        Assert.Equal(
+            "Linkly Cloud API test account saved securely and synced to HBPOS.",
+            viewModel.LinklyTestStatusMessage);
+        Assert.Equal(
+            "Linkly Cloud API test account saved securely and synced to HBPOS.",
+            viewModel.StatusMessage);
+        Assert.Equal(CardTerminalEnvironment.Sandbox, service.SavedLinklyCloudCredential?.Environment);
+        Assert.True(service.LastSaveLinklyCloudCredentialSyncBackend);
+
+        await viewModel.PairLinklyCloudCommand.ExecuteAsync(null);
+
+        Assert.True(viewModel.HasSavedLinklyCloudSecret);
+        Assert.Equal("cloud-user", service.LastPairUsername);
+        Assert.Equal(string.Empty, service.LastPairPassword);
+        Assert.True(service.LastPairSyncBackendTerminalCredential);
+    }
+
+    [Fact]
     public async Task LinklyCloud_commands_pair_test_and_save_cloud_mode()
     {
         var service = new FakeCardTerminalSetupService
@@ -658,6 +696,7 @@ public sealed class SettingsViewModelTests
         Assert.True(viewModel.HasSavedLinklyCloudSecret);
         Assert.Equal("cloud-user", service.LastPairUsername);
         Assert.Equal("cloud-password", service.LastPairPassword);
+        Assert.False(service.LastPairSyncBackendTerminalCredential);
         Assert.Equal("cloud connected", viewModel.LinklyTestStatusMessage);
         Assert.NotNull(service.SavedConfiguration);
         Assert.Equal(CardProcessorKind.Linkly, service.SavedConfiguration!.Processor);
@@ -709,7 +748,9 @@ public sealed class SettingsViewModelTests
         Assert.Equal(CardTerminalEnvironment.Sandbox, service.SavedLinklyCloudCredential?.Environment);
         Assert.Equal("sandbox-user", service.SavedLinklyCloudCredential?.Username);
         Assert.Equal("sandbox-password", service.SavedLinklyCloudCredential?.Password);
-        Assert.Equal("Linkly Cloud API test account saved securely on this POS.", viewModel.StatusMessage);
+        Assert.False(service.LastSaveLinklyCloudCredentialSyncBackend);
+        Assert.Equal("Linkly Cloud API test account saved securely.", viewModel.StatusMessage);
+        Assert.Equal("Linkly Cloud API test account saved securely.", viewModel.LinklyTestStatusMessage);
     }
 
     [Fact]
@@ -1080,6 +1121,10 @@ public sealed class SettingsViewModelTests
 
         public string? LastPairPassword { get; private set; }
 
+        public bool LastPairSyncBackendTerminalCredential { get; private set; }
+
+        public bool LastSaveLinklyCloudCredentialSyncBackend { get; private set; }
+
         public int PairLinklyCloudCallCount { get; private set; }
 
         public IReadOnlyList<SquareLocationOption> SquareLocationsResult { get; init; } = [new("LOC-1", "Main")];
@@ -1216,6 +1261,7 @@ public sealed class SettingsViewModelTests
             string pairCode,
             string? username,
             string? password,
+            bool syncBackendTerminalCredential = false,
             CancellationToken cancellationToken = default)
         {
             if (_pendingLinklyCloudPair is not null)
@@ -1230,6 +1276,7 @@ public sealed class SettingsViewModelTests
             PairLinklyCloudCallCount++;
             LastPairUsername = username;
             LastPairPassword = password;
+            LastPairSyncBackendTerminalCredential = syncBackendTerminalCredential;
             if (LinklyCloudPairResult.Succeeded)
             {
                 LinklyCloudSecretStatuses[environment] = true;
@@ -1250,6 +1297,7 @@ public sealed class SettingsViewModelTests
             CardTerminalEnvironment environment,
             string username,
             string password,
+            bool syncBackendCredential = false,
             CancellationToken cancellationToken = default)
         {
             if (_pendingLinklyCloudCredentialSave is not null)
@@ -1262,6 +1310,7 @@ public sealed class SettingsViewModelTests
             }
 
             SavedLinklyCloudCredential = (environment, username, password);
+            LastSaveLinklyCloudCredentialSyncBackend = syncBackendCredential;
             LinklyCloudCredentials[environment] = new LinklyCloudCredentialSettings(username, password, true);
         }
 

@@ -123,6 +123,11 @@ public sealed record LinklyCloudBackendSendKeyRequest(
 public sealed record LinklyCloudBackendMarkReceiptPrintedRequest(
     string Environment);
 
+public sealed record LinklyCloudBackendTerminalCredentialUpsertRequest(
+    string Environment,
+    string Secret,
+    string PosId);
+
 public sealed record LinklyCloudBackendSessionResponse(
     string Environment,
     string StoreCode,
@@ -165,3 +170,11 @@ public sealed record LinklyCloudBackendHealthCheckDto(
     string Code,
     bool IsReady,
     string Message);
+
+public sealed record LinklyCloudBackendTerminalCredentialResponse(
+    string Environment,
+    string StoreCode,
+    string DeviceCode,
+    bool HasSecret,
+    string PosId,
+    DateTimeOffset UpdatedAt);

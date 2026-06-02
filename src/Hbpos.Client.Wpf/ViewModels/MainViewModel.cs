@@ -72,6 +72,7 @@ public sealed partial class MainViewModel : ObservableObject
 
     private bool _isApplyingCulture;
     private bool _isRefreshingConnectivity;
+    private bool _isAutoOrderSyncRetrying;
     private bool _schemaReady;
     private LocalOrder? _lastCompletedOrder;
     private LocalDeviceCache? _pendingDeviceRegistrationCache;
@@ -370,7 +371,7 @@ public sealed partial class MainViewModel : ObservableObject
         _localization.CultureChanged += OnCultureChanged;
         _customerDisplayOrchestrator.Closed += (_, _) => CustomerDisplayWindowMode = CustomerDisplayWindowMode.Closed;
         _clockTimer.Tick += (_, _) => RefreshClock();
-        _connectivityTimer.Tick += async (_, _) => await RefreshOnlineStateAsync(CancellationToken.None);
+        _connectivityTimer.Tick += async (_, _) => await RefreshOnlineStateAsync(CancellationToken.None, autoRetryOrders: true);
         _catalogDownloadHideTimer.Tick += (_, _) =>
         {
             _catalogDownloadHideTimer.Stop();
@@ -619,8 +620,12 @@ public sealed partial class MainViewModel : ObservableObject
         _clockTimer.Start();
         ApplySessionToScreens();
         PrepareCachedCashPaymentScreen();
-        PrewarmCustomerDisplay();
+        // 诊断启动卡顿时先关闭客显预热，避免启动阶段创建隐藏窗口。
+        ConsoleLog.Write(
+            "CustomerDisplay",
+            $"startup prewarm skipped store={Session.StoreCode} device={Session.DeviceCode} reason=auto-open-disabled");
         await BeginStartupCatalogIndexLoadAsync(startupOptions);
+        await PreloadStartupSpecialProductsDataAsync(startupOptions);
         NavigateFromStartup(startupOptions.InitialScreen);
     }
 
@@ -637,10 +642,34 @@ public sealed partial class MainViewModel : ObservableObject
 
     private async Task ContinuePosStartupAfterShownCoreAsync(Window? owner)
     {
-        OpenCustomerDisplayWindow(owner);
+        var stopwatch = Stopwatch.StartNew();
+        ConsoleLog.Write(
+            "CustomerDisplay",
+            $"post-show open start store={Session.StoreCode} device={Session.DeviceCode} ownerPresent={owner is not null}");
+        try
+        {
+            // 诊断启动卡顿时关闭客显自动打开；手动客显按钮仍可正常打开。
+            ConsoleLog.Write(
+                "CustomerDisplay",
+                $"post-show open skipped store={Session.StoreCode} device={Session.DeviceCode} ownerPresent={owner is not null} reason=auto-open-disabled");
+            stopwatch.Stop();
+            ConsoleLog.Write(
+                "CustomerDisplay",
+                $"post-show open completed store={Session.StoreCode} device={Session.DeviceCode} displayMode={CustomerDisplayWindowMode} elapsedMs={stopwatch.ElapsedMilliseconds}");
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            ConsoleLog.Write(
+                "CustomerDisplay",
+                $"post-show open failed store={Session.StoreCode} device={Session.DeviceCode} elapsedMs={stopwatch.ElapsedMilliseconds} error={ex.Message}");
+            throw;
+        }
 
-        BeginSpecialProductsHomePreload();
-        await RefreshOnlineStateAsync(CancellationToken.None);
+        ConsoleLog.Write(
+            "SpecialProducts",
+            $"startup home preload skipped store={Session.StoreCode} reason=moved-before-main-window");
+        await RefreshOnlineStateAsync(CancellationToken.None, autoRetryOrders: true);
         _connectivityTimer.Start();
         BeginInitialCatalogSync();
     }
@@ -1004,6 +1033,34 @@ public sealed partial class MainViewModel : ObservableObject
         _ = TryPreloadSpecialProductsHomeAsync();
     }
 
+    private async Task PreloadStartupSpecialProductsDataAsync(AppStartupOptions startupOptions)
+    {
+        if (startupOptions.PreviewMode || SpecialProducts is null)
+        {
+            return;
+        }
+
+        var stopwatch = Stopwatch.StartNew();
+        ConsoleLog.Write("SpecialProducts", $"startup data preload start store={Session.StoreCode}");
+        try
+        {
+            PrepareCachedSpecialProductsScreen();
+            // 启动阶段只预加载特殊商品数据，图片缩略图留给页面进入后异步加载。
+            await SpecialProducts.PreloadAsync(CancellationToken.None);
+            stopwatch.Stop();
+            ConsoleLog.Write(
+                "SpecialProducts",
+                $"startup data preload completed store={Session.StoreCode} items={SpecialProducts.SpecialItems.Count} elapsedMs={stopwatch.ElapsedMilliseconds}");
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            ConsoleLog.Write(
+                "SpecialProducts",
+                $"startup data preload failed store={Session.StoreCode} elapsedMs={stopwatch.ElapsedMilliseconds} error={ex.Message}");
+        }
+    }
+
     private void PrepareCachedCashPaymentScreen()
     {
         if (CashPayment is null)
@@ -1059,6 +1116,11 @@ public sealed partial class MainViewModel : ObservableObject
 
     private async Task<bool> RefreshOnlineStateAsync(CancellationToken cancellationToken)
     {
+        return await RefreshOnlineStateAsync(cancellationToken, autoRetryOrders: false);
+    }
+
+    private async Task<bool> RefreshOnlineStateAsync(CancellationToken cancellationToken, bool autoRetryOrders)
+    {
         if (_isRefreshingConnectivity)
         {
             return Session.IsOnline;
@@ -1071,6 +1133,11 @@ public sealed partial class MainViewModel : ObservableObject
             if (Session.IsOnline != isOnline)
             {
                 Session = Session with { IsOnline = isOnline };
+            }
+
+            if (isOnline && autoRetryOrders)
+            {
+                await TryAutoRetryPendingOrdersAsync(cancellationToken);
             }
 
             return isOnline;
@@ -1100,6 +1167,55 @@ public sealed partial class MainViewModel : ObservableObject
         catch (Exception ex)
         {
             StatusMessage = string.Format(_localization.CurrentCulture, _localization.T("main.catalogSync.failed"), ex.Message);
+        }
+    }
+
+    private async Task TryAutoRetryPendingOrdersAsync(CancellationToken cancellationToken)
+    {
+        if (_isAutoOrderSyncRetrying || IsOrderSyncRetrying)
+        {
+            return;
+        }
+
+        _isAutoOrderSyncRetrying = true;
+        try
+        {
+            var snapshot = await _shellSyncCenterService.GetSnapshotAsync();
+            ApplySyncCenterSnapshot(snapshot);
+            if (snapshot.Overview.PendingCount + snapshot.Overview.FailedCount == 0)
+            {
+                return;
+            }
+
+            ConsoleLog.Write("OrderSync", "auto retry pending start");
+            var result = await _orderUploadExecutionService.ExecutePendingAsync(cancellationToken: cancellationToken);
+            await RefreshPendingSyncAsync();
+            ConsoleLog.Write(
+                "OrderSync",
+                $"auto retry pending completed attempted={result.AttemptedCount} uploaded={result.UploadedCount} failed={result.FailedCount}");
+        }
+        catch (OperationCanceledException)
+        {
+            ConsoleLog.Write("OrderSync", "auto retry pending canceled");
+            throw;
+        }
+        catch (Exception ex)
+        {
+            ConsoleLog.Write("OrderSync", $"auto retry pending failed error={ex.GetType().Name} message={ex.Message}");
+            try
+            {
+                await RefreshPendingSyncAsync();
+            }
+            catch (Exception refreshEx) when (refreshEx is not OperationCanceledException)
+            {
+                ConsoleLog.Write(
+                    "OrderSync",
+                    $"auto retry pending refresh failed error={refreshEx.GetType().Name} message={refreshEx.Message}");
+            }
+        }
+        finally
+        {
+            _isAutoOrderSyncRetrying = false;
         }
     }
 
@@ -1202,11 +1318,33 @@ public sealed partial class MainViewModel : ObservableObject
     {
         if (_customerDisplayPrewarmed)
         {
+            ConsoleLog.Write(
+                "CustomerDisplay",
+                $"startup prewarm skipped store={Session.StoreCode} device={Session.DeviceCode} reason=already-prewarmed");
             return;
         }
 
-        _customerDisplayOrchestrator.Prewarm(CustomerDisplay, Session, _cart);
-        _customerDisplayPrewarmed = true;
+        var stopwatch = Stopwatch.StartNew();
+        ConsoleLog.Write(
+            "CustomerDisplay",
+            $"startup prewarm start store={Session.StoreCode} device={Session.DeviceCode} currentMode={CustomerDisplayWindowMode}");
+        try
+        {
+            _customerDisplayOrchestrator.Prewarm(CustomerDisplay, Session, _cart);
+            _customerDisplayPrewarmed = true;
+            stopwatch.Stop();
+            ConsoleLog.Write(
+                "CustomerDisplay",
+                $"startup prewarm completed store={Session.StoreCode} device={Session.DeviceCode} currentMode={CustomerDisplayWindowMode} elapsedMs={stopwatch.ElapsedMilliseconds}");
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            ConsoleLog.Write(
+                "CustomerDisplay",
+                $"startup prewarm failed store={Session.StoreCode} device={Session.DeviceCode} elapsedMs={stopwatch.ElapsedMilliseconds} error={ex.Message}");
+            throw;
+        }
     }
 
     private async Task BeginDeviceReregistrationFromPosAsync()
@@ -1874,11 +2012,23 @@ public sealed partial class MainViewModel : ObservableObject
 
     public void SetCustomerDisplayWindowMode(CustomerDisplayWindowMode mode, Window? owner)
     {
-        ApplyCustomerDisplayWindowResult(_customerDisplayOrchestrator.SetMode(mode, CustomerDisplay, Session, _cart, owner));
+        var stopwatch = Stopwatch.StartNew();
+        ConsoleLog.Write(
+            "CustomerDisplay",
+            $"viewmodel set-mode start requestedMode={mode} currentMode={CustomerDisplayWindowMode} ownerPresent={owner is not null} store={Session.StoreCode} device={Session.DeviceCode}");
+        var result = _customerDisplayOrchestrator.SetMode(mode, CustomerDisplay, Session, _cart, owner);
+        ApplyCustomerDisplayWindowResult(result);
+        stopwatch.Stop();
+        ConsoleLog.Write(
+            "CustomerDisplay",
+            $"viewmodel set-mode completed requestedMode={mode} resultMode={result.Mode} open={IsCustomerDisplayOpen} elapsedMs={stopwatch.ElapsedMilliseconds}");
     }
 
     private void OpenCustomerDisplayWindow(Window? owner)
     {
+        ConsoleLog.Write(
+            "CustomerDisplay",
+            $"startup open-window request store={Session.StoreCode} device={Session.DeviceCode} ownerPresent={owner is not null}");
         SetCustomerDisplayWindowMode(CustomerDisplayWindowMode.Fullscreen, owner);
     }
 

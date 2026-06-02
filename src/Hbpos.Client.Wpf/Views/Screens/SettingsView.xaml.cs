@@ -50,13 +50,23 @@ public partial class SettingsView : UserControl
     {
         if (e.PropertyName != nameof(SettingsViewModel.LinklyCloudPasswordText) ||
             _viewModel is null ||
-            !string.IsNullOrEmpty(_viewModel.LinklyCloudPasswordText) ||
-            string.IsNullOrEmpty(LinklyCloudPasswordBox.Password))
+            !string.IsNullOrEmpty(_viewModel.LinklyCloudPasswordText))
         {
             return;
         }
 
-        // 保存后清空输入框，避免密码继续留在界面上。
-        LinklyCloudPasswordBox.Clear();
+        ClearPasswordBox(LinklyCloudPasswordBox);
+        ClearPasswordBox(LinklyCloudBackendPasswordBox);
+    }
+
+    private static void ClearPasswordBox(PasswordBox passwordBox)
+    {
+        if (string.IsNullOrEmpty(passwordBox.Password))
+        {
+            return;
+        }
+
+        // 保存后清空界面输入，避免敏感信息继续停留在可见控件里。
+        passwordBox.Clear();
     }
 }

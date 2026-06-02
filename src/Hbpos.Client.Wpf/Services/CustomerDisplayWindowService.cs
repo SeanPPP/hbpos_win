@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Windows;
 using System.Windows.Threading;
 using Hbpos.Client.Wpf.ViewModels;
@@ -73,7 +74,25 @@ public sealed class CustomerDisplayWindowService : ICustomerDisplayWindowService
 
     public void Prewarm(CustomerDisplayViewModel viewModel)
     {
-        EnsureWindow(viewModel, owner: null);
+        var stopwatch = Stopwatch.StartNew();
+        var hadWindow = _window is not null;
+        ConsoleLog.Write("CustomerDisplay", $"window prewarm start hadWindow={hadWindow} mode={_mode}");
+        try
+        {
+            EnsureWindow(viewModel, owner: null);
+            stopwatch.Stop();
+            ConsoleLog.Write(
+                "CustomerDisplay",
+                $"window prewarm completed created={!hadWindow && _window is not null} visible={_window?.IsVisible == true} mode={_mode} elapsedMs={stopwatch.ElapsedMilliseconds}");
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            ConsoleLog.Write(
+                "CustomerDisplay",
+                $"window prewarm failed hadWindow={hadWindow} elapsedMs={stopwatch.ElapsedMilliseconds} error={ex.Message}");
+            throw;
+        }
     }
 
     public CustomerDisplayWindowResult Open(CustomerDisplayViewModel viewModel, Window? owner)
@@ -88,15 +107,28 @@ public sealed class CustomerDisplayWindowService : ICustomerDisplayWindowService
 
     public CustomerDisplayWindowResult SetMode(CustomerDisplayWindowMode mode, CustomerDisplayViewModel viewModel, Window? owner)
     {
+        var stopwatch = Stopwatch.StartNew();
+        ConsoleLog.Write(
+            "CustomerDisplay",
+            $"window set-mode start requestedMode={mode} currentMode={_mode} ownerPresent={owner is not null} windowExists={_window is not null}");
+
         if (mode == CustomerDisplayWindowMode.Closed)
         {
             CloseWindow();
+            stopwatch.Stop();
+            ConsoleLog.Write(
+                "CustomerDisplay",
+                $"window set-mode completed requestedMode={mode} resultMode={CustomerDisplayWindowMode.Closed} elapsedMs={stopwatch.ElapsedMilliseconds}");
             return new CustomerDisplayWindowResult(CustomerDisplayWindowMode.Closed, ClosedStatusKey);
         }
 
         if (owner is null)
         {
             CloseWindow();
+            stopwatch.Stop();
+            ConsoleLog.Write(
+                "CustomerDisplay",
+                $"window set-mode blocked requestedMode={mode} reason=no-owner elapsedMs={stopwatch.ElapsedMilliseconds}");
             return new CustomerDisplayWindowResult(CustomerDisplayWindowMode.Closed, NoSecondDisplayStatusKey);
         }
 
@@ -104,13 +136,24 @@ public sealed class CustomerDisplayWindowService : ICustomerDisplayWindowService
         if (targetDisplay is null)
         {
             CloseWindow();
+            stopwatch.Stop();
+            ConsoleLog.Write(
+                "CustomerDisplay",
+                $"window set-mode blocked requestedMode={mode} reason=no-second-display elapsedMs={stopwatch.ElapsedMilliseconds}");
             return new CustomerDisplayWindowResult(CustomerDisplayWindowMode.Closed, NoSecondDisplayStatusKey);
         }
 
+        ConsoleLog.Write(
+            "CustomerDisplay",
+            $"window set-mode target-display requestedMode={mode} left={targetDisplay.MonitorLeft} top={targetDisplay.MonitorTop} width={targetDisplay.MonitorWidth} height={targetDisplay.MonitorHeight}");
         var window = EnsureWindow(viewModel, owner);
         ApplyMode(window, owner, targetDisplay, mode);
         _mode = mode;
 
+        stopwatch.Stop();
+        ConsoleLog.Write(
+            "CustomerDisplay",
+            $"window set-mode completed requestedMode={mode} resultMode={mode} visible={window.IsVisible} state={window.WindowState} elapsedMs={stopwatch.ElapsedMilliseconds}");
         return new CustomerDisplayWindowResult(mode, GetOpenedStatusKey(mode));
     }
 
@@ -124,9 +167,13 @@ public sealed class CustomerDisplayWindowService : ICustomerDisplayWindowService
             }
 
             _window.DataContext = viewModel;
+            ConsoleLog.Write(
+                "CustomerDisplay",
+                $"window ensure reused ownerPresent={_window.Owner is not null} visible={_window.IsVisible} mode={_mode}");
             return _window;
         }
 
+        var stopwatch = Stopwatch.StartNew();
         _window = new CustomerDisplayWindow
         {
             DataContext = viewModel,
@@ -140,18 +187,29 @@ public sealed class CustomerDisplayWindowService : ICustomerDisplayWindowService
 
         _displayTopology.AttachWorkAreaConstraint(_window);
         _window.Closed += OnWindowClosed;
+        stopwatch.Stop();
+        ConsoleLog.Write(
+            "CustomerDisplay",
+            $"window ensure created ownerPresent={owner is not null} elapsedMs={stopwatch.ElapsedMilliseconds}");
         return _window;
     }
 
     private void ApplyMode(CustomerDisplayWindow window, Window owner, DisplayBounds targetDisplay, CustomerDisplayWindowMode mode)
     {
+        var stopwatch = Stopwatch.StartNew();
         var plan = GetLayoutPlan(mode);
+        ConsoleLog.Write(
+            "CustomerDisplay",
+            $"window apply-mode start mode={mode} wasVisible={window.IsVisible} targetLeft={targetDisplay.MonitorLeft} targetTop={targetDisplay.MonitorTop} targetWidth={targetDisplay.MonitorWidth} targetHeight={targetDisplay.MonitorHeight}");
         window.WindowState = WindowState.Normal;
         window.SetTitleBarVisible(plan.TitleBarVisibleDuringPlacement);
 
         if (!window.IsVisible)
         {
+            var showStopwatch = Stopwatch.StartNew();
             window.Show();
+            showStopwatch.Stop();
+            ConsoleLog.Write("CustomerDisplay", $"window show completed mode={mode} elapsedMs={showStopwatch.ElapsedMilliseconds}");
         }
 
         if (plan.UseFullDisplayBoundsForPlacement)
@@ -172,6 +230,10 @@ public sealed class CustomerDisplayWindowService : ICustomerDisplayWindowService
         window.SetTitleBarVisible(plan.TitleBarVisibleAfterStateChange);
         window.RefreshContentLayout();
         RestoreOwnerActivation(owner);
+        stopwatch.Stop();
+        ConsoleLog.Write(
+            "CustomerDisplay",
+            $"window apply-mode completed mode={mode} state={window.WindowState} titleBarVisible={plan.TitleBarVisibleAfterStateChange} elapsedMs={stopwatch.ElapsedMilliseconds}");
     }
 
     internal static CustomerDisplayLayoutPlan GetLayoutPlan(CustomerDisplayWindowMode mode)

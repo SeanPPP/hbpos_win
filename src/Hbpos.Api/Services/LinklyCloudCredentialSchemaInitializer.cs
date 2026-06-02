@@ -31,7 +31,10 @@ public sealed class SqlSugarLinklyCloudCredentialSchemaInitializer(
                 CONSTRAINT [UX_POSM_LinklyCloudCredential_StoreCode_Environment] UNIQUE ([StoreCode], [Environment])
             );
         END;
+        """;
 
+    // Environment 列新增后需要进入下一批次再引用，避免 SQL Server 编译旧表结构时报“列名无效”。
+    internal const string EnsureEnvironmentColumnSql = """
         IF OBJECT_ID(N'[dbo].[POSM_LinklyCloudCredential]', N'U') IS NOT NULL
         BEGIN
             IF COL_LENGTH(N'dbo.POSM_LinklyCloudCredential', N'Environment') IS NULL
@@ -40,24 +43,34 @@ public sealed class SqlSugarLinklyCloudCredentialSchemaInitializer(
                     ADD [Environment] NVARCHAR(32) NOT NULL
                     CONSTRAINT [DF_POSM_LinklyCloudCredential_Environment] DEFAULT (N'Production') WITH VALUES;
             END
-            ELSE
+        END;
+        """;
+
+    // 这一段只在补列批次完成后执行，保证下面的 Environment 引用一定能被 SQL Server 解析。
+    internal const string NormalizeEnvironmentColumnSql = """
+        IF OBJECT_ID(N'[dbo].[POSM_LinklyCloudCredential]', N'U') IS NOT NULL
+           AND COL_LENGTH(N'dbo.POSM_LinklyCloudCredential', N'Environment') IS NOT NULL
+        BEGIN
+            UPDATE [dbo].[POSM_LinklyCloudCredential]
+            SET [Environment] = N'Production'
+            WHERE NULLIF(LTRIM(RTRIM([Environment])), N'') IS NULL;
+
+            IF EXISTS (
+                SELECT 1
+                FROM sys.columns
+                WHERE [object_id] = OBJECT_ID(N'[dbo].[POSM_LinklyCloudCredential]', N'U')
+                  AND [name] = N'Environment'
+                  AND [is_nullable] = 1)
             BEGIN
-                UPDATE [dbo].[POSM_LinklyCloudCredential]
-                SET [Environment] = N'Production'
-                WHERE NULLIF(LTRIM(RTRIM([Environment])), N'') IS NULL;
-
-                IF EXISTS (
-                    SELECT 1
-                    FROM sys.columns
-                    WHERE [object_id] = OBJECT_ID(N'[dbo].[POSM_LinklyCloudCredential]', N'U')
-                      AND [name] = N'Environment'
-                      AND [is_nullable] = 1)
-                BEGIN
-                    ALTER TABLE [dbo].[POSM_LinklyCloudCredential]
-                        ALTER COLUMN [Environment] NVARCHAR(32) NOT NULL;
-                END;
+                ALTER TABLE [dbo].[POSM_LinklyCloudCredential]
+                    ALTER COLUMN [Environment] NVARCHAR(32) NOT NULL;
             END;
+        END;
+        """;
 
+    internal const string EnsureConstraintsSql = """
+        IF OBJECT_ID(N'[dbo].[POSM_LinklyCloudCredential]', N'U') IS NOT NULL
+        BEGIN
             IF OBJECT_ID(N'[dbo].[DF_POSM_LinklyCloudCredential_Environment]', N'D') IS NULL
             BEGIN
                 ALTER TABLE [dbo].[POSM_LinklyCloudCredential]
@@ -93,6 +106,9 @@ public sealed class SqlSugarLinklyCloudCredentialSchemaInitializer(
         try
         {
             await sqlExecutor.ExecuteAsync(EnsureTableSql, cancellationToken);
+            await sqlExecutor.ExecuteAsync(EnsureEnvironmentColumnSql, cancellationToken);
+            await sqlExecutor.ExecuteAsync(NormalizeEnvironmentColumnSql, cancellationToken);
+            await sqlExecutor.ExecuteAsync(EnsureConstraintsSql, cancellationToken);
             Console.WriteLine($"[HBPOS][Api][LinklyCloud] {DateTimeOffset.Now:O} credential schema ensure succeeded table=POSM_LinklyCloudCredential");
         }
         catch (OperationCanceledException)

@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Windows;
 using Hbpos.Client.Wpf.Models;
 using Hbpos.Client.Wpf.ViewModels;
@@ -87,8 +88,27 @@ public sealed class CustomerDisplayOrchestrator : ICustomerDisplayOrchestrator
 
     public void Prewarm(CustomerDisplayViewModel customerDisplay, PosSessionState session, PosCartService cart)
     {
-        LoadFromCart(customerDisplay, session, cart);
-        customerDisplayWindowService.Prewarm(customerDisplay);
+        var stopwatch = Stopwatch.StartNew();
+        ConsoleLog.Write(
+            "CustomerDisplay",
+            $"prewarm start store={session.StoreCode} device={session.DeviceCode} lines={cart.Lines.Count} windowMode={customerDisplayWindowService.Mode}");
+        try
+        {
+            LoadFromCart(customerDisplay, session, cart);
+            customerDisplayWindowService.Prewarm(customerDisplay);
+            stopwatch.Stop();
+            ConsoleLog.Write(
+                "CustomerDisplay",
+                $"prewarm completed store={session.StoreCode} device={session.DeviceCode} isOpen={customerDisplayWindowService.IsOpen} windowMode={customerDisplayWindowService.Mode} elapsedMs={stopwatch.ElapsedMilliseconds}");
+        }
+        catch (Exception ex)
+        {
+            stopwatch.Stop();
+            ConsoleLog.Write(
+                "CustomerDisplay",
+                $"prewarm failed store={session.StoreCode} device={session.DeviceCode} elapsedMs={stopwatch.ElapsedMilliseconds} error={ex.Message}");
+            throw;
+        }
     }
 
     public CustomerDisplayWindowMode GetNextMode(CustomerDisplayWindowMode currentMode)
@@ -108,6 +128,10 @@ public sealed class CustomerDisplayOrchestrator : ICustomerDisplayOrchestrator
         PosCartService cart,
         Window? owner)
     {
+        var stopwatch = Stopwatch.StartNew();
+        ConsoleLog.Write(
+            "CustomerDisplay",
+            $"set-mode start requestedMode={mode} store={session.StoreCode} device={session.DeviceCode} ownerPresent={owner is not null} currentMode={customerDisplayWindowService.Mode}");
         if (mode == CustomerDisplayWindowMode.Closed)
         {
             StopAdvertisementRefresh();
@@ -117,7 +141,12 @@ public sealed class CustomerDisplayOrchestrator : ICustomerDisplayOrchestrator
             LoadFromCart(customerDisplay, session, cart);
         }
 
-        return customerDisplayWindowService.SetMode(mode, customerDisplay, owner);
+        var result = customerDisplayWindowService.SetMode(mode, customerDisplay, owner);
+        stopwatch.Stop();
+        ConsoleLog.Write(
+            "CustomerDisplay",
+            $"set-mode completed requestedMode={mode} resultMode={result.Mode} statusKey={result.StatusMessageKey ?? "<none>"} elapsedMs={stopwatch.ElapsedMilliseconds}");
+        return result;
     }
 
     internal async Task RefreshAdvertisementsAsync(
@@ -151,6 +180,8 @@ public sealed class CustomerDisplayOrchestrator : ICustomerDisplayOrchestrator
             return;
         }
 
+        var stopwatch = Stopwatch.StartNew();
+        ConsoleLog.Write("CustomerDisplay", $"advertisement refresh start store={normalizedStoreCode} force={force}");
         try
         {
             if (!force && !ShouldRefreshAdvertisements(normalizedStoreCode))
@@ -167,10 +198,16 @@ public sealed class CustomerDisplayOrchestrator : ICustomerDisplayOrchestrator
             }
             catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
             {
+                stopwatch.Stop();
+                ConsoleLog.Write("CustomerDisplay", $"advertisement refresh canceled store={normalizedStoreCode} elapsedMs={stopwatch.ElapsedMilliseconds}");
                 throw;
             }
-            catch
+            catch (Exception ex)
             {
+                stopwatch.Stop();
+                ConsoleLog.Write(
+                    "CustomerDisplay",
+                    $"advertisement refresh failed store={normalizedStoreCode} elapsedMs={stopwatch.ElapsedMilliseconds} error={ex.Message}");
                 return;
             }
 
@@ -180,6 +217,10 @@ public sealed class CustomerDisplayOrchestrator : ICustomerDisplayOrchestrator
             _lastAdvertisementRefreshUtc = DateTimeOffset.UtcNow;
 
             await ApplyAdvertisementSnapshotAsync(customerDisplay, _cachedAdvertisements).ConfigureAwait(false);
+            stopwatch.Stop();
+            ConsoleLog.Write(
+                "CustomerDisplay",
+                $"advertisement refresh completed store={normalizedStoreCode} items={_cachedAdvertisements.Count} elapsedMs={stopwatch.ElapsedMilliseconds}");
         }
         finally
         {
@@ -211,6 +252,9 @@ public sealed class CustomerDisplayOrchestrator : ICustomerDisplayOrchestrator
         _periodicRefreshCts = cts;
         _periodicRefreshCustomerDisplay = customerDisplay;
         _periodicRefreshStoreCode = normalizedStoreCode;
+        ConsoleLog.Write(
+            "CustomerDisplay",
+            $"advertisement periodic refresh started store={normalizedStoreCode} intervalSeconds={advertisementRefreshInterval.TotalSeconds:0}");
         _ = RunPeriodicAdvertisementRefreshAsync(customerDisplay, normalizedStoreCode, cts.Token);
     }
 
@@ -246,6 +290,7 @@ public sealed class CustomerDisplayOrchestrator : ICustomerDisplayOrchestrator
 
         cts.Cancel();
         cts.Dispose();
+        ConsoleLog.Write("CustomerDisplay", "advertisement periodic refresh stopped");
     }
 
     private bool ShouldRefreshAdvertisements(string storeCode)

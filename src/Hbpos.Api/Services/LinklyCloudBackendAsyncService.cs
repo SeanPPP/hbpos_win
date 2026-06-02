@@ -38,6 +38,13 @@ public interface ILinklyCloudBackendAsyncService
         string environment,
         CancellationToken cancellationToken);
 
+    Task<LinklyCloudBackendTerminalCredentialResponse> UpsertTerminalCredentialAsync(
+        string storeCode,
+        string deviceCode,
+        LinklyCloudBackendTerminalCredentialUpsertRequest request,
+        string? updatedBy,
+        CancellationToken cancellationToken);
+
     Task<LinklyCloudBackendSessionResponse> RecoverAsync(
         string storeCode,
         string deviceCode,
@@ -429,6 +436,41 @@ public class LinklyCloudBackendAsyncService(
             checks.All(check => check.IsReady),
             publicCallbackUri?.AbsoluteUri,
             checks);
+    }
+
+    public async Task<LinklyCloudBackendTerminalCredentialResponse> UpsertTerminalCredentialAsync(
+        string storeCode,
+        string deviceCode,
+        LinklyCloudBackendTerminalCredentialUpsertRequest request,
+        string? updatedBy,
+        CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+
+        var normalizedEnvironment = NormalizeEnvironment(request.Environment);
+        var normalizedStoreCode = NormalizeRequired(storeCode, "storeCode");
+        var normalizedDeviceCode = NormalizeRequired(deviceCode, "deviceCode");
+        var secret = NormalizeRequired(request.Secret, "secret");
+        var posId = NormalizeUuidV4(request.PosId);
+        var now = DateTime.UtcNow;
+
+        var credential = await terminalCredentialRepository.UpsertAsync(
+            normalizedEnvironment,
+            normalizedStoreCode,
+            normalizedDeviceCode,
+            secret,
+            posId,
+            now,
+            NormalizeOptional(updatedBy),
+            cancellationToken);
+
+        return new LinklyCloudBackendTerminalCredentialResponse(
+            credential.Environment ?? normalizedEnvironment,
+            credential.StoreCode ?? normalizedStoreCode,
+            credential.DeviceCode ?? normalizedDeviceCode,
+            !string.IsNullOrWhiteSpace(credential.Secret),
+            credential.PosId ?? posId,
+            new DateTimeOffset(DateTime.SpecifyKind(credential.UpdatedAt ?? now, DateTimeKind.Utc)));
     }
 
     private async Task<LinklyCloudBackendSessionRecord> GetRequiredSessionAsync(
@@ -1027,6 +1069,25 @@ public class LinklyCloudBackendAsyncService(
         return string.IsNullOrWhiteSpace(value) ? null : value.Trim();
     }
 
+    private static string NormalizeUuidV4(string? value)
+    {
+        var normalized = NormalizeRequired(value, "posId");
+        if (!Guid.TryParseExact(normalized, "D", out var parsed))
+        {
+            throw new LinklyCloudBackendValidationException("posId must be UUID v4.");
+        }
+
+        normalized = parsed.ToString("D");
+        var version = normalized[14];
+        var variant = normalized[19];
+        if (version != '4' || variant is not ('8' or '9' or 'a' or 'b'))
+        {
+            throw new LinklyCloudBackendValidationException("posId must be UUID v4.");
+        }
+
+        return normalized;
+    }
+
     private static bool SameOptional(string? left, string? right)
     {
         return string.Equals(NormalizeOptional(left), NormalizeOptional(right), StringComparison.OrdinalIgnoreCase);
@@ -1234,11 +1295,41 @@ public interface ILinklyCloudBackendTerminalCredentialRepository
         string storeCode,
         string deviceCode,
         CancellationToken cancellationToken);
+
+    Task<LinklyCloudBackendTerminalCredentialRecord> UpsertAsync(
+        string environment,
+        string storeCode,
+        string deviceCode,
+        string secret,
+        string posId,
+        DateTime updatedAt,
+        string? updatedBy,
+        CancellationToken cancellationToken);
 }
 
 public sealed class SqlSugarLinklyCloudBackendTerminalCredentialRepository(
     HbposSqlSugarContext dbContext) : ILinklyCloudBackendTerminalCredentialRepository
 {
+    internal const string UpsertSql = """
+        MERGE [dbo].[POSM_LinklyCloudBackendTerminal] WITH (HOLDLOCK) AS target
+        USING (
+            SELECT @Environment AS [Environment],
+                   @StoreCode AS [StoreCode],
+                   @DeviceCode AS [DeviceCode]) AS source
+        ON target.[Environment] = source.[Environment]
+           AND target.[StoreCode] = source.[StoreCode]
+           AND target.[DeviceCode] = source.[DeviceCode]
+        WHEN MATCHED THEN
+            UPDATE SET
+                [Secret] = @Secret,
+                [PosId] = @PosId,
+                [UpdatedAt] = @UpdatedAt,
+                [UpdatedBy] = @UpdatedBy
+        WHEN NOT MATCHED THEN
+            INSERT ([Environment], [StoreCode], [DeviceCode], [Secret], [PosId], [UpdatedAt], [UpdatedBy])
+            VALUES (@Environment, @StoreCode, @DeviceCode, @Secret, @PosId, @UpdatedAt, @UpdatedBy);
+        """;
+
     public async Task<LinklyCloudBackendTerminalCredentialRecord?> GetByDeviceAsync(
         string environment,
         string storeCode,
@@ -1269,6 +1360,40 @@ public sealed class SqlSugarLinklyCloudBackendTerminalCredentialRepository(
             new SugarParameter("@Environment", environment),
             new SugarParameter("@StoreCode", storeCode),
             new SugarParameter("@DeviceCode", deviceCode));
+    }
+
+    public async Task<LinklyCloudBackendTerminalCredentialRecord> UpsertAsync(
+        string environment,
+        string storeCode,
+        string deviceCode,
+        string secret,
+        string posId,
+        DateTime updatedAt,
+        string? updatedBy,
+        CancellationToken cancellationToken)
+    {
+        // 终端 secret 只作为数据库参数写入，接口响应始终只暴露 HasSecret。
+        await dbContext.PosmDb.Ado.ExecuteCommandAsync(
+            UpsertSql,
+            new SugarParameter("@Environment", environment),
+            new SugarParameter("@StoreCode", storeCode),
+            new SugarParameter("@DeviceCode", deviceCode),
+            new SugarParameter("@Secret", secret),
+            new SugarParameter("@PosId", posId),
+            new SugarParameter("@UpdatedAt", updatedAt),
+            new SugarParameter("@UpdatedBy", updatedBy));
+
+        return await GetByDeviceAsync(environment, storeCode, deviceCode, cancellationToken)
+            ?? new LinklyCloudBackendTerminalCredentialRecord
+            {
+                Environment = environment,
+                StoreCode = storeCode,
+                DeviceCode = deviceCode,
+                Secret = secret,
+                PosId = posId,
+                UpdatedAt = updatedAt,
+                UpdatedBy = updatedBy
+            };
     }
 }
 

@@ -80,6 +80,7 @@
   <data name="settings.linkly.cloud.password" xml:space="preserve"><value>Cloud API 密码</value></data>
   <data name="settings.linkly.cloud.saveCredential" xml:space="preserve"><value>保存测试账号</value></data>
   <data name="settings.linklyCloud.localCredentialMissing" xml:space="preserve"><value>请先保存 Linkly Cloud API 测试账号和密码。</value></data>
+  <data name="settings.linklyCloud.deviceContextMissing" xml:space="preserve"><value>当前设备注册上下文不可用。请重新打开设置后再试。</value></data>
   <data name="settings.linklyCloud.usernameRequired" xml:space="preserve"><value>请先填写 Linkly Cloud API 账号。</value></data>
   <data name="settings.linklyCloud.passwordRequired" xml:space="preserve"><value>请先填写 Linkly Cloud API 密码，或先保存到本机。</value></data>
   <data name="settings.linklyCloud.pairCodeRequired" xml:space="preserve"><value>请先填写 Linkly VPP 配对码。</value></data>
@@ -156,7 +157,9 @@
   <data name="settings.status.linklyTestFailed" xml:space="preserve"><value>Linkly EFT-Client &#x8FDE;&#x63A5;&#x5931;&#x8D25;&#x3002;</value></data>
   <data name="settings.status.linklyCloudPaired" xml:space="preserve"><value>Linkly Cloud &#x5237;&#x5361;&#x673A;&#x5DF2;&#x914D;&#x5BF9;&#x3002;</value></data>
   <data name="settings.status.linklyCloudPairFailed" xml:space="preserve"><value>Linkly Cloud &#x914D;&#x5BF9;&#x5931;&#x8D25;&#x3002;</value></data>
-  <data name="settings.status.linklyCloudCredentialSaved" xml:space="preserve"><value>Linkly Cloud API 测试账号已安全保存到本机。</value></data>
+  <data name="settings.linklyCloud.pairAuthFailed" xml:space="preserve"><value>Linkly Cloud 配对失败。请检查 Sandbox VPP 配对码以及 Cloud 测试账号用户名/密码。</value></data>
+  <data name="settings.status.linklyCloudCredentialSaved" xml:space="preserve"><value>Linkly Cloud API 测试账号已安全保存。</value></data>
+  <data name="settings.status.linklyCloudCredentialSynced" xml:space="preserve"><value>Linkly Cloud API 测试账号已安全保存，并同步到 HBPOS 后台。</value></data>
   <data name="settings.status.testLinklyBeforeSave" xml:space="preserve"><value>&#x542F;&#x7528; ANZ Linkly &#x4E4B;&#x524D;&#x8BF7;&#x5148;&#x6D4B;&#x8BD5; Linkly &#x8FDE;&#x63A5;&#x3002;</value></data>
   <data name="settings.status.linklySaved" xml:space="preserve"><value>ANZ Linkly &#x7EC8;&#x7AEF;&#x8BBE;&#x7F6E;&#x5DF2;&#x4FDD;&#x5B58;&#x3002;</value></data>
   <data name="settings.status.receiptPrinterNotConfigured" xml:space="preserve"><value>&#x672A;&#x914D;&#x7F6E;&#x5C0F;&#x7968;&#x6253;&#x5370;&#x670D;&#x52A1;&#x3002;</value></data>

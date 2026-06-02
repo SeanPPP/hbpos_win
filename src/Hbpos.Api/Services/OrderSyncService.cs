@@ -216,7 +216,7 @@ public sealed class SqlSugarOrderRepository(
             if (voucherRedemptions.Count > 0)
             {
                 // 代金券余额扣减与订单写入放在同一事务内，避免部分成功。
-                await ApplyVoucherPaymentsAsync(db, plan, voucherRedemptions, cancellationToken);
+                await ApplyVoucherPaymentsAsync(db, plan, voucherRedemptions, logger, cancellationToken);
                 logger.LogInformation(
                     "OrderSyncRepository voucher apply completed OrderGuid={OrderGuid} VoucherCount={VoucherCount}",
                     plan.Order.OrderGuid,
@@ -284,11 +284,18 @@ public sealed class SqlSugarOrderRepository(
         ISqlSugarClient db,
         OrderSyncPlan plan,
         IReadOnlyList<StoreVoucherRedemptionCommit> voucherRedemptions,
+        ILogger logger,
         CancellationToken cancellationToken)
     {
         foreach (var redemption in voucherRedemptions)
         {
             var storeCode = plan.Order.BranchCode ?? string.Empty;
+            logger.LogInformation(
+                "OrderSyncRepository voucher claim start OrderGuid={OrderGuid} Voucher={VoucherCode} Token={ReservationToken} Amount={Amount}",
+                plan.Order.OrderGuid,
+                redemption.VoucherCode,
+                ShortToken(redemption.ReservationToken),
+                redemption.Amount);
             await SqlSugarStoreVoucherReservationService.ClaimInsideTransactionAsync(
                 db,
                 redemption.ReservationToken,
@@ -305,7 +312,24 @@ public sealed class SqlSugarOrderRepository(
                 redemption.Amount,
                 plan.Order.CashierId ?? plan.Order.CashierName,
                 cancellationToken);
+            logger.LogInformation(
+                "OrderSyncRepository voucher redeemed OrderGuid={OrderGuid} Voucher={VoucherCode} Token={ReservationToken} Amount={Amount}",
+                plan.Order.OrderGuid,
+                redemption.VoucherCode,
+                ShortToken(redemption.ReservationToken),
+                redemption.Amount);
         }
+    }
+
+    private static string ShortToken(string? token)
+    {
+        if (string.IsNullOrWhiteSpace(token))
+        {
+            return "<null>";
+        }
+
+        var trimmed = token.Trim();
+        return trimmed.Length <= 8 ? trimmed : $"{trimmed[..8]}...";
     }
 
     internal static IReadOnlyList<SalesOrderDetailInsertDiagnostic> BuildSalesOrderDetailDiagnostics(

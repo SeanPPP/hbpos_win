@@ -62,6 +62,7 @@ public sealed class LinklyBackendTerminalClient(
     {
         try
         {
+            Log($"health request start environment={environment}");
             using var response = await httpClient.GetAsync(
                 $"api/v1/linkly/cloud-backend/health?environment={Uri.EscapeDataString(environment.ToString())}",
                 cancellationToken);
@@ -69,6 +70,12 @@ public sealed class LinklyBackendTerminalClient(
             if (response.IsSuccessStatusCode)
             {
                 var health = ReadHealthResult(content);
+                var failedCodes = GetFailedHealthChecks(health)
+                    .Select(check => check.Code)
+                    .Where(code => !string.IsNullOrWhiteSpace(code))
+                    .ToArray();
+                Log(
+                    $"health request completed environment={environment} ready={health.IsReady} failedChecks={(failedCodes.Length == 0 ? "<none>" : string.Join(",", failedCodes))}");
                 return health.IsReady
                     ? new LinklyConnectionTestResult(true, T("linkly.backend.configValid", "ANZ Linkly Cloud backend configuration is valid."))
                     : new LinklyConnectionTestResult(false, FormatHealthFailure(health));
@@ -79,10 +86,12 @@ public sealed class LinklyBackendTerminalClient(
                     CultureInfo.InvariantCulture,
                     T("linkly.backend.configTestHttpFailed", "ANZ Linkly Cloud backend configuration test failed with HTTP {0}."),
                     (int)response.StatusCode);
+            Log($"health request failed environment={environment} http={(int)response.StatusCode}");
             return new LinklyConnectionTestResult(false, message);
         }
         catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException)
         {
+            Log($"health request failed environment={environment} error={ex.GetType().Name}");
             return new LinklyConnectionTestResult(false, T("linkly.backend.communicationFailed", "ANZ Linkly Cloud backend communication failed."));
         }
     }
@@ -507,9 +516,22 @@ public sealed class LinklyBackendTerminalClient(
 
     private string FormatHealthFailure(LinklyCloudBackendHealthResponse health)
     {
-        var failedCheck = (health.Checks ?? [])
-            .FirstOrDefault(check => !check.IsReady && !string.IsNullOrWhiteSpace(check.Message));
-        return failedCheck?.Message ?? T("linkly.backend.configIncomplete", "ANZ Linkly Cloud backend configuration is incomplete.");
+        var failedMessages = GetFailedHealthChecks(health)
+            .Select(check => NormalizeOptional(check.Message))
+            .Where(message => !string.IsNullOrWhiteSpace(message))
+            .Distinct(StringComparer.Ordinal)
+            .ToArray();
+        return failedMessages.Length == 0
+            ? T("linkly.backend.configIncomplete", "ANZ Linkly Cloud backend configuration is incomplete.")
+            : string.Join(Environment.NewLine, failedMessages!);
+    }
+
+    private static IReadOnlyList<LinklyCloudBackendHealthCheckDto> GetFailedHealthChecks(
+        LinklyCloudBackendHealthResponse health)
+    {
+        return (health.Checks ?? [])
+            .Where(check => !check.IsReady)
+            .ToArray();
     }
 
     private PaymentAuthorizationResult ToAuthorizationResult(
@@ -942,6 +964,11 @@ public sealed class LinklyBackendTerminalClient(
     private static string Limit(string value, int maxLength)
     {
         return value.Length <= maxLength ? value : value[..maxLength];
+    }
+
+    private static void Log(string message)
+    {
+        ConsoleLog.Write("LinklyBackend", message);
     }
 
     private string T(string key, string fallback)

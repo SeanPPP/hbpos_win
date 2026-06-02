@@ -12,8 +12,8 @@ public sealed class LinklyCloudCredentialSchemaInitializerTests
 
         await initializer.InitializeAsync();
 
-        Assert.Single(executor.SqlStatements);
-        var sql = executor.SqlStatements[0];
+        Assert.Equal(4, executor.SqlStatements.Count);
+        var sql = string.Join(Environment.NewLine, executor.SqlStatements);
         Assert.Contains("IF OBJECT_ID(N'[dbo].[POSM_LinklyCloudCredential]', N'U') IS NULL", sql);
         Assert.Contains("[StoreCode] NVARCHAR(32) NOT NULL", sql);
         Assert.Contains("[Environment] NVARCHAR(32) NOT NULL CONSTRAINT [DF_POSM_LinklyCloudCredential_Environment] DEFAULT (N'Production')", sql);
@@ -26,6 +26,21 @@ public sealed class LinklyCloudCredentialSchemaInitializerTests
         Assert.Contains("DROP CONSTRAINT [UX_POSM_LinklyCloudCredential_StoreCode]", sql);
         Assert.Contains("CONSTRAINT [UX_POSM_LinklyCloudCredential_StoreCode_Environment]", sql);
         Assert.Contains("UNIQUE ([StoreCode], [Environment])", sql);
+    }
+
+    [Fact]
+    public async Task InitializeAsync_executes_environment_column_batch_before_constraint_batch()
+    {
+        var executor = new CapturingLinklyCloudCredentialSchemaSqlExecutor();
+        var initializer = new SqlSugarLinklyCloudCredentialSchemaInitializer(executor);
+
+        await initializer.InitializeAsync();
+
+        Assert.Equal(4, executor.SqlStatements.Count);
+        Assert.Contains("COL_LENGTH(N'dbo.POSM_LinklyCloudCredential', N'Environment') IS NULL", executor.SqlStatements[1]);
+        Assert.DoesNotContain("SET [Environment] = N'Production'", executor.SqlStatements[1]);
+        Assert.Contains("SET [Environment] = N'Production'", executor.SqlStatements[2]);
+        Assert.Contains("CONSTRAINT [UX_POSM_LinklyCloudCredential_StoreCode_Environment]", executor.SqlStatements[3]);
     }
 
     private sealed class CapturingLinklyCloudCredentialSchemaSqlExecutor : ILinklyCloudCredentialSchemaSqlExecutor

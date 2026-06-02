@@ -926,6 +926,79 @@
                                                 <TextBlock Text="{loc:Loc settings.payment.sandbox.toggle}" FontWeight="Bold" />
                                             </CheckBox>
 
+                                            <TextBlock Text="{loc:Loc settings.linkly.cloud.secret}" Style="{StaticResource SettingsLabelStyle}" />
+                                            <Border MinHeight="42"
+                                                    Background="#FFF6F8FB"
+                                                    BorderBrush="{StaticResource PosBorderBrush}"
+                                                    BorderThickness="1"
+                                                    CornerRadius="6"
+                                                    Padding="12,8"
+                                                    Margin="0,0,0,14">
+                                                <TextBlock Text="{Binding LinklyCloudSecretStatusText}"
+                                                           FontSize="12"
+                                                           Foreground="{StaticResource PosMutedForegroundBrush}"
+                                                           TextWrapping="Wrap" />
+                                            </Border>
+
+                                            <TextBlock Text="{loc:Loc settings.linkly.cloud.credential}" Style="{StaticResource SettingsLabelStyle}" />
+                                            <Border MinHeight="42"
+                                                    Background="#FFF6F8FB"
+                                                    BorderBrush="{StaticResource PosBorderBrush}"
+                                                    BorderThickness="1"
+                                                    CornerRadius="6"
+                                                    Padding="12,8"
+                                                    Margin="0,0,0,14">
+                                                <TextBlock Text="{Binding LinklyCloudCredentialStatusText}"
+                                                           FontSize="12"
+                                                           Foreground="{StaticResource PosMutedForegroundBrush}"
+                                                           TextWrapping="Wrap" />
+                                            </Border>
+
+                                            <TextBlock Text="{loc:Loc settings.linkly.cloud.username}" Style="{StaticResource SettingsLabelStyle}" />
+                                            <TextBox Text="{Binding LinklyCloudUsernameText, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                                     Style="{StaticResource SettingsFieldTextBoxStyle}"
+                                                     Margin="0,0,0,14" />
+
+                                            <TextBlock Text="{loc:Loc settings.linkly.cloud.password}" Style="{StaticResource SettingsLabelStyle}" />
+                                            <PasswordBox x:Name="LinklyCloudBackendPasswordBox"
+                                                         PasswordChanged="LinklyCloudPasswordBox_PasswordChanged"
+                                                         Style="{StaticResource SettingsFieldPasswordBoxStyle}"
+                                                         Margin="0,0,0,12" />
+
+                                            <Button Command="{Binding SaveLinklyCloudCredentialCommand}"
+                                                    Style="{StaticResource PosSecondaryButtonStyle}"
+                                                    Height="42"
+                                                    MinWidth="168"
+                                                    HorizontalAlignment="Left"
+                                                    Margin="0,0,0,16">
+                                                <StackPanel Orientation="Horizontal">
+                                                    <materialDesign:PackIcon Kind="ShieldKeyOutline" Width="18" Height="18" Margin="0,0,8,0" />
+                                                    <TextBlock Text="{loc:Loc settings.linkly.cloud.saveCredential}" />
+                                                </StackPanel>
+                                            </Button>
+
+                                            <TextBlock Text="{loc:Loc settings.linkly.cloud.pairCode}" Style="{StaticResource SettingsLabelStyle}" />
+                                            <Grid Margin="0,0,0,12">
+                                                <Grid.ColumnDefinitions>
+                                                    <ColumnDefinition Width="*" />
+                                                    <ColumnDefinition Width="12" />
+                                                    <ColumnDefinition Width="Auto" />
+                                                </Grid.ColumnDefinitions>
+                                                <TextBox Grid.Column="0"
+                                                         Text="{Binding LinklyPairCodeText, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                                         Style="{StaticResource SettingsFieldTextBoxStyle}" />
+                                                <Button Grid.Column="2"
+                                                        Command="{Binding PairLinklyCloudCommand}"
+                                                        Style="{StaticResource PosPrimaryButtonStyle}"
+                                                        Height="42"
+                                                        MinWidth="138">
+                                                    <StackPanel Orientation="Horizontal">
+                                                        <materialDesign:PackIcon Kind="LinkVariant" Width="18" Height="18" Margin="0,0,8,0" Foreground="White" />
+                                                        <TextBlock Text="{loc:Loc settings.linkly.cloud.pair}" Foreground="White" />
+                                                    </StackPanel>
+                                                </Button>
+                                            </Grid>
+
                                             <Border Background="#FFF6F8FB"
                                                     BorderBrush="#FFE0E4EC"
                                                     BorderThickness="1"
@@ -941,6 +1014,16 @@
                                             </Border>
 
                                             <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
+                                                <Button Command="{Binding CancelLinklyCloudPairingCommand}"
+                                                        Style="{StaticResource PosSecondaryButtonStyle}"
+                                                        Height="42"
+                                                        MinWidth="118"
+                                                        Margin="0,0,12,0">
+                                                    <StackPanel Orientation="Horizontal">
+                                                        <materialDesign:PackIcon Kind="Close" Width="18" Height="18" Margin="0,0,8,0" />
+                                                        <TextBlock Text="{loc:Loc settings.linkly.cloud.cancelPairing}" />
+                                                    </StackPanel>
+                                                </Button>
                                                 <Button Command="{Binding TestLinklyCommand}"
                                                         Style="{StaticResource PosSecondaryButtonStyle}"
                                                         Height="42"

@@ -1,11 +1,13 @@
 using Hbpos.Api;
 using Hbpos.Api.Auth;
+using Hbpos.Api.Logging;
 using Hbpos.Api.Services;
 using Hbpos.Contracts.Devices;
 using Microsoft.AspNetCore.Authentication;
 
 var builder = WebApplication.CreateBuilder(args);
 
+builder.Logging.AddHbposFileLogging(builder.Configuration, builder.Environment);
 builder.Services.AddControllers();
 builder.Services.AddOpenApi();
 builder.Services.AddSwaggerGen();

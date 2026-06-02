@@ -40,7 +40,7 @@
     <value>正在启动本地组件...</value>
   </data>
   <data name="startup.stage.loadingProducts" xml:space="preserve">
-    <value>正在加载本地商品...</value>
+    <value>正在加载本地商品和特殊商品...</value>
   </data>
   <data name="startup.stage.preparingMainWindow" xml:space="preserve">
     <value>正在准备主界面...</value>

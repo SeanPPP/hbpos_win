@@ -527,7 +527,7 @@ public sealed class MainViewModelScannerTests
     }
 
     [Fact]
-    public async Task ContinueStartupAfterShownAsync_StartsSpecialProductsPreloadWithoutBlockingPos()
+    public async Task InitializeAsync_LoadsSpecialProductsDataBeforeNavigatingToPos()
     {
         var catalog = new FakeCatalogRepository
         {
@@ -558,11 +558,7 @@ public sealed class MainViewModelScannerTests
         await viewModel.InitializeAsync(new AppStartupOptions([], false, null, null));
 
         Assert.Same(viewModel.PosTerminal, viewModel.CurrentScreen);
-        Assert.Equal(0, catalog.LoadSpecialProductItemsCallCount);
-
-        await viewModel.ContinueStartupAfterShownAsync(new AppStartupOptions([], false, null, null));
-        await WaitUntilAsync(() => catalog.LoadSpecialProductItemsCallCount > 0);
-
+        Assert.Equal(1, catalog.LoadSpecialProductItemsCallCount);
         Assert.Same(viewModel.PosTerminal, viewModel.CurrentScreen);
         Assert.Same(viewModel.SpecialProducts, viewModel.CachedSpecialProductsScreen);
         Assert.True(viewModel.IsPosTerminalScreenActive);
@@ -571,7 +567,7 @@ public sealed class MainViewModelScannerTests
     }
 
     [Fact]
-    public async Task ContinueStartupAfterShownAsync_warms_special_product_thumbnails_for_first_page_in_background()
+    public async Task ContinueStartupAfterShownAsync_DoesNotWarmSpecialProductThumbnailsInBackground()
     {
         ClearImageCacheForTests();
         var imageBaseUrl = $"https://images.example/{Guid.NewGuid():N}";
@@ -622,27 +618,20 @@ public sealed class MainViewModelScannerTests
         Assert.Empty(loadedImages);
 
         await viewModel.ContinueStartupAfterShownAsync(startupOptions);
-        await WaitUntilAsync(() => expectedFirstPageImages.All(ImageCacheContainsForTests));
 
         Assert.Same(viewModel.PosTerminal, viewModel.CurrentScreen);
         Assert.Same(viewModel.SpecialProducts, viewModel.CachedSpecialProductsScreen);
         Assert.True(viewModel.IsPosTerminalScreenActive);
+        Assert.Empty(loadedImages);
+        Assert.DoesNotContain(expectedFirstPageImages, ImageCacheContainsForTests);
 
         await viewModel.PosTerminal!.OpenSpecialProductsCommand.ExecuteAsync(null);
         await viewModel.SpecialProducts!.EnsureLoadedAsync();
 
-        foreach (var item in viewModel.SpecialProducts.PagedSpecialItems)
-        {
-            Assert.IsType<BitmapImage>(
-                converter.Convert(item.ProductImage, typeof(BitmapSource), null, CultureInfo.InvariantCulture));
-        }
-
-        Assert.All(expectedFirstPageImages, image => Assert.Equal(1, loadedImages[image]));
-
-        var pageTwoItem = catalog.SpecialItems.Last();
+        var firstPageItem = viewModel.SpecialProducts.PagedSpecialItems.First();
         Assert.IsType<BitmapImage>(
-            converter.Convert(pageTwoItem.ProductImage, typeof(BitmapSource), null, CultureInfo.InvariantCulture));
-        Assert.Equal(1, loadedImages[pageTwoItem.ProductImage!]);
+            converter.Convert(firstPageItem.ProductImage, typeof(BitmapSource), null, CultureInfo.InvariantCulture));
+        Assert.Equal(1, loadedImages[firstPageItem.ProductImage!]);
     }
 
     [Fact]
@@ -1448,8 +1437,9 @@ public sealed class MainViewModelScannerTests
     }
 
     [Fact]
-    public async Task ContinueStartupAfterShownAsync_WithSecondDisplay_OpensCustomerDisplayWindowFullscreen()
+    public async Task ContinueStartupAfterShownAsync_WithSecondDisplay_KeepsCustomerDisplayWindowClosed()
     {
+        using var logs = new ConsoleLogCapture();
         var customerDisplayWindow = new FakeCustomerDisplayWindowService();
         var viewModel = CreateAuthorizedMainViewModel(customerDisplayWindow);
         var startupOptions = new AppStartupOptions([], false, null, null);
@@ -1457,17 +1447,59 @@ public sealed class MainViewModelScannerTests
         await viewModel.InitializeAsync(startupOptions);
         await viewModel.ContinueStartupAfterShownAsync(startupOptions);
 
-        Assert.Equal(1, customerDisplayWindow.PrewarmCallCount);
-        Assert.Equal(1, customerDisplayWindow.WindowCreationCount);
-        Assert.Equal(1, customerDisplayWindow.SetModeCallCount);
-        Assert.Equal(CustomerDisplayWindowMode.Fullscreen, customerDisplayWindow.LastSetMode);
-        Assert.Equal(CustomerDisplayWindowMode.Fullscreen, viewModel.CustomerDisplayWindowMode);
-        Assert.True(viewModel.IsCustomerDisplayOpen);
-        Assert.Equal("Customer display opened full screen on the second display.", viewModel.StatusMessage);
+        Assert.Equal(0, customerDisplayWindow.PrewarmCallCount);
+        Assert.Equal(0, customerDisplayWindow.WindowCreationCount);
+        Assert.Equal(0, customerDisplayWindow.SetModeCallCount);
+        Assert.Equal(CustomerDisplayWindowMode.Closed, customerDisplayWindow.LastSetMode);
+        Assert.Equal(CustomerDisplayWindowMode.Closed, viewModel.CustomerDisplayWindowMode);
+        Assert.False(viewModel.IsCustomerDisplayOpen);
+        Assert.Contains(logs.Lines, line => line.Contains("[CustomerDisplay]") && line.Contains("startup prewarm skipped") && line.Contains("reason=auto-open-disabled"));
+        Assert.Contains(logs.Lines, line => line.Contains("[CustomerDisplay]") && line.Contains("post-show open skipped") && line.Contains("reason=auto-open-disabled"));
     }
 
     [Fact]
-    public async Task ContinueStartupAfterShownAsync_AfterPrewarm_ReusesCustomerDisplayWindow_AndOnlyActivatesOnce()
+    public async Task InitializeAsync_PreloadsSpecialProductsDataBeforeMainWindowShown()
+    {
+        using var logs = new ConsoleLogCapture();
+        var specialProductsWorkflow = new FakeSpecialProductsWorkflowService
+        {
+            PreloadResult = new SpecialProductsLoadResult("1042", [CreateItem("1042", "SKU-SP", "930001")])
+        };
+        var viewModel = CreateAuthorizedMainViewModel(
+            new FakeCustomerDisplayWindowService(),
+            specialProductsWorkflowService: specialProductsWorkflow);
+
+        await viewModel.InitializeAsync(new AppStartupOptions([], false, null, null));
+
+        Assert.Equal(1, specialProductsWorkflow.PreloadCallCount);
+        Assert.Equal("1042", specialProductsWorkflow.LastPreloadStoreCode);
+        Assert.Single(viewModel.SpecialProducts!.SpecialItems);
+        Assert.Contains(logs.Lines, line => line.Contains("[SpecialProducts]") && line.Contains("startup data preload completed"));
+        Assert.DoesNotContain(logs.Lines, line => line.Contains("startup thumbnail preload completed"));
+    }
+
+    [Fact]
+    public async Task InitializeAsync_SpecialProductsPreloadFailure_DoesNotBlockMainWindow()
+    {
+        using var logs = new ConsoleLogCapture();
+        var specialProductsWorkflow = new FakeSpecialProductsWorkflowService
+        {
+            PreloadException = new InvalidOperationException("special preload failed")
+        };
+        var viewModel = CreateAuthorizedMainViewModel(
+            new FakeCustomerDisplayWindowService(),
+            specialProductsWorkflowService: specialProductsWorkflow);
+
+        await viewModel.InitializeAsync(new AppStartupOptions([], false, null, null));
+
+        Assert.Equal(1, specialProductsWorkflow.PreloadCallCount);
+        Assert.Same(viewModel.PosTerminal, viewModel.CurrentScreen);
+        Assert.True(viewModel.IsPosTerminalScreenActive);
+        Assert.Contains(logs.Lines, line => line.Contains("[SpecialProducts]") && line.Contains("preload failed"));
+    }
+
+    [Fact]
+    public async Task ContinueStartupAfterShownAsync_WhenCalledTwice_DoesNotAutoOpenCustomerDisplayWindow()
     {
         var customerDisplayWindow = new FakeCustomerDisplayWindowService();
         var viewModel = CreateAuthorizedMainViewModel(customerDisplayWindow);
@@ -1477,16 +1509,39 @@ public sealed class MainViewModelScannerTests
         await viewModel.ContinueStartupAfterShownAsync(startupOptions);
         await viewModel.ContinueStartupAfterShownAsync(startupOptions);
 
-        Assert.Equal(1, customerDisplayWindow.PrewarmCallCount);
-        Assert.Equal(1, customerDisplayWindow.WindowCreationCount);
-        Assert.Equal(1, customerDisplayWindow.SetModeCallCount);
-        Assert.Equal(CustomerDisplayWindowMode.Fullscreen, customerDisplayWindow.LastSetMode);
-        Assert.Equal(CustomerDisplayWindowMode.Fullscreen, viewModel.CustomerDisplayWindowMode);
-        Assert.True(viewModel.IsCustomerDisplayOpen);
+        Assert.Equal(0, customerDisplayWindow.PrewarmCallCount);
+        Assert.Equal(0, customerDisplayWindow.WindowCreationCount);
+        Assert.Equal(0, customerDisplayWindow.SetModeCallCount);
+        Assert.Equal(CustomerDisplayWindowMode.Closed, customerDisplayWindow.LastSetMode);
+        Assert.Equal(CustomerDisplayWindowMode.Closed, viewModel.CustomerDisplayWindowMode);
+        Assert.False(viewModel.IsCustomerDisplayOpen);
     }
 
     [Fact]
-    public async Task ContinueStartupAfterShownAsync_WithSingleDisplay_ShowsHelpfulStatus()
+    public async Task ContinueStartupAfterShownAsync_DoesNotPreloadSpecialProductsHome()
+    {
+        using var logs = new ConsoleLogCapture();
+        var specialProductsWorkflow = new FakeSpecialProductsWorkflowService
+        {
+            PreloadResult = new SpecialProductsLoadResult("1042", [CreateItem("1042", "SKU-SP", "930001")])
+        };
+        var viewModel = CreateAuthorizedMainViewModel(
+            new FakeCustomerDisplayWindowService(),
+            specialProductsWorkflowService: specialProductsWorkflow);
+        var startupOptions = new AppStartupOptions([], false, null, null);
+
+        await viewModel.InitializeAsync(startupOptions);
+        var preloadCallCountAfterInitialize = specialProductsWorkflow.PreloadCallCount;
+        await viewModel.ContinueStartupAfterShownAsync(startupOptions);
+
+        Assert.Equal(1, preloadCallCountAfterInitialize);
+        Assert.Equal(preloadCallCountAfterInitialize, specialProductsWorkflow.PreloadCallCount);
+        Assert.Contains(logs.Lines, line => line.Contains("[SpecialProducts]") && line.Contains("startup home preload skipped"));
+        Assert.DoesNotContain(logs.Lines, line => line.Contains("startup thumbnail preload completed"));
+    }
+
+    [Fact]
+    public async Task ContinueStartupAfterShownAsync_WithSingleDisplay_DoesNotAttemptCustomerDisplayWindow()
     {
         var customerDisplayWindow = new FakeCustomerDisplayWindowService
         {
@@ -1500,13 +1555,12 @@ public sealed class MainViewModelScannerTests
         await viewModel.InitializeAsync(startupOptions);
         await viewModel.ContinueStartupAfterShownAsync(startupOptions);
 
-        Assert.Equal(1, customerDisplayWindow.PrewarmCallCount);
-        Assert.Equal(1, customerDisplayWindow.WindowCreationCount);
-        Assert.Equal(1, customerDisplayWindow.SetModeCallCount);
-        Assert.Equal(CustomerDisplayWindowMode.Fullscreen, customerDisplayWindow.LastSetMode);
+        Assert.Equal(0, customerDisplayWindow.PrewarmCallCount);
+        Assert.Equal(0, customerDisplayWindow.WindowCreationCount);
+        Assert.Equal(0, customerDisplayWindow.SetModeCallCount);
+        Assert.Equal(CustomerDisplayWindowMode.Closed, customerDisplayWindow.LastSetMode);
         Assert.Equal(CustomerDisplayWindowMode.Closed, viewModel.CustomerDisplayWindowMode);
         Assert.False(viewModel.IsCustomerDisplayOpen);
-        Assert.Equal("No second display detected. Customer display was not opened.", viewModel.StatusMessage);
     }
 
     [Fact]
@@ -1599,7 +1653,7 @@ public sealed class MainViewModelScannerTests
         var startupOptions = new AppStartupOptions([], false, null, null);
 
         await viewModel.InitializeAsync(startupOptions);
-        await viewModel.ContinueStartupAfterShownAsync(startupOptions);
+        viewModel.SetCustomerDisplayWindowMode(CustomerDisplayWindowMode.Fullscreen, owner: null);
 
         Assert.True(viewModel.IsCustomerDisplayOpen);
         Assert.Equal(CustomerDisplayWindowMode.Fullscreen, viewModel.CustomerDisplayWindowMode);
@@ -1759,6 +1813,205 @@ public sealed class MainViewModelScannerTests
     }
 
     [Fact]
+    public async Task Startup_online_check_auto_retries_pending_orders_and_refreshes_sync_center()
+    {
+        var syncQueue = new FakeSyncQueueRepository
+        {
+            Overview = new SyncQueueOverview(1, 0, 0, null),
+            ActiveItems = [CreateSyncQueueItem(Guid.NewGuid(), "Pending")]
+        };
+        var uploadExecution = new FakeOrderUploadExecutionService
+        {
+            ExecutePendingResult = new OrderUploadExecutionResult(1, 1, 0),
+            OnExecutePending = () =>
+            {
+                syncQueue.Overview = new SyncQueueOverview(0, 0, 0, null);
+                syncQueue.ActiveItems = [];
+            }
+        };
+        var viewModel = CreateAuthorizedMainViewModel(
+            new FakeCustomerDisplayWindowService(),
+            syncQueueRepository: syncQueue,
+            orderUploadExecutionService: uploadExecution,
+            connectivityApiClient: new FakeConnectivityApiClient(true));
+        var startupOptions = new AppStartupOptions([], false, null, null);
+
+        await viewModel.InitializeAsync(startupOptions);
+        await viewModel.ContinueStartupAfterShownAsync(startupOptions);
+
+        Assert.Equal(1, uploadExecution.ExecutePendingCallCount);
+        Assert.Equal(0, viewModel.PendingUploadCount);
+        Assert.Empty(viewModel.SyncCenterOrders);
+    }
+
+    [Fact]
+    public async Task Connectivity_refresh_auto_retries_when_backend_changes_from_offline_to_online()
+    {
+        var syncQueue = new FakeSyncQueueRepository
+        {
+            Overview = new SyncQueueOverview(1, 0, 0, null),
+            ActiveItems = [CreateSyncQueueItem(Guid.NewGuid(), "Pending")]
+        };
+        var uploadExecution = new FakeOrderUploadExecutionService
+        {
+            ExecutePendingResult = new OrderUploadExecutionResult(1, 1, 0),
+            OnExecutePending = () =>
+            {
+                syncQueue.Overview = new SyncQueueOverview(0, 0, 0, null);
+                syncQueue.ActiveItems = [];
+            }
+        };
+        var viewModel = CreateAuthorizedMainViewModel(
+            new FakeCustomerDisplayWindowService(),
+            syncQueueRepository: syncQueue,
+            orderUploadExecutionService: uploadExecution,
+            connectivityApiClient: new FakeConnectivityApiClient(false, true));
+
+        await viewModel.InitializeAsync(new AppStartupOptions([], false, null, null));
+        await InvokeRefreshOnlineStateAsync(viewModel);
+        await InvokeRefreshOnlineStateAsync(viewModel, autoRetryOrders: true);
+
+        Assert.Equal(1, uploadExecution.ExecutePendingCallCount);
+        Assert.True(viewModel.Session.IsOnline);
+        Assert.Equal(0, viewModel.PendingUploadCount);
+    }
+
+    [Fact]
+    public async Task Connectivity_refresh_auto_retries_each_online_cycle_without_overwriting_status()
+    {
+        var syncQueue = new FakeSyncQueueRepository
+        {
+            Overview = new SyncQueueOverview(1, 0, 0, null),
+            ActiveItems = [CreateSyncQueueItem(Guid.NewGuid(), "Pending")]
+        };
+        var uploadExecution = new FakeOrderUploadExecutionService
+        {
+            ExecutePendingResult = new OrderUploadExecutionResult(1, 1, 0)
+        };
+        var viewModel = CreateAuthorizedMainViewModel(
+            new FakeCustomerDisplayWindowService(),
+            syncQueueRepository: syncQueue,
+            orderUploadExecutionService: uploadExecution,
+            connectivityApiClient: new FakeConnectivityApiClient(true, true));
+
+        await viewModel.InitializeAsync(new AppStartupOptions([], false, null, null));
+        viewModel.StatusMessage = "keep this status";
+        await InvokeRefreshOnlineStateAsync(viewModel, autoRetryOrders: true);
+        await InvokeRefreshOnlineStateAsync(viewModel, autoRetryOrders: true);
+
+        Assert.Equal(2, uploadExecution.ExecutePendingCallCount);
+        Assert.Equal("keep this status", viewModel.StatusMessage);
+    }
+
+    [Fact]
+    public async Task Connectivity_refresh_skips_auto_retry_while_manual_retry_is_running()
+    {
+        var releaseManualRetry = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var manualRetryStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var syncQueue = new FakeSyncQueueRepository
+        {
+            Overview = new SyncQueueOverview(1, 0, 0, null),
+            ActiveItems = [CreateSyncQueueItem(Guid.NewGuid(), "Pending")]
+        };
+        var uploadExecution = new FakeOrderUploadExecutionService
+        {
+            PendingExecutionStarted = manualRetryStarted,
+            ReleasePendingExecution = releaseManualRetry
+        };
+        var viewModel = CreateAuthorizedMainViewModel(
+            new FakeCustomerDisplayWindowService(),
+            syncQueueRepository: syncQueue,
+            orderUploadExecutionService: uploadExecution,
+            connectivityApiClient: new FakeConnectivityApiClient(true));
+
+        await viewModel.InitializeAsync(new AppStartupOptions([], false, null, null));
+        var manualRetryTask = viewModel.RetryAllSyncOrdersCommand.ExecuteAsync(null);
+        await manualRetryStarted.Task;
+
+        await InvokeRefreshOnlineStateAsync(viewModel, autoRetryOrders: true);
+        releaseManualRetry.SetResult();
+        await manualRetryTask;
+
+        Assert.Equal(1, uploadExecution.ExecutePendingCallCount);
+    }
+
+    [Fact]
+    public async Task Connectivity_refresh_keeps_sync_snapshot_when_auto_retry_fails()
+    {
+        var item = CreateSyncQueueItem(Guid.NewGuid(), "Failed", "network down");
+        var syncQueue = new FakeSyncQueueRepository
+        {
+            Overview = new SyncQueueOverview(0, 1, 0, "network down"),
+            ActiveItems = [item]
+        };
+        var uploadExecution = new FakeOrderUploadExecutionService
+        {
+            ExecutePendingException = new InvalidOperationException("still offline")
+        };
+        var viewModel = CreateAuthorizedMainViewModel(
+            new FakeCustomerDisplayWindowService(),
+            syncQueueRepository: syncQueue,
+            orderUploadExecutionService: uploadExecution,
+            connectivityApiClient: new FakeConnectivityApiClient(true));
+
+        await viewModel.InitializeAsync(new AppStartupOptions([], false, null, null));
+        await InvokeRefreshOnlineStateAsync(viewModel, autoRetryOrders: true);
+
+        Assert.Equal(1, uploadExecution.ExecutePendingCallCount);
+        Assert.Equal(1, viewModel.FailedUploadCount);
+        Assert.Equal("network down", viewModel.LastOrderSyncErrorText);
+        Assert.Single(viewModel.SyncCenterOrders);
+    }
+
+    [Fact]
+    public async Task Connectivity_refresh_without_auto_retry_only_updates_online_state()
+    {
+        var syncQueue = new FakeSyncQueueRepository
+        {
+            Overview = new SyncQueueOverview(1, 0, 0, null),
+            ActiveItems = [CreateSyncQueueItem(Guid.NewGuid(), "Pending")]
+        };
+        var uploadExecution = new FakeOrderUploadExecutionService();
+        var viewModel = CreateAuthorizedMainViewModel(
+            new FakeCustomerDisplayWindowService(),
+            syncQueueRepository: syncQueue,
+            orderUploadExecutionService: uploadExecution,
+            connectivityApiClient: new FakeConnectivityApiClient(true));
+
+        await viewModel.InitializeAsync(new AppStartupOptions([], false, null, null));
+        await InvokeRefreshOnlineStateAsync(viewModel);
+
+        Assert.True(viewModel.Session.IsOnline);
+        Assert.Equal(0, uploadExecution.ExecutePendingCallCount);
+    }
+
+    [Fact]
+    public async Task Connectivity_refresh_swallows_auto_retry_snapshot_refresh_failure()
+    {
+        var syncQueue = new FakeSyncQueueRepository
+        {
+            Overview = new SyncQueueOverview(1, 0, 0, null),
+            ActiveItems = [CreateSyncQueueItem(Guid.NewGuid(), "Pending")]
+        };
+        var uploadExecution = new FakeOrderUploadExecutionService
+        {
+            ExecutePendingException = new InvalidOperationException("upload failed"),
+            OnBeforeExecutePendingException = () => syncQueue.ThrowOnRead = true
+        };
+        var viewModel = CreateAuthorizedMainViewModel(
+            new FakeCustomerDisplayWindowService(),
+            syncQueueRepository: syncQueue,
+            orderUploadExecutionService: uploadExecution,
+            connectivityApiClient: new FakeConnectivityApiClient(true));
+
+        await viewModel.InitializeAsync(new AppStartupOptions([], false, null, null));
+        var isOnline = await InvokeRefreshOnlineStateAsync(viewModel, autoRetryOrders: true);
+
+        Assert.True(isOnline);
+        Assert.Equal(1, uploadExecution.ExecutePendingCallCount);
+    }
+
+    [Fact]
     public async Task ReregisterDevice_SubmitSuccess_ClearsAuthorizationAndShowsRegistration()
     {
         var authorizationState = new DeviceAuthorizationState();
@@ -1857,33 +2110,76 @@ public sealed class MainViewModelScannerTests
         IOrderUploadExecutionService? orderUploadExecutionService = null,
         ICashDrawerService? cashDrawerService = null,
         IApplicationExitService? applicationExitService = null,
-        IConfirmationDialogService? confirmationDialogService = null)
+        IConfirmationDialogService? confirmationDialogService = null,
+        IConnectivityApiClient? connectivityApiClient = null,
+        ISpecialProductsWorkflowService? specialProductsWorkflowService = null)
     {
+        var priceIndex = new LocalSellableItemIndex();
+        var cart = new PosCartService();
+        var checkout = new CashCheckoutService();
+        var catalogRepository = new FakeCatalogRepository();
+        var syncQueue = syncQueueRepository ?? new FakeSyncQueueRepository();
+        var orderRepository = new FakeLocalOrderRepository();
+        var localization = new LocalizationService();
+        var deviceRepository = new FakeLocalDeviceRepository { Latest = CreateAllowedDevice("1042") };
+        var fingerprintService = new FakeDeviceFingerprintService();
         return new MainViewModel(
-            new LocalSellableItemIndex(),
-            new PosCartService(),
-            new CashCheckoutService(),
+            priceIndex,
+            cart,
+            checkout,
             new FakeLocalSchemaService(),
-            new FakeSettingsRepository(),
-            new FakeCatalogRepository(),
-            new FakeCatalogSyncService(),
+            new ShellCultureService(localization, new FakeSettingsRepository()),
+            new ShellCatalogService(priceIndex, catalogRepository, new FakeCatalogSyncService()),
+            catalogRepository,
             new FakeRemoteLookupRefreshService(),
             new FakeSpecialProductService(),
-            new FakeConnectivityApiClient(),
-            new FakeLocalDeviceRepository { Latest = CreateAllowedDevice("1042") },
-            new FakeDeviceApiClient(),
-            new FakeDeviceFingerprintService(),
-            new DeviceAuthorizationState(),
-            new FakeLocalOrderRepository(),
-            syncQueueRepository ?? new FakeSyncQueueRepository(),
-            new LocalizationService(),
-            customerDisplayWindow,
+            connectivityApiClient ?? new FakeConnectivityApiClient(),
+            new MainShellStartupService(deviceRepository, fingerprintService, new DeviceAuthorizationState()),
+            orderRepository,
+            new ShellSyncCenterService(syncQueue),
+            localization,
+            new CustomerDisplayOrchestrator(customerDisplayWindow),
             new FakeRawScannerService(),
+            new ReceiptQueryService(orderRepository),
+            new CashPaymentWorkflowService(checkout, orderRepository, syncQueue),
+            new DeviceRegistrationWorkflowService(new FakeDeviceApiClient(), deviceRepository, fingerprintService),
+            specialProductsWorkflowService ?? new SpecialProductsWorkflowService(priceIndex, cart, catalogRepository, new FakeSpecialProductService()),
+            (remoteLookupRefreshAsync, reloadCatalogAsync) => new PosTerminalWorkflowService(
+                priceIndex,
+                cart,
+                remoteLookupRefreshAsync,
+                reloadCatalogAsync),
             receiptPrintService: receiptPrintService,
             orderUploadExecutionService: orderUploadExecutionService,
             cashDrawerService: cashDrawerService,
             applicationExitService: applicationExitService,
             confirmationDialogService: confirmationDialogService);
+    }
+
+    private static async Task<bool> InvokeRefreshOnlineStateAsync(MainViewModel viewModel)
+    {
+        var method = typeof(MainViewModel).GetMethod(
+            "RefreshOnlineStateAsync",
+            BindingFlags.Instance | BindingFlags.NonPublic,
+            binder: null,
+            [typeof(CancellationToken)],
+            modifiers: null);
+        Assert.NotNull(method);
+        var task = (Task<bool>)method!.Invoke(viewModel, [CancellationToken.None])!;
+        return await task;
+    }
+
+    private static async Task<bool> InvokeRefreshOnlineStateAsync(MainViewModel viewModel, bool autoRetryOrders)
+    {
+        var method = typeof(MainViewModel).GetMethod(
+            "RefreshOnlineStateAsync",
+            BindingFlags.Instance | BindingFlags.NonPublic,
+            binder: null,
+            [typeof(CancellationToken), typeof(bool)],
+            modifiers: null);
+        Assert.NotNull(method);
+        var task = (Task<bool>)method!.Invoke(viewModel, [CancellationToken.None, autoRetryOrders])!;
+        return await task;
     }
 
     private static MainViewModel CreateAuthorizedMainViewModelWithPaymentWorkflow(
@@ -2300,6 +2596,7 @@ public sealed class MainViewModelScannerTests
             string pairCode,
             string? username,
             string? password,
+            bool syncBackendTerminalCredential = false,
             CancellationToken cancellationToken = default)
         {
             return Task.FromResult(new LinklyConnectionTestResult(false, "not tested"));
@@ -2316,6 +2613,7 @@ public sealed class MainViewModelScannerTests
             CardTerminalEnvironment environment,
             string username,
             string password,
+            bool syncBackendCredential = false,
             CancellationToken cancellationToken = default)
         {
             return Task.CompletedTask;
@@ -2543,11 +2841,16 @@ public sealed class MainViewModelScannerTests
         }
     }
 
-    private sealed class FakeConnectivityApiClient : IConnectivityApiClient
+    private sealed class FakeConnectivityApiClient(params bool[] responses) : IConnectivityApiClient
     {
+        private readonly Queue<bool> _responses = new(responses);
+
+        public int CheckOnlineCallCount { get; private set; }
+
         public Task<bool> CheckOnlineAsync(CancellationToken cancellationToken = default)
         {
-            return Task.FromResult(false);
+            CheckOnlineCallCount++;
+            return Task.FromResult(_responses.Count > 0 && _responses.Dequeue());
         }
     }
 
@@ -2729,19 +3032,37 @@ public sealed class MainViewModelScannerTests
 
         public IReadOnlyList<SyncQueueListItem> ActiveItems { get; set; } = [];
 
+        public bool ThrowOnRead { get; set; }
+
+        public int ThrowOnReadAfterCount { get; set; } = -1;
+
+        private int _readCount;
+
         public Task<int> CountPendingAsync(CancellationToken cancellationToken = default)
         {
+            ThrowIfConfigured();
             return Task.FromResult(Overview.PendingCount);
         }
 
         public Task<SyncQueueOverview> GetOverviewAsync(CancellationToken cancellationToken = default)
         {
+            ThrowIfConfigured();
             return Task.FromResult(Overview);
         }
 
         public Task<IReadOnlyList<SyncQueueListItem>> GetActiveItemsAsync(int take = 20, CancellationToken cancellationToken = default)
         {
+            ThrowIfConfigured();
             return Task.FromResult(ActiveItems);
+        }
+
+        private void ThrowIfConfigured()
+        {
+            _readCount++;
+            if (ThrowOnRead || (ThrowOnReadAfterCount >= 0 && _readCount > ThrowOnReadAfterCount))
+            {
+                throw new InvalidOperationException("sync queue read failed");
+            }
         }
     }
 
@@ -2751,6 +3072,12 @@ public sealed class MainViewModelScannerTests
 
         public OrderUploadExecutionResult ExecutePendingResult { get; init; } = new(1, 1, 0);
 
+        public Exception? ExecutePendingException { get; init; }
+
+        public TaskCompletionSource? PendingExecutionStarted { get; init; }
+
+        public TaskCompletionSource? ReleasePendingExecution { get; init; }
+
         public Guid? LastExecuteOneOrderGuid { get; private set; }
 
         public int ExecutePendingCallCount { get; private set; }
@@ -2759,6 +3086,8 @@ public sealed class MainViewModelScannerTests
 
         public Action? OnExecutePending { get; init; }
 
+        public Action? OnBeforeExecutePendingException { get; init; }
+
         public Task<OrderUploadExecutionResult> ExecuteOneAsync(Guid orderGuid, CancellationToken cancellationToken = default)
         {
             LastExecuteOneOrderGuid = orderGuid;
@@ -2766,11 +3095,23 @@ public sealed class MainViewModelScannerTests
             return Task.FromResult(ExecuteOneResult);
         }
 
-        public Task<OrderUploadExecutionResult> ExecutePendingAsync(int batchSize = 20, CancellationToken cancellationToken = default)
+        public async Task<OrderUploadExecutionResult> ExecutePendingAsync(int batchSize = 20, CancellationToken cancellationToken = default)
         {
             ExecutePendingCallCount++;
+            PendingExecutionStarted?.TrySetResult();
+            if (ReleasePendingExecution is not null)
+            {
+                await ReleasePendingExecution.Task;
+            }
+
+            if (ExecutePendingException is not null)
+            {
+                OnBeforeExecutePendingException?.Invoke();
+                throw ExecutePendingException;
+            }
+
             OnExecutePending?.Invoke();
-            return Task.FromResult(ExecutePendingResult);
+            return ExecutePendingResult;
         }
     }
 
@@ -2874,6 +3215,119 @@ public sealed class MainViewModelScannerTests
                     CustomerDisplayWindowMode.Closed,
                     CustomerDisplayWindowService.ClosedStatusKey)
             };
+        }
+    }
+
+    private sealed class FakeSpecialProductsWorkflowService : ISpecialProductsWorkflowService
+    {
+        public SpecialProductsLoadResult PreloadResult { get; init; } = new("1042", []);
+
+        public Exception? PreloadException { get; init; }
+
+        public int PreloadCallCount { get; private set; }
+
+        public string? LastPreloadStoreCode { get; private set; }
+
+        public Task<SpecialProductsLoadResult> PreloadAsync(
+            string storeCode,
+            CancellationToken cancellationToken = default)
+        {
+            PreloadCallCount++;
+            LastPreloadStoreCode = storeCode;
+            return PreloadException is null
+                ? Task.FromResult(PreloadResult)
+                : Task.FromException<SpecialProductsLoadResult>(PreloadException);
+        }
+
+        public Task<SpecialProductsLoadResult> EnsureLoadedAsync(
+            string storeCode,
+            CancellationToken cancellationToken = default)
+        {
+            return Task.FromResult(PreloadResult with { StoreCode = storeCode });
+        }
+
+        public Task<SpecialProductsLoadResult> LoadAsync(
+            string storeCode,
+            CancellationToken cancellationToken = default)
+        {
+            return Task.FromResult(PreloadResult with { StoreCode = storeCode });
+        }
+
+        public SpecialProductsSearchResult Search(string storeCode, string searchText)
+        {
+            return new SpecialProductsSearchResult(storeCode, searchText, []);
+        }
+
+        public SpecialProductsAddToCartResult AddToCart(SellableItemDto item)
+        {
+            return new SpecialProductsAddToCartResult(new CartLine(item), 1);
+        }
+
+        public Task<SpecialProductsDownloadWorkflowResult> DownloadAsync(
+            string storeCode,
+            CancellationToken cancellationToken = default,
+            IProgress<SpecialProductDownloadProgress>? progress = null)
+        {
+            return Task.FromResult(new SpecialProductsDownloadWorkflowResult(
+                new SpecialProductDownloadResult(storeCode, 0, 0, 0, 0, 0),
+                []));
+        }
+
+        public Task<SpecialProductsMutationWorkflowResult> MarkSpecialProductAsync(
+            string storeCode,
+            string productCode,
+            bool isSpecialProduct,
+            CancellationToken cancellationToken = default)
+        {
+            return Task.FromResult(new SpecialProductsMutationWorkflowResult(
+                storeCode,
+                productCode,
+                isSpecialProduct,
+                []));
+        }
+
+        public Task<SpecialProductsReorderWorkflowResult?> ReorderAsync(
+            string storeCode,
+            IReadOnlyList<SellableItemDto> currentItems,
+            string productCode,
+            int delta,
+            CancellationToken cancellationToken = default)
+        {
+            return Task.FromResult<SpecialProductsReorderWorkflowResult?>(null);
+        }
+    }
+
+    private sealed class ConsoleLogCapture : IDisposable
+    {
+        private readonly List<string> _lines = [];
+
+        public ConsoleLogCapture()
+        {
+            ConsoleLog.LineWritten += OnLineWritten;
+        }
+
+        public IReadOnlyList<string> Lines
+        {
+            get
+            {
+                lock (_lines)
+                {
+                    return _lines.ToArray();
+                }
+            }
+        }
+
+        public void Dispose()
+        {
+            ConsoleLog.LineWritten -= OnLineWritten;
+        }
+
+        private void OnLineWritten(string line)
+        {
+            lock (_lines)
+            {
+                _lines.Add(line);
+            }
         }
     }
 }

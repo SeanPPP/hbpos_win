@@ -80,6 +80,7 @@
   <data name="settings.linkly.cloud.password" xml:space="preserve"><value>Cloud API Password</value></data>
   <data name="settings.linkly.cloud.saveCredential" xml:space="preserve"><value>Save Test Account</value></data>
   <data name="settings.linklyCloud.localCredentialMissing" xml:space="preserve"><value>Save the Linkly Cloud API username and password first.</value></data>
+  <data name="settings.linklyCloud.deviceContextMissing" xml:space="preserve"><value>Device registration context is unavailable. Reopen settings and try again.</value></data>
   <data name="settings.linklyCloud.usernameRequired" xml:space="preserve"><value>Enter the Linkly Cloud API username first.</value></data>
   <data name="settings.linklyCloud.passwordRequired" xml:space="preserve"><value>Enter the Linkly Cloud API password, or save it on this POS first.</value></data>
   <data name="settings.linklyCloud.pairCodeRequired" xml:space="preserve"><value>Enter the Linkly VPP pair code first.</value></data>
@@ -156,7 +157,9 @@
   <data name="settings.status.linklyTestFailed" xml:space="preserve"><value>Linkly EFT-Client connection failed.</value></data>
   <data name="settings.status.linklyCloudPaired" xml:space="preserve"><value>Linkly Cloud terminal paired.</value></data>
   <data name="settings.status.linklyCloudPairFailed" xml:space="preserve"><value>Linkly Cloud pairing failed.</value></data>
-  <data name="settings.status.linklyCloudCredentialSaved" xml:space="preserve"><value>Linkly Cloud API test account saved securely on this POS.</value></data>
+  <data name="settings.linklyCloud.pairAuthFailed" xml:space="preserve"><value>Linkly Cloud pairing failed. Check the Sandbox VPP pair code and Cloud test account username/password.</value></data>
+  <data name="settings.status.linklyCloudCredentialSaved" xml:space="preserve"><value>Linkly Cloud API test account saved securely.</value></data>
+  <data name="settings.status.linklyCloudCredentialSynced" xml:space="preserve"><value>Linkly Cloud API test account saved securely and synced to HBPOS.</value></data>
   <data name="settings.status.testLinklyBeforeSave" xml:space="preserve"><value>Test Linkly connection before enabling ANZ Linkly.</value></data>
   <data name="settings.status.linklySaved" xml:space="preserve"><value>ANZ Linkly terminal settings saved.</value></data>
   <data name="settings.status.receiptPrinterNotConfigured" xml:space="preserve"><value>Receipt printer service is not configured.</value></data>

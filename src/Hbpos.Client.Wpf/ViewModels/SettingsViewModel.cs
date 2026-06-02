@@ -583,39 +583,48 @@ public sealed partial class SettingsViewModel : ObservableObject
     {
         await RunBusyAsync(async () =>
         {
-            LinklyConnectionSucceeded = false;
-            ClearLinklyTestStatus();
-            LinklyConnectionTestResult result;
-            if (IsLinklyCloudBackendAsyncMode)
+            try
             {
-                result = await _setupService.TestLinklyCloudBackendConnectionAsync(SelectedEnvironment);
-            }
-            else if (IsLinklyCloudDirectSyncMode)
-            {
-                result = await _setupService.TestLinklyCloudConnectionAsync(SelectedEnvironment);
-            }
-            else
-            {
-                result = await _setupService.TestLinklyConnectionAsync(
-                    NormalizeHost(LinklyHostText),
-                    ParsePort(LinklyPortText),
-                    TimeSpan.FromSeconds(ParseTimeoutSeconds(TimeoutSecondsText)));
-            }
+                LinklyConnectionSucceeded = false;
+                ClearLinklyTestStatus();
+                LinklyConnectionTestResult result;
+                if (IsLinklyCloudBackendAsyncMode)
+                {
+                    result = await _setupService.TestLinklyCloudBackendConnectionAsync(SelectedEnvironment);
+                }
+                else if (IsLinklyCloudDirectSyncMode)
+                {
+                    result = await _setupService.TestLinklyCloudConnectionAsync(SelectedEnvironment);
+                }
+                else
+                {
+                    result = await _setupService.TestLinklyConnectionAsync(
+                        NormalizeHost(LinklyHostText),
+                        ParsePort(LinklyPortText),
+                        TimeSpan.FromSeconds(ParseTimeoutSeconds(TimeoutSecondsText)));
+                }
 
-            LinklyConnectionSucceeded = result.Succeeded;
+                LinklyConnectionSucceeded = result.Succeeded;
 
-            if (string.IsNullOrWhiteSpace(result.Message))
-            {
-                var key = result.Succeeded
-                    ? "settings.status.linklyTestSuccess"
-                    : "settings.status.linklyTestFailed";
-                SetLinklyTestStatus(key);
-                SetStatus(key);
+                if (string.IsNullOrWhiteSpace(result.Message))
+                {
+                    var key = result.Succeeded
+                        ? "settings.status.linklyTestSuccess"
+                        : "settings.status.linklyTestFailed";
+                    SetLinklyTestStatus(key);
+                    SetStatus(key);
+                }
+                else
+                {
+                    SetLinklyTestStatusOverride(result.Message);
+                    SetStatusOverride(result.Message);
+                }
             }
-            else
+            catch (Exception ex)
             {
-                SetLinklyTestStatusOverride(result.Message);
-                SetStatusOverride(result.Message);
+                SetLinklyTestStatusOverride(ex.Message);
+                SetStatusOverride(ex.Message);
+                throw;
             }
         });
     }
@@ -635,31 +644,41 @@ public sealed partial class SettingsViewModel : ObservableObject
 
         await RunBusyAsync(async () =>
         {
-            LinklyConnectionSucceeded = false;
-            ClearLinklyTestStatus();
-            var result = await _setupService.PairLinklyCloudAsync(
-                pairingEnvironment,
-                pairCode,
-                username,
-                password);
-            LogLinklyCloudSettings($"pair completed environment={pairingEnvironment} currentEnvironment={SelectedEnvironment} success={result.Succeeded} hasMessage={!string.IsNullOrWhiteSpace(result.Message)}");
-            if (SelectedEnvironment == pairingEnvironment)
+            try
             {
-                HasSavedLinklyCloudSecret = result.Succeeded || HasSavedLinklyCloudSecret;
-            }
+                LinklyConnectionSucceeded = false;
+                ClearLinklyTestStatus();
+                var result = await _setupService.PairLinklyCloudAsync(
+                    pairingEnvironment,
+                    pairCode,
+                    username,
+                    password,
+                    syncBackendTerminalCredential: IsLinklyCloudBackendAsyncMode);
+                LogLinklyCloudSettings($"pair completed environment={pairingEnvironment} currentEnvironment={SelectedEnvironment} success={result.Succeeded} hasMessage={!string.IsNullOrWhiteSpace(result.Message)}");
+                if (SelectedEnvironment == pairingEnvironment)
+                {
+                    HasSavedLinklyCloudSecret = result.Succeeded || HasSavedLinklyCloudSecret;
+                }
 
-            if (string.IsNullOrWhiteSpace(result.Message))
-            {
-                var key = result.Succeeded
-                    ? "settings.status.linklyCloudPaired"
-                    : "settings.status.linklyCloudPairFailed";
-                SetLinklyTestStatus(key);
-                SetStatus(key);
+                if (string.IsNullOrWhiteSpace(result.Message))
+                {
+                    var key = result.Succeeded
+                        ? "settings.status.linklyCloudPaired"
+                        : "settings.status.linklyCloudPairFailed";
+                    SetLinklyTestStatus(key);
+                    SetStatus(key);
+                }
+                else
+                {
+                    SetLinklyTestStatusOverride(result.Message);
+                    SetStatusOverride(result.Message);
+                }
             }
-            else
+            catch (Exception ex)
             {
-                SetLinklyTestStatusOverride(result.Message);
-                SetStatusOverride(result.Message);
+                SetLinklyTestStatusOverride(ex.Message);
+                SetStatusOverride(ex.Message);
+                throw;
             }
         });
     }
@@ -696,23 +715,38 @@ public sealed partial class SettingsViewModel : ObservableObject
     private async Task SaveLinklyCloudCredentialAsync()
     {
         var credentialEnvironment = SelectedEnvironment;
+        var syncBackendCredential = IsLinklyCloudBackendAsyncMode;
         var username = LinklyCloudUsernameText;
         var password = LinklyCloudPasswordText;
         await RunBusyAsync(async () =>
         {
-            LogLinklyCloudSettings($"save credential clicked environment={credentialEnvironment} hasUsername={!string.IsNullOrWhiteSpace(username)} hasPassword={!string.IsNullOrWhiteSpace(password)}");
-            await _setupService.SaveLinklyCloudCredentialAsync(
-                credentialEnvironment,
-                username,
-                password);
-            if (SelectedEnvironment == credentialEnvironment)
+            try
             {
-                HasSavedLinklyCloudPassword = true;
-                LinklyCloudPasswordText = string.Empty;
-            }
+                LogLinklyCloudSettings($"save credential clicked environment={credentialEnvironment} hasUsername={!string.IsNullOrWhiteSpace(username)} hasPassword={!string.IsNullOrWhiteSpace(password)}");
+                await _setupService.SaveLinklyCloudCredentialAsync(
+                    credentialEnvironment,
+                    username,
+                    password,
+                    syncBackendCredential: syncBackendCredential);
+                if (SelectedEnvironment == credentialEnvironment)
+                {
+                    HasSavedLinklyCloudPassword = true;
+                    LinklyCloudPasswordText = string.Empty;
+                }
 
-            LogLinklyCloudSettings($"save credential completed environment={credentialEnvironment} currentEnvironment={SelectedEnvironment} success=true");
-            SetStatus("settings.status.linklyCloudCredentialSaved");
+                LogLinklyCloudSettings($"save credential completed environment={credentialEnvironment} currentEnvironment={SelectedEnvironment} success=true");
+                var statusKey = syncBackendCredential
+                    ? "settings.status.linklyCloudCredentialSynced"
+                    : "settings.status.linklyCloudCredentialSaved";
+                SetLinklyTestStatus(statusKey);
+                SetStatus(statusKey);
+            }
+            catch (Exception ex)
+            {
+                SetLinklyTestStatusOverride(ex.Message);
+                SetStatusOverride(ex.Message);
+                throw;
+            }
         }, operationName: "save linkly cloud credential");
     }
 
@@ -929,13 +963,13 @@ public sealed partial class SettingsViewModel : ObservableObject
 
     private bool CanPairLinklyCloud()
     {
-        return !IsBusy && IsLinklyCloudDirectSyncMode;
+        return !IsBusy && IsLinklyCloudMode;
     }
 
     private bool CanSaveLinklyCloudCredential()
     {
         return !IsBusy &&
-            IsLinklyCloudDirectSyncMode &&
+            IsLinklyCloudMode &&
             !string.IsNullOrWhiteSpace(LinklyCloudUsernameText) &&
             !string.IsNullOrWhiteSpace(LinklyCloudPasswordText);
     }
@@ -943,7 +977,7 @@ public sealed partial class SettingsViewModel : ObservableObject
     private bool CanCancelLinklyCloudPairing()
     {
         return !IsBusy &&
-            IsLinklyCloudDirectSyncMode &&
+            IsLinklyCloudMode &&
             (!string.IsNullOrWhiteSpace(LinklyPairCodeText) ||
              !string.IsNullOrWhiteSpace(LinklyCloudPasswordText));
     }

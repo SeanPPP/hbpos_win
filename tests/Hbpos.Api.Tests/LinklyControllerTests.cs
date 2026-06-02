@@ -39,6 +39,20 @@ public sealed class LinklyControllerTests
     }
 
     [Fact]
+    public void LinklyCloudCredentialUpsertEndpoint_KeepsExpectedRouteAndAuthorization()
+    {
+        Assert.Equal("cloud-credential", typeof(LinklyController)
+            .GetMethod(nameof(LinklyController.UpsertCloudCredential))?
+            .GetCustomAttributes(typeof(HttpPutAttribute), inherit: false)
+            .Cast<HttpPutAttribute>()
+            .Single()
+            .Template);
+        Assert.NotNull(typeof(LinklyController)
+            .GetCustomAttributes(typeof(AuthorizeAttribute), inherit: false)
+            .SingleOrDefault());
+    }
+
+    [Fact]
     public async Task GetCloudCredential_RequiresAuthentication()
     {
         await using var factory = new LinklyApiFactory();
@@ -83,6 +97,54 @@ public sealed class LinklyControllerTests
         Assert.Equal(expected.Environment, apiResult.Data?.Environment);
         Assert.Equal(expected.Username, apiResult.Data?.Username);
         Assert.Equal(expected.Password, apiResult.Data?.Password);
+    }
+
+    [Fact]
+    public async Task UpsertCloudCredential_UsesAuthenticatedStoreCodeOnlyAndDoesNotExposePassword()
+    {
+        string? requestedStoreCode = null;
+        LinklyCloudCredentialUpsertRequest? requestedRequest = null;
+        string? requestedUpdatedBy = null;
+        await using var factory = new LinklyApiFactory(new StubLinklyCloudCredentialService(
+            upsertFactory: (storeCode, request, updatedBy) =>
+            {
+                requestedStoreCode = storeCode;
+                requestedRequest = request;
+                requestedUpdatedBy = updatedBy;
+                return Task.FromResult(new LinklyCloudCredentialUpsertResponse(
+                    storeCode,
+                    "Sandbox",
+                    "merchant-user",
+                    true,
+                    new DateTimeOffset(2026, 6, 2, 1, 0, 0, TimeSpan.Zero)));
+            }));
+        using var client = factory.CreateClient();
+        client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Test");
+
+        using var response = await client.PutAsJsonAsync(
+            "/api/v1/linkly/cloud-credential?storeCode=S99",
+            new
+            {
+                Environment = "Sandbox",
+                Username = "merchant-user",
+                Password = "merchant-password",
+                StoreCode = "S99"
+            });
+
+        var body = await response.Content.ReadAsStringAsync();
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var apiResult = JsonSerializer.Deserialize<ApiResult<LinklyCloudCredentialUpsertResponse>>(
+            body,
+            new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
+        Assert.NotNull(apiResult);
+        Assert.True(apiResult!.Success);
+        Assert.Equal("S01", requestedStoreCode);
+        Assert.Equal("Sandbox", requestedRequest?.Environment);
+        Assert.Equal("device:POS-01", requestedUpdatedBy);
+        Assert.True(apiResult.Data?.HasPassword);
+        Assert.Equal("S01", apiResult.Data?.StoreCode);
+        Assert.DoesNotContain("merchant-password", body, StringComparison.Ordinal);
+        Assert.DoesNotContain("\"password\"", body, StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact]
@@ -138,6 +200,9 @@ public sealed class LinklyControllerTests
         Assert.DoesNotContain(
             typeof(LinklyCloudBackendSendKeyRequest).GetProperties().Select(property => property.Name),
             forbiddenFields.Contains);
+        Assert.DoesNotContain(
+            typeof(LinklyCloudBackendTerminalCredentialUpsertRequest).GetProperties().Select(property => property.Name),
+            forbiddenFields.Contains);
     }
 
     [Fact]
@@ -158,6 +223,17 @@ public sealed class LinklyControllerTests
             .GetMethod(nameof(LinklyController.GetCloudBackendHealth))?
             .GetCustomAttributes(typeof(HttpGetAttribute), inherit: false)
             .Cast<HttpGetAttribute>()
+            .Single()
+            .Template);
+    }
+
+    [Fact]
+    public void CloudBackendTerminalCredentialEndpoint_KeepsExpectedRouteAndAuthorization()
+    {
+        Assert.Equal("cloud-backend/terminal", typeof(LinklyController)
+            .GetMethod(nameof(LinklyController.UpsertCloudBackendTerminalCredential))?
+            .GetCustomAttributes(typeof(HttpPutAttribute), inherit: false)
+            .Cast<HttpPutAttribute>()
             .Single()
             .Template);
     }
@@ -280,6 +356,43 @@ public sealed class LinklyControllerTests
         Assert.Equal("sandbox", backendService.LastHealthEnvironment);
         Assert.True(apiResult.Data?.IsReady);
         Assert.Contains(apiResult.Data!.Checks, check => check.Code == "PUBLIC_CALLBACK_URL" && check.IsReady);
+    }
+
+    [Fact]
+    public async Task UpsertCloudBackendTerminalCredential_UsesAuthenticatedDeviceClaimsOnlyAndDoesNotExposeSecret()
+    {
+        var backendService = new CapturingLinklyCloudBackendAsyncService();
+        await using var factory = new LinklyApiFactory(linklyCloudBackendAsyncService: backendService);
+        using var client = factory.CreateClient();
+        client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Test");
+
+        using var response = await client.PutAsJsonAsync(
+            "/api/v1/linkly/cloud-backend/terminal?storeCode=S99&deviceCode=POS-99",
+            new
+            {
+                Environment = "Sandbox",
+                Secret = "secret-pos-01",
+                PosId = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+                StoreCode = "S99",
+                DeviceCode = "POS-99"
+            });
+
+        var body = await response.Content.ReadAsStringAsync();
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var apiResult = JsonSerializer.Deserialize<ApiResult<LinklyCloudBackendTerminalCredentialResponse>>(
+            body,
+            new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
+        Assert.NotNull(apiResult);
+        Assert.True(apiResult!.Success);
+        Assert.Equal("S01", backendService.LastTerminalUpsertStoreCode);
+        Assert.Equal("POS-01", backendService.LastTerminalUpsertDeviceCode);
+        Assert.Equal("Sandbox", backendService.LastTerminalUpsertRequest?.Environment);
+        Assert.Equal("device:POS-01", backendService.LastTerminalUpsertUpdatedBy);
+        Assert.Equal("S01", apiResult.Data?.StoreCode);
+        Assert.Equal("POS-01", apiResult.Data?.DeviceCode);
+        Assert.True(apiResult.Data?.HasSecret);
+        Assert.DoesNotContain("secret-pos-01", body, StringComparison.Ordinal);
+        Assert.DoesNotContain("\"secret\"", body, StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact]
@@ -547,6 +660,14 @@ public sealed class LinklyControllerTests
 
         public string? LastHealthEnvironment { get; private set; }
 
+        public string? LastTerminalUpsertStoreCode { get; private set; }
+
+        public string? LastTerminalUpsertDeviceCode { get; private set; }
+
+        public string? LastTerminalUpsertUpdatedBy { get; private set; }
+
+        public LinklyCloudBackendTerminalCredentialUpsertRequest? LastTerminalUpsertRequest { get; private set; }
+
         public string? LastNotificationEnvironment { get; private set; }
 
         public string? LastNotificationSessionId { get; private set; }
@@ -622,6 +743,26 @@ public sealed class LinklyControllerTests
                 [new LinklyCloudBackendHealthCheckDto("STORE_CREDENTIAL", false, "missing")]));
         }
 
+        public Task<LinklyCloudBackendTerminalCredentialResponse> UpsertTerminalCredentialAsync(
+            string storeCode,
+            string deviceCode,
+            LinklyCloudBackendTerminalCredentialUpsertRequest request,
+            string? updatedBy,
+            CancellationToken cancellationToken)
+        {
+            LastTerminalUpsertStoreCode = storeCode;
+            LastTerminalUpsertDeviceCode = deviceCode;
+            LastTerminalUpsertRequest = request;
+            LastTerminalUpsertUpdatedBy = updatedBy;
+            return Task.FromResult(new LinklyCloudBackendTerminalCredentialResponse(
+                request.Environment,
+                storeCode,
+                deviceCode,
+                true,
+                request.PosId,
+                new DateTimeOffset(2026, 6, 2, 2, 0, 0, TimeSpan.Zero)));
+        }
+
         public Task<LinklyCloudBackendSessionResponse> RecoverAsync(
             string storeCode,
             string deviceCode,
@@ -674,7 +815,8 @@ public sealed class LinklyControllerTests
 
     private sealed class StubLinklyCloudCredentialService(
         Func<string, string, Task<LinklyCloudCredentialResponse?>>? responseFactory = null,
-        Func<string, string, Exception>? exceptionFactory = null) : ILinklyCloudCredentialService
+        Func<string, string, Exception>? exceptionFactory = null,
+        Func<string, LinklyCloudCredentialUpsertRequest, string?, Task<LinklyCloudCredentialUpsertResponse>>? upsertFactory = null) : ILinklyCloudCredentialService
     {
         public Task<LinklyCloudCredentialResponse?> GetByStoreCodeAsync(
             string storeCode,
@@ -692,6 +834,25 @@ public sealed class LinklyControllerTests
             }
 
             return Task.FromResult<LinklyCloudCredentialResponse?>(null);
+        }
+
+        public Task<LinklyCloudCredentialUpsertResponse> UpsertAsync(
+            string storeCode,
+            LinklyCloudCredentialUpsertRequest request,
+            string? updatedBy,
+            CancellationToken cancellationToken)
+        {
+            if (upsertFactory is not null)
+            {
+                return upsertFactory(storeCode, request, updatedBy);
+            }
+
+            return Task.FromResult(new LinklyCloudCredentialUpsertResponse(
+                storeCode,
+                request.Environment,
+                request.Username,
+                true,
+                new DateTimeOffset(2026, 6, 2, 1, 0, 0, TimeSpan.Zero)));
         }
     }
 }

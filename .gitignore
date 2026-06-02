@@ -10,3 +10,4 @@ TestResults/
 .tmp/
 artifacts/
 .superpowers/
+**/logs/*.log

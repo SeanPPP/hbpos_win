@@ -158,6 +158,7 @@ public static class ServiceRegistration
             sp.GetRequiredService<ISquareTerminalSetupClient>(),
             sp.GetRequiredService<ILinklyTerminalClient>(),
             sp.GetRequiredService<ILinklyCloudApiClient>(),
+            sp.GetRequiredService<ILinklyCloudCredentialApiClient>(),
             sp.GetRequiredService<ILinklyCloudTerminalClient>(),
             sp.GetRequiredService<ILinklyBackendTerminalClient>(),
             sp.GetRequiredService<DeviceAuthorizationState>()));

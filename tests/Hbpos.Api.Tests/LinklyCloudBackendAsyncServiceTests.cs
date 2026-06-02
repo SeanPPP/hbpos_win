@@ -609,6 +609,83 @@ namespace Hbpos.Api.Tests;
     }
 
     [Fact]
+    public async Task UpsertTerminalCredentialAsync_updates_same_claim_scope_and_health_becomes_ready()
+    {
+        var credentialRepository = new CapturingCredentialRepository(null);
+        var terminalRepository = new CapturingTerminalCredentialRepository();
+        var credentialService = new LinklyCloudCredentialService(credentialRepository);
+        var service = CreateService(
+            new CapturingLinklyCloudBackendAsyncTransport(HttpStatusCode.Accepted),
+            credentialRepository: credentialRepository,
+            terminalCredentialRepository: terminalRepository);
+
+        var before = await service.GetHealthAsync(" S01 ", " POS-01 ", "Sandbox", CancellationToken.None);
+        Assert.False(before.IsReady);
+
+        await credentialService.UpsertAsync(
+            " S01 ",
+            new LinklyCloudCredentialUpsertRequest(" sandbox ", " merchant-user ", " merchant-password "),
+            "device:POS-01",
+            CancellationToken.None);
+        var response = await service.UpsertTerminalCredentialAsync(
+            " S01 ",
+            " POS-01 ",
+            new LinklyCloudBackendTerminalCredentialUpsertRequest(
+                " sandbox ",
+                " secret-pos-01 ",
+                "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"),
+            "device:POS-01",
+            CancellationToken.None);
+        var updated = await service.UpsertTerminalCredentialAsync(
+            "S01",
+            "POS-01",
+            new LinklyCloudBackendTerminalCredentialUpsertRequest(
+                "Sandbox",
+                "secret-pos-01-updated",
+                "bbbbbbbb-bbbb-4bbb-9bbb-bbbbbbbbbbbb"),
+            "device:POS-01",
+            CancellationToken.None);
+        var health = await service.GetHealthAsync("S01", "POS-01", "Sandbox", CancellationToken.None);
+
+        Assert.Equal("Sandbox", response.Environment);
+        Assert.Equal("S01", response.StoreCode);
+        Assert.Equal("POS-01", response.DeviceCode);
+        Assert.True(response.HasSecret);
+        Assert.Equal("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", response.PosId);
+        Assert.True(updated.HasSecret);
+        Assert.Equal("bbbbbbbb-bbbb-4bbb-9bbb-bbbbbbbbbbbb", updated.PosId);
+        Assert.True(health.IsReady);
+        Assert.All(health.Checks, check => Assert.True(check.IsReady));
+        Assert.Single(terminalRepository.Credentials);
+        Assert.Equal("secret-pos-01-updated", terminalRepository.Credentials.Single().Secret);
+    }
+
+    [Theory]
+    [InlineData("", "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", "secret is required.")]
+    [InlineData("secret-pos-01", "", "posId is required.")]
+    [InlineData("secret-pos-01", "11111111-1111-1111-1111-111111111111", "posId must be UUID v4.")]
+    public async Task UpsertTerminalCredentialAsync_rejects_invalid_input_without_exposing_secret(
+        string secret,
+        string posId,
+        string expectedMessage)
+    {
+        var service = CreateService(
+            new CapturingLinklyCloudBackendAsyncTransport(HttpStatusCode.Accepted),
+            terminalCredentialRepository: new CapturingTerminalCredentialRepository());
+
+        var exception = await Assert.ThrowsAsync<LinklyCloudBackendValidationException>(() =>
+            service.UpsertTerminalCredentialAsync(
+                "S01",
+                "POS-01",
+                new LinklyCloudBackendTerminalCredentialUpsertRequest("Sandbox", secret, posId),
+                "device:POS-01",
+                CancellationToken.None));
+
+        Assert.Equal(expectedMessage, exception.Message);
+        Assert.DoesNotContain("secret-pos-01", exception.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public async Task NotificationAsync_validates_environment_bearer_and_keeps_status_scoped()
     {
         var service = CreateService(new CapturingLinklyCloudBackendAsyncTransport(HttpStatusCode.Accepted));
@@ -1118,7 +1195,11 @@ namespace Hbpos.Api.Tests;
     private sealed class CapturingCredentialRepository(
         LinklyCloudCredentialRecord? credential) : ILinklyCloudCredentialRepository
     {
+        private LinklyCloudCredentialRecord? _credential = credential;
+
         public List<(string StoreCode, string Environment)> Calls { get; } = [];
+
+        public List<(string StoreCode, string Environment)> UpsertCalls { get; } = [];
 
         public Task<LinklyCloudCredentialRecord?> GetByStoreCodeAsync(
             string storeCode,
@@ -1126,14 +1207,44 @@ namespace Hbpos.Api.Tests;
             CancellationToken cancellationToken)
         {
             Calls.Add((storeCode, environment));
-            return Task.FromResult(credential);
+            return Task.FromResult(_credential is not null &&
+                string.Equals(_credential.StoreCode, storeCode, StringComparison.Ordinal) &&
+                string.Equals(_credential.Environment, environment, StringComparison.Ordinal)
+                    ? _credential
+                    : null);
+        }
+
+        public Task<LinklyCloudCredentialRecord> UpsertAsync(
+            string storeCode,
+            string environment,
+            string username,
+            string password,
+            DateTime updatedAt,
+            string? updatedBy,
+            CancellationToken cancellationToken)
+        {
+            UpsertCalls.Add((storeCode, environment));
+            _credential = new LinklyCloudCredentialRecord
+            {
+                StoreCode = storeCode,
+                Environment = environment,
+                Username = username,
+                Password = password,
+                UpdatedAt = updatedAt,
+                UpdatedBy = updatedBy
+            };
+            return Task.FromResult(_credential);
         }
     }
 
     private sealed class CapturingTerminalCredentialRepository(
         params LinklyCloudBackendTerminalCredentialRecord[] credentials) : ILinklyCloudBackendTerminalCredentialRepository
     {
+        private readonly List<LinklyCloudBackendTerminalCredentialRecord> _credentials = credentials.ToList();
+
         public List<(string Environment, string StoreCode, string DeviceCode)> Calls { get; } = [];
+
+        public IReadOnlyList<LinklyCloudBackendTerminalCredentialRecord> Credentials => _credentials;
 
         public Task<LinklyCloudBackendTerminalCredentialRecord?> GetByDeviceAsync(
             string environment,
@@ -1142,10 +1253,42 @@ namespace Hbpos.Api.Tests;
             CancellationToken cancellationToken)
         {
             Calls.Add((environment, storeCode, deviceCode));
-            return Task.FromResult(credentials.SingleOrDefault(credential =>
+            return Task.FromResult(_credentials.SingleOrDefault(credential =>
                 string.Equals(credential.Environment, environment, StringComparison.Ordinal) &&
                 string.Equals(credential.StoreCode, storeCode, StringComparison.Ordinal) &&
                 string.Equals(credential.DeviceCode, deviceCode, StringComparison.Ordinal)));
+        }
+
+        public Task<LinklyCloudBackendTerminalCredentialRecord> UpsertAsync(
+            string environment,
+            string storeCode,
+            string deviceCode,
+            string secret,
+            string posId,
+            DateTime updatedAt,
+            string? updatedBy,
+            CancellationToken cancellationToken)
+        {
+            var existing = _credentials.SingleOrDefault(credential =>
+                string.Equals(credential.Environment, environment, StringComparison.Ordinal) &&
+                string.Equals(credential.StoreCode, storeCode, StringComparison.Ordinal) &&
+                string.Equals(credential.DeviceCode, deviceCode, StringComparison.Ordinal));
+            if (existing is null)
+            {
+                existing = new LinklyCloudBackendTerminalCredentialRecord
+                {
+                    Environment = environment,
+                    StoreCode = storeCode,
+                    DeviceCode = deviceCode
+                };
+                _credentials.Add(existing);
+            }
+
+            existing.Secret = secret;
+            existing.PosId = posId;
+            existing.UpdatedAt = updatedAt;
+            existing.UpdatedBy = updatedBy;
+            return Task.FromResult(existing);
         }
     }
 

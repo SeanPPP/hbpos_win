@@ -43,7 +43,8 @@ public interface IInstallmentHistoryService
 public sealed class InstallmentService(
     IInstallmentRepository repository,
     IStoreVoucherReservationService reservationService,
-    TimeProvider? timeProvider = null) : IInstallmentService, IInstallmentHistoryService
+    TimeProvider? timeProvider = null,
+    ILogger<InstallmentService>? logger = null) : IInstallmentService, IInstallmentHistoryService
 {
     public const decimal MinimumDownPaymentAmount = 20m;
     private readonly TimeProvider _timeProvider = timeProvider ?? TimeProvider.System;
@@ -53,9 +54,24 @@ public sealed class InstallmentService(
         CancellationToken cancellationToken)
     {
         var normalized = NormalizeCreateRequest(request);
+        logger?.LogInformation(
+            "Installment create start installmentGuid={InstallmentGuid} store={StoreCode} device={DeviceCode} total={TotalAmount} downPayment={DownPaymentAmount} method={PaymentMethod} lines={LineCount}",
+            normalized.InstallmentGuid,
+            normalized.StoreCode,
+            normalized.DeviceCode,
+            normalized.TotalAmount,
+            normalized.DownPaymentAmount,
+            normalized.DownPayment.Method,
+            normalized.Lines.Count);
         var existing = await repository.GetDetailsAsync(normalized.InstallmentGuid, cancellationToken);
         if (existing is not null)
         {
+            logger?.LogInformation(
+                "Installment create skipped existing installmentGuid={InstallmentGuid} status={Status} paid={PaidAmount} balance={BalanceAmount}",
+                existing.InstallmentGuid,
+                existing.Status,
+                existing.PaidAmount,
+                existing.BalanceAmount);
             return new InstallmentCreateResponse(
                 existing.InstallmentGuid,
                 existing.InstallmentNumber,
@@ -114,8 +130,21 @@ public sealed class InstallmentService(
         if (normalized.DownPayment.Method == PaymentMethodKind.Voucher)
         {
             await reservationService.ConsumeAsync(normalized.DownPayment.ReservationToken!, cancellationToken);
+            logger?.LogInformation(
+                "Installment create voucher reservation consumed installmentGuid={InstallmentGuid} token={ReservationToken} voucher={VoucherCode} amount={Amount}",
+                normalized.InstallmentGuid,
+                ShortToken(normalized.DownPayment.ReservationToken),
+                normalized.DownPayment.Reference,
+                normalized.DownPayment.Amount);
         }
 
+        logger?.LogInformation(
+            "Installment create completed installmentGuid={InstallmentGuid} number={InstallmentNumber} status={Status} paid={PaidAmount} balance={BalanceAmount}",
+            details.InstallmentGuid,
+            details.InstallmentNumber,
+            details.Status,
+            details.PaidAmount,
+            details.BalanceAmount);
         return new InstallmentCreateResponse(
             details.InstallmentGuid,
             details.InstallmentNumber,
@@ -130,6 +159,15 @@ public sealed class InstallmentService(
         CancellationToken cancellationToken)
     {
         var normalized = NormalizePaymentRequest(request);
+        logger?.LogInformation(
+            "Installment append payment start installmentGuid={InstallmentGuid} paymentGuid={PaymentGuid} store={StoreCode} device={DeviceCode} amount={Amount} method={PaymentMethod} idempotencyKeyPresent={IdempotencyKeyPresent}",
+            normalized.InstallmentGuid,
+            normalized.PaymentGuid,
+            normalized.StoreCode,
+            normalized.DeviceCode,
+            normalized.Amount,
+            normalized.Method,
+            !string.IsNullOrWhiteSpace(normalized.IdempotencyKey));
         var existingPayment = await repository.FindPaymentAsync(normalized.PaymentGuid, cancellationToken);
         if (existingPayment is null && !string.IsNullOrWhiteSpace(normalized.IdempotencyKey))
         {
@@ -145,6 +183,12 @@ public sealed class InstallmentService(
             var existingDetails = await repository.GetDetailsAsync(existingPayment.InstallmentGuid, cancellationToken)
                 ?? throw new InvalidOperationException("Installment was not found.");
             ValidateInstallmentScope(existingDetails, normalized.StoreCode, normalized.DeviceCode);
+            logger?.LogInformation(
+                "Installment append payment already recorded installmentGuid={InstallmentGuid} paymentGuid={PaymentGuid} paid={PaidAmount} balance={BalanceAmount}",
+                existingPayment.InstallmentGuid,
+                existingPayment.Payment.PaymentGuid,
+                existingDetails.PaidAmount,
+                existingDetails.BalanceAmount);
             return new InstallmentAppendPaymentResponse(
                 existingPayment.InstallmentGuid,
                 existingPayment.Payment.PaymentGuid,
@@ -214,8 +258,22 @@ public sealed class InstallmentService(
         if (normalized.Method == PaymentMethodKind.Voucher)
         {
             await reservationService.ConsumeAsync(normalized.ReservationToken!, cancellationToken);
+            logger?.LogInformation(
+                "Installment append payment voucher reservation consumed installmentGuid={InstallmentGuid} paymentGuid={PaymentGuid} token={ReservationToken} voucher={VoucherCode} amount={Amount}",
+                details.InstallmentGuid,
+                payment.PaymentGuid,
+                ShortToken(normalized.ReservationToken),
+                normalized.Reference,
+                appliedAmount);
         }
 
+        logger?.LogInformation(
+            "Installment append payment completed installmentGuid={InstallmentGuid} paymentGuid={PaymentGuid} status={Status} paid={PaidAmount} balance={BalanceAmount}",
+            updated.InstallmentGuid,
+            payment.PaymentGuid,
+            updated.Status,
+            updated.PaidAmount,
+            updated.BalanceAmount);
         return new InstallmentAppendPaymentResponse(
             updated.InstallmentGuid,
             payment.PaymentGuid,
@@ -273,8 +331,20 @@ public sealed class InstallmentService(
         var details = await repository.GetDetailsAsync(normalized.InstallmentGuid, cancellationToken)
             ?? throw new InvalidOperationException("Installment was not found.");
         ValidateInstallmentScope(details, normalized.StoreCode, normalized.DeviceCode);
+        logger?.LogInformation(
+            "Installment cancel start installmentGuid={InstallmentGuid} store={StoreCode} device={DeviceCode} refundCount={RefundCount} paid={PaidAmount} balance={BalanceAmount}",
+            normalized.InstallmentGuid,
+            normalized.StoreCode,
+            normalized.DeviceCode,
+            normalized.Refunds.Count,
+            details.PaidAmount,
+            details.BalanceAmount);
         if (TryCreateExistingCancellationResponse(details, InstallmentCancellationKind.RefundCancel, out var existing))
         {
+            logger?.LogInformation(
+                "Installment cancel skipped existing installmentGuid={InstallmentGuid} status={Status}",
+                details.InstallmentGuid,
+                details.Status);
             return new InstallmentCancelResponse(details.InstallmentGuid, details.Status, details, AlreadyCancelled: true, existing);
         }
 
@@ -294,6 +364,11 @@ public sealed class InstallmentService(
             refunds.Select(refund => MapRefundPayment(refund, normalized.CashierId, normalized.DeviceCode, cancelledAt)).ToList(),
             cancellationInfo,
             cancellationToken);
+        logger?.LogInformation(
+            "Installment cancel completed installmentGuid={InstallmentGuid} status={Status} refundCount={RefundCount}",
+            updated.InstallmentGuid,
+            updated.Status,
+            refunds.Count);
         return new InstallmentCancelResponse(updated.InstallmentGuid, updated.Status, updated);
     }
 
@@ -305,8 +380,19 @@ public sealed class InstallmentService(
         var details = await repository.GetDetailsAsync(normalized.InstallmentGuid, cancellationToken)
             ?? throw new InvalidOperationException("Installment was not found.");
         ValidateInstallmentScope(details, normalized.StoreCode, normalized.DeviceCode);
+        logger?.LogInformation(
+            "Installment void start installmentGuid={InstallmentGuid} store={StoreCode} device={DeviceCode} paid={PaidAmount} balance={BalanceAmount}",
+            normalized.InstallmentGuid,
+            normalized.StoreCode,
+            normalized.DeviceCode,
+            details.PaidAmount,
+            details.BalanceAmount);
         if (TryCreateExistingCancellationResponse(details, InstallmentCancellationKind.VoidCancel, out var existing))
         {
+            logger?.LogInformation(
+                "Installment void skipped existing installmentGuid={InstallmentGuid} status={Status}",
+                details.InstallmentGuid,
+                details.Status);
             return new InstallmentVoidResponse(details.InstallmentGuid, details.Status, details, AlreadyVoided: true, existing);
         }
 
@@ -324,6 +410,10 @@ public sealed class InstallmentService(
             normalized.InstallmentGuid,
             cancellationInfo,
             cancellationToken);
+        logger?.LogInformation(
+            "Installment void completed installmentGuid={InstallmentGuid} status={Status}",
+            updated.InstallmentGuid,
+            updated.Status);
         return new InstallmentVoidResponse(updated.InstallmentGuid, updated.Status, updated);
     }
 
@@ -674,6 +764,17 @@ public sealed class InstallmentService(
     private static string? NormalizeOptional(string? value)
     {
         return string.IsNullOrWhiteSpace(value) ? null : value.Trim();
+    }
+
+    private static string ShortToken(string? token)
+    {
+        if (string.IsNullOrWhiteSpace(token))
+        {
+            return string.Empty;
+        }
+
+        var normalized = token.Trim();
+        return normalized.Length <= 8 ? normalized : normalized[..8];
     }
 }
 

@@ -21,7 +21,7 @@
   <data name="startup.stage.starting" xml:space="preserve"><value>Starting...</value></data>
   <data name="startup.stage.initializingServices" xml:space="preserve"><value>Initializing services...</value></data>
   <data name="startup.stage.startingLocalComponents" xml:space="preserve"><value>Starting local components...</value></data>
-  <data name="startup.stage.loadingProducts" xml:space="preserve"><value>Loading local products...</value></data>
+  <data name="startup.stage.loadingProducts" xml:space="preserve"><value>Loading local products and special products...</value></data>
   <data name="startup.stage.preparingMainWindow" xml:space="preserve"><value>Preparing main screen...</value></data>
   <data name="startup.stage.completed" xml:space="preserve"><value>Startup complete</value></data>
   <data name="Backspace" xml:space="preserve"><value>Back</value></data>

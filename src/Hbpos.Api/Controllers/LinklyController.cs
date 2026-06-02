@@ -16,11 +16,15 @@ namespace Hbpos.Api.Controllers;
 [Authorize]
 public sealed class LinklyController(
     ILinklyCloudCredentialService linklyCloudCredentialService,
-    ILinklyCloudBackendAsyncService linklyCloudBackendAsyncService) : ControllerBase
+    ILinklyCloudBackendAsyncService linklyCloudBackendAsyncService,
+    ILogger<LinklyController>? logger = null) : ControllerBase
 {
     private const string CloudCredentialEnvironmentInvalidCode = "LINKLY_CLOUD_CREDENTIAL_ENVIRONMENT_INVALID";
+    private const string CloudCredentialInvalidCode = "LINKLY_CLOUD_CREDENTIAL_REQUEST_INVALID";
     private const string CloudCredentialReadFailedCode = "LINKLY_CLOUD_CREDENTIAL_READ_FAILED";
+    private const string CloudCredentialWriteFailedCode = "LINKLY_CLOUD_CREDENTIAL_WRITE_FAILED";
     private const string CloudCredentialReadFailedMessage = "Failed to load Linkly Cloud credential configuration.";
+    private const string CloudCredentialWriteFailedMessage = "Failed to save Linkly Cloud credential configuration.";
     private const string CloudBackendInvalidCode = "LINKLY_CLOUD_BACKEND_REQUEST_INVALID";
     private const string CloudBackendActiveCode = "LINKLY_CLOUD_BACKEND_ACTIVE_TRANSACTION";
     private const string CloudBackendNotFoundCode = "LINKLY_CLOUD_BACKEND_SESSION_NOT_FOUND";
@@ -79,6 +83,62 @@ public sealed class LinklyController(
         }
     }
 
+    [HttpPut("cloud-credential")]
+    public async Task<ActionResult<ApiResult<LinklyCloudCredentialUpsertResponse>>> UpsertCloudCredential(
+        [FromBody] LinklyCloudCredentialUpsertRequest request,
+        CancellationToken cancellationToken)
+    {
+        var storeCode = User.FindFirstValue(DeviceAuthConstants.StoreCodeClaim);
+        if (string.IsNullOrWhiteSpace(storeCode))
+        {
+            Log("cloud credential upsert rejected reason=missing-store-claim");
+            return DeviceAuthorizationExtensions.DeviceScopeForbidden<LinklyCloudCredentialUpsertResponse>(
+                "Device store scope is unavailable.");
+        }
+
+        if (request is null)
+        {
+            return BadRequest(ApiResult<LinklyCloudCredentialUpsertResponse>.Fail(
+                CloudCredentialInvalidCode,
+                "request body is required."));
+        }
+
+        try
+        {
+            var normalizedEnvironment = LinklyCloudCredentialService.NormalizeEnvironment(request.Environment);
+            if (normalizedEnvironment is null)
+            {
+                return BadRequest(ApiResult<LinklyCloudCredentialUpsertResponse>.Fail(
+                    CloudCredentialEnvironmentInvalidCode,
+                    "environment must be Production or Sandbox"));
+            }
+
+            Log($"cloud credential upsert request store={LogValue(storeCode)} environment={normalizedEnvironment}");
+            var response = await linklyCloudCredentialService.UpsertAsync(
+                storeCode,
+                request,
+                GetUpdatedByClaim(),
+                cancellationToken);
+            Log($"cloud credential upsert response store={LogValue(storeCode)} environment={response.Environment} status=200 updatedAt={response.UpdatedAt:O}");
+            return Ok(ApiResult<LinklyCloudCredentialUpsertResponse>.Ok(response));
+        }
+        catch (LinklyCloudCredentialValidationException ex)
+        {
+            return BadRequest(ApiResult<LinklyCloudCredentialUpsertResponse>.Fail(
+                CloudCredentialInvalidCode,
+                ex.Message));
+        }
+        catch (Exception ex)
+        {
+            Log($"cloud credential upsert failed store={LogValue(storeCode)} error={ex.GetType().Name}");
+            return StatusCode(
+                StatusCodes.Status500InternalServerError,
+                ApiResult<LinklyCloudCredentialUpsertResponse>.Fail(
+                    CloudCredentialWriteFailedCode,
+                    CloudCredentialWriteFailedMessage));
+        }
+    }
+
     [HttpPost("cloud-backend/transactions")]
     public async Task<ActionResult<ApiResult<LinklyCloudBackendSessionResponse>>> StartCloudBackendTransaction(
         [FromBody] LinklyCloudBackendTransactionRequest request,
@@ -121,6 +181,51 @@ public sealed class LinklyController(
                 ApiResult<LinklyCloudBackendSessionResponse>.Fail(
                     CloudBackendFailedCode,
                     "Failed to start Linkly Cloud backend transaction."));
+        }
+    }
+
+    [HttpPut("cloud-backend/terminal")]
+    public async Task<ActionResult<ApiResult<LinklyCloudBackendTerminalCredentialResponse>>> UpsertCloudBackendTerminalCredential(
+        [FromBody] LinklyCloudBackendTerminalCredentialUpsertRequest request,
+        CancellationToken cancellationToken)
+    {
+        var scope = GetAuthenticatedDeviceScope<LinklyCloudBackendTerminalCredentialResponse>();
+        if (scope.Result is not null)
+        {
+            return scope.Result;
+        }
+
+        if (request is null)
+        {
+            return BadRequest(ApiResult<LinklyCloudBackendTerminalCredentialResponse>.Fail(
+                CloudBackendInvalidCode,
+                "request body is required."));
+        }
+
+        try
+        {
+            var response = await linklyCloudBackendAsyncService.UpsertTerminalCredentialAsync(
+                scope.StoreCode!,
+                scope.DeviceCode!,
+                request,
+                GetUpdatedByClaim(),
+                cancellationToken);
+            return Ok(ApiResult<LinklyCloudBackendTerminalCredentialResponse>.Ok(response));
+        }
+        catch (LinklyCloudBackendValidationException ex)
+        {
+            return BadRequest(ApiResult<LinklyCloudBackendTerminalCredentialResponse>.Fail(
+                CloudBackendInvalidCode,
+                ex.Message));
+        }
+        catch (Exception ex)
+        {
+            Log($"cloud backend terminal upsert failed error={ex.GetType().Name}");
+            return StatusCode(
+                StatusCodes.Status500InternalServerError,
+                ApiResult<LinklyCloudBackendTerminalCredentialResponse>.Fail(
+                    CloudBackendFailedCode,
+                    "Failed to save Linkly Cloud backend terminal credential."));
         }
     }
 
@@ -375,9 +480,16 @@ public sealed class LinklyController(
         return (storeCode.Trim(), deviceCode.Trim(), null);
     }
 
-    private static void Log(string message)
+    private string? GetUpdatedByClaim()
+    {
+        var deviceCode = User.FindFirstValue(DeviceAuthConstants.DeviceCodeClaim);
+        return string.IsNullOrWhiteSpace(deviceCode) ? null : $"device:{deviceCode.Trim()}";
+    }
+
+    private void Log(string message)
     {
         Console.WriteLine($"[HBPOS][Api][LinklyCloud] {DateTimeOffset.Now:O} {message}");
+        logger?.LogInformation("[HBPOS][Api][LinklyCloud] {Message}", message);
     }
 
     private static string LogValue(string? value)

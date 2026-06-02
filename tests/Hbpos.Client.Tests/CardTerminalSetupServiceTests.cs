@@ -198,6 +198,137 @@ public sealed class CardTerminalSetupServiceTests
     }
 
     [Fact]
+    public async Task PairLinklyCloudAsync_reports_official_auth_failure_causes()
+    {
+        var store = new FakeCardTerminalSettingsStore();
+        store.LinklyCloudCredentials[CardTerminalEnvironment.Sandbox] =
+            new LinklyCloudCredentialSettings("sandbox-user", "sandbox-password", true);
+        var cloudApi = new FakeLinklyCloudApiClient
+        {
+            PairException = new LinklyCloudApiException(
+                "Linkly Cloud pairing failed.",
+                HttpStatusCode.Unauthorized)
+        };
+        var service = new CardTerminalSetupService(
+            store,
+            new FakeSquareTerminalSetupClient(),
+            new FakeLinklyTerminalClient(),
+            linklyCloudApiClient: cloudApi);
+
+        var result = await service.PairLinklyCloudAsync(CardTerminalEnvironment.Sandbox, "123456", null, null);
+
+        Assert.False(result.Succeeded);
+        Assert.Equal(
+            "Linkly Cloud pairing failed. Check the Sandbox VPP pair code and Cloud test account username/password.",
+            result.Message);
+        Assert.Null(store.SavedLinklyCloudSecret);
+    }
+
+    [Fact]
+    public async Task SaveLinklyCloudCredentialAsync_saves_local_credential_and_upserts_backend_store_credential()
+    {
+        var store = new FakeCardTerminalSettingsStore();
+        var credentialApiClient = new FakeLinklyCloudCredentialApiClient();
+        var service = new CardTerminalSetupService(
+            store,
+            new FakeSquareTerminalSetupClient(),
+            new FakeLinklyTerminalClient(),
+            linklyCloudCredentialApiClient: credentialApiClient);
+
+        await service.SaveLinklyCloudCredentialAsync(
+            CardTerminalEnvironment.Sandbox,
+            "sandbox-user",
+            "sandbox-password",
+            syncBackendCredential: true);
+
+        Assert.Equal(
+            (CardTerminalEnvironment.Sandbox, "sandbox-user", "sandbox-password"),
+            store.SavedLinklyCloudCredential);
+        Assert.Equal(
+            (CardTerminalEnvironment.Sandbox, "sandbox-user", "sandbox-password"),
+            credentialApiClient.LastCredentialUpsertRequest);
+    }
+
+    [Fact]
+    public async Task SaveLinklyCloudCredentialAsync_keeps_local_credentials_separate_per_environment()
+    {
+        var store = new FakeCardTerminalSettingsStore();
+        store.LinklyCloudCredentials[CardTerminalEnvironment.Production] =
+            new LinklyCloudCredentialSettings("prod-user", "prod-password", true);
+        var service = new CardTerminalSetupService(
+            store,
+            new FakeSquareTerminalSetupClient(),
+            new FakeLinklyTerminalClient());
+
+        await service.SaveLinklyCloudCredentialAsync(
+            CardTerminalEnvironment.Sandbox,
+            "sandbox-user",
+            "sandbox-password");
+
+        Assert.Equal("prod-user", store.LinklyCloudCredentials[CardTerminalEnvironment.Production].Username);
+        Assert.Equal("sandbox-user", store.LinklyCloudCredentials[CardTerminalEnvironment.Sandbox].Username);
+    }
+
+    [Fact]
+    public async Task PairLinklyCloudAsync_upserts_backend_terminal_credential_with_pos_id()
+    {
+        var store = new FakeCardTerminalSettingsStore();
+        store.LinklyCloudCredentials[CardTerminalEnvironment.Sandbox] =
+            new LinklyCloudCredentialSettings("sandbox-user", "sandbox-password", true);
+        store.PosIds[CardTerminalEnvironment.Sandbox] = "f4b8344c-22b8-4d2a-9ca7-e9a846f46c8c";
+        var cloudApi = new FakeLinklyCloudApiClient { PairSecret = "cloud-secret" };
+        var credentialApiClient = new FakeLinklyCloudCredentialApiClient();
+        var deviceState = new DeviceAuthorizationState();
+        deviceState.Set(new DeviceAuthorizationContext("TERM-1", "S01", "HW-1", "AUTH-1"));
+        var service = new CardTerminalSetupService(
+            store,
+            new FakeSquareTerminalSetupClient(),
+            new FakeLinklyTerminalClient(),
+            linklyCloudApiClient: cloudApi,
+            linklyCloudCredentialApiClient: credentialApiClient,
+            deviceAuthorizationState: deviceState);
+
+        var result = await service.PairLinklyCloudAsync(
+            CardTerminalEnvironment.Sandbox,
+            "12345",
+            null,
+            null,
+            syncBackendTerminalCredential: true);
+
+        Assert.True(result.Succeeded);
+        Assert.Equal("cloud-secret", store.SavedLinklyCloudSecret);
+        Assert.Equal(
+            (CardTerminalEnvironment.Sandbox, "cloud-secret", "f4b8344c-22b8-4d2a-9ca7-e9a846f46c8c"),
+            credentialApiClient.LastTerminalCredentialUpsertRequest);
+        Assert.Equal(
+            (CardTerminalEnvironment.Sandbox, "S01", "TERM-1"),
+            store.LastPosIdRequest);
+    }
+
+    [Fact]
+    public async Task PairLinklyCloudAsync_direct_sync_does_not_upsert_backend_terminal_credential()
+    {
+        var store = new FakeCardTerminalSettingsStore();
+        store.LinklyCloudCredentials[CardTerminalEnvironment.Sandbox] =
+            new LinklyCloudCredentialSettings("sandbox-user", "sandbox-password", true);
+        var cloudApi = new FakeLinklyCloudApiClient { PairSecret = "cloud-secret" };
+        var credentialApiClient = new FakeLinklyCloudCredentialApiClient();
+        var service = new CardTerminalSetupService(
+            store,
+            new FakeSquareTerminalSetupClient(),
+            new FakeLinklyTerminalClient(),
+            linklyCloudApiClient: cloudApi,
+            linklyCloudCredentialApiClient: credentialApiClient);
+
+        var result = await service.PairLinklyCloudAsync(CardTerminalEnvironment.Sandbox, "12345", null, null);
+
+        Assert.True(result.Succeeded);
+        Assert.Equal("cloud-secret", store.SavedLinklyCloudSecret);
+        Assert.Null(credentialApiClient.LastTerminalCredentialUpsertRequest);
+        Assert.Null(store.LastPosIdRequest);
+    }
+
+    [Fact]
     public async Task SaveLinklyCloudAsync_saves_linkly_processor_with_cloud_mode()
     {
         var store = new FakeCardTerminalSettingsStore();
@@ -309,9 +440,13 @@ public sealed class CardTerminalSetupServiceTests
 
         public Dictionary<CardTerminalEnvironment, string?> LinklyCloudSecrets { get; } = [];
 
+        public Dictionary<CardTerminalEnvironment, string> PosIds { get; } = [];
+
         public Dictionary<CardTerminalEnvironment, LinklyCloudCredentialSettings> LinklyCloudCredentials { get; } = [];
 
         public (CardTerminalEnvironment Environment, string Username, string Password)? SavedLinklyCloudCredential { get; private set; }
+
+        public (CardTerminalEnvironment Environment, string StoreCode, string DeviceCode)? LastPosIdRequest { get; private set; }
 
         public Task<CardTerminalConfiguration> LoadAsync(CancellationToken cancellationToken = default)
         {
@@ -388,6 +523,7 @@ public sealed class CardTerminalSetupServiceTests
             CancellationToken cancellationToken = default)
         {
             SavedLinklyCloudSecret = secret;
+            LinklyCloudSecrets[environment] = secret;
             return Task.CompletedTask;
         }
 
@@ -397,7 +533,10 @@ public sealed class CardTerminalSetupServiceTests
             string deviceCode,
             CancellationToken cancellationToken = default)
         {
-            return Task.FromResult(Guid.NewGuid().ToString("D"));
+            LastPosIdRequest = (environment, storeCode, deviceCode);
+            return Task.FromResult(PosIds.TryGetValue(environment, out var posId)
+                ? posId
+                : Guid.NewGuid().ToString("D"));
         }
 
         public Task<LinklyCloudCredentialSettings> GetLinklyCloudCredentialAsync(
@@ -620,11 +759,48 @@ public sealed class CardTerminalSetupServiceTests
                 "store-password",
                 DateTimeOffset.UtcNow));
         }
+
+        public (CardTerminalEnvironment Environment, string Username, string Password)? LastCredentialUpsertRequest { get; private set; }
+
+        public (CardTerminalEnvironment Environment, string Secret, string PosId)? LastTerminalCredentialUpsertRequest { get; private set; }
+
+        public Task<LinklyCloudCredentialUpsertResponse> UpsertCredentialAsync(
+            CardTerminalEnvironment environment,
+            string username,
+            string password,
+            CancellationToken cancellationToken = default)
+        {
+            LastCredentialUpsertRequest = (environment, username, password);
+            return Task.FromResult(new LinklyCloudCredentialUpsertResponse(
+                "S01",
+                environment.ToString(),
+                username,
+                HasPassword: true,
+                DateTimeOffset.UtcNow));
+        }
+
+        public Task<LinklyCloudBackendTerminalCredentialResponse> UpsertBackendTerminalCredentialAsync(
+            CardTerminalEnvironment environment,
+            string secret,
+            string posId,
+            CancellationToken cancellationToken = default)
+        {
+            LastTerminalCredentialUpsertRequest = (environment, secret, posId);
+            return Task.FromResult(new LinklyCloudBackendTerminalCredentialResponse(
+                environment.ToString(),
+                "S01",
+                "TERM-1",
+                HasSecret: true,
+                posId,
+                DateTimeOffset.UtcNow));
+        }
     }
 
     private sealed class FakeLinklyCloudApiClient : ILinklyCloudApiClient
     {
         public string PairSecret { get; init; } = "secret";
+
+        public Exception? PairException { get; init; }
 
         public string? LastUsername { get; private set; }
 
@@ -642,6 +818,11 @@ public sealed class CardTerminalSetupServiceTests
             LastUsername = username;
             LastPassword = password;
             LastPairCode = pairCode;
+            if (PairException is not null)
+            {
+                throw PairException;
+            }
+
             return Task.FromResult(PairSecret);
         }
 

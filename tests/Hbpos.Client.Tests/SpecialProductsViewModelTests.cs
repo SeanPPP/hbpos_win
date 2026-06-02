@@ -169,6 +169,24 @@ public sealed class SpecialProductsViewModelTests
     }
 
     [Fact]
+    public async Task PreloadAsync_loads_special_products_without_thumbnail_preload()
+    {
+        var thumbnailPreloadCallCount = 0;
+        var viewModel = CreateViewModel(
+            repository: new FakeCatalogRepository { SpecialItems = CreateSpecialItems(2) },
+            thumbnailPreloadAsync: (_, _, _) =>
+            {
+                thumbnailPreloadCallCount++;
+                return Task.FromResult(0);
+            });
+
+        await viewModel.PreloadAsync();
+
+        Assert.Equal(2, viewModel.SpecialItems.Count);
+        Assert.Equal(0, thumbnailPreloadCallCount);
+    }
+
+    [Fact]
     public async Task EnsureLoadedAsync_after_preload_does_not_reload_local_cache()
     {
         var repository = new FakeCatalogRepository { SpecialItems = CreateSpecialItems(1) };

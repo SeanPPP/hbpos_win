@@ -32,7 +32,8 @@ public interface IStoreVoucherService
 public sealed class StoreVoucherService(
     IStoreVoucherRepository repository,
     IStoreVoucherReservationService reservationService,
-    TimeProvider? timeProvider = null) : IStoreVoucherService
+    TimeProvider? timeProvider = null,
+    ILogger<StoreVoucherService>? logger = null) : IStoreVoucherService
 {
     private readonly TimeProvider _timeProvider = timeProvider ?? TimeProvider.System;
 
@@ -43,11 +44,28 @@ public sealed class StoreVoucherService(
     {
         var normalizedStoreCode = NormalizeRequired(storeCode, nameof(storeCode));
         var normalizedVoucherCode = NormalizeRequired(voucherCode, nameof(voucherCode));
+        logger?.LogInformation(
+            "Voucher query start store={StoreCode} voucher={VoucherCode}",
+            normalizedStoreCode,
+            normalizedVoucherCode);
         var voucher = await repository.FindAvailableAsync(normalizedStoreCode, normalizedVoucherCode, cancellationToken);
 
-        return voucher is null
-            ? new StoreVoucherQueryResponse(false, null, "VoucherNotFound")
-            : new StoreVoucherQueryResponse(true, Map(voucher));
+        if (voucher is null)
+        {
+            logger?.LogWarning(
+                "Voucher query not found store={StoreCode} voucher={VoucherCode}",
+                normalizedStoreCode,
+                normalizedVoucherCode);
+            return new StoreVoucherQueryResponse(false, null, "VoucherNotFound");
+        }
+
+        logger?.LogInformation(
+            "Voucher query found store={StoreCode} voucher={VoucherCode} remaining={RemainingAmount} status={Status}",
+            normalizedStoreCode,
+            normalizedVoucherCode,
+            voucher.RemainingAmount,
+            voucher.Status);
+        return new StoreVoucherQueryResponse(true, Map(voucher));
     }
 
     public async Task<StoreVoucherLockResponse> LockAsync(
@@ -61,6 +79,11 @@ public sealed class StoreVoucherService(
             throw new InvalidOperationException("Requested amount must be greater than zero.");
         }
 
+        logger?.LogInformation(
+            "Voucher lock start store={StoreCode} voucher={VoucherCode} requestedAmount={RequestedAmount}",
+            normalizedStoreCode,
+            normalizedVoucherCode,
+            request.RequestedAmount);
         var voucher = await repository.FindAvailableAsync(normalizedStoreCode, normalizedVoucherCode, cancellationToken)
             ?? throw new InvalidOperationException("Voucher is unavailable.");
         var reservation = await reservationService.ReserveAsync(
@@ -70,6 +93,13 @@ public sealed class StoreVoucherService(
             voucher.RemainingAmount ?? 0m,
             cancellationToken);
 
+        logger?.LogInformation(
+            "Voucher lock completed store={StoreCode} voucher={VoucherCode} lockedAmount={LockedAmount} token={ReservationToken} expiresAt={ExpiresAt:O}",
+            normalizedStoreCode,
+            normalizedVoucherCode,
+            reservation.LockedAmount,
+            ShortToken(reservation.Token),
+            reservation.ExpiresAt);
         return new StoreVoucherLockResponse(
             normalizedVoucherCode,
             reservation.LockedAmount,
@@ -89,6 +119,13 @@ public sealed class StoreVoucherService(
             throw new InvalidOperationException("Amount must be greater than zero.");
         }
 
+        logger?.LogInformation(
+            "Voucher refund issue start store={StoreCode} amount={Amount} cashier={CashierId} idempotencyKeyPresent={IdempotencyKeyPresent} orderReference={OrderReference}",
+            normalizedStoreCode,
+            request.Amount,
+            normalizedCashierId,
+            !string.IsNullOrWhiteSpace(normalizedIdempotencyKey),
+            request.OrderReference);
         var now = _timeProvider.GetUtcNow();
         var voucher = await repository.CreateRefundVoucherAsync(
             new RefundVoucherCreateModel(
@@ -98,10 +135,17 @@ public sealed class StoreVoucherService(
                 now,
                 now.AddMonths(12),
                 normalizedIdempotencyKey,
-                request.OrderReference?.Trim(),
-                request.Reason?.Trim()),
+            request.OrderReference?.Trim(),
+            request.Reason?.Trim()),
             cancellationToken);
 
+        logger?.LogInformation(
+            "Voucher refund issue completed store={StoreCode} voucher={VoucherCode} amount={Amount} remaining={RemainingAmount} expiresAt={ExpiresAt:O}",
+            normalizedStoreCode,
+            voucher.VoucherCode,
+            voucher.Amount,
+            voucher.RemainingAmount,
+            voucher.ExpiredDate);
         return new StoreVoucherIssueRefundResponse(
             voucher.VoucherCode ?? string.Empty,
             voucher.Amount ?? decimal.Round(request.Amount, 2, MidpointRounding.AwayFromZero),
@@ -131,6 +175,14 @@ public sealed class StoreVoucherService(
             throw new InvalidOperationException("ExpiredAt must be in the future.");
         }
 
+        logger?.LogInformation(
+            "Voucher issue start store={StoreCode} amount={Amount} cashier={CashierId} customer={CustomerCode} idempotencyKeyPresent={IdempotencyKeyPresent} expiresAt={ExpiresAt:O}",
+            normalizedStoreCode,
+            request.Amount,
+            normalizedCashierId,
+            NormalizeOptional(request.CustomerCode),
+            !string.IsNullOrWhiteSpace(normalizedIdempotencyKey),
+            expiredAt);
         var voucher = await repository.CreateIssuedVoucherAsync(
             new IssuedVoucherCreateModel(
                 normalizedStoreCode,
@@ -140,10 +192,17 @@ public sealed class StoreVoucherService(
                 expiredAt,
                 normalizedIdempotencyKey,
                 NormalizeOptional(request.CustomerCode),
-                request.Reason?.Trim()),
+            request.Reason?.Trim()),
             cancellationToken);
 
         var amount = voucher.Amount ?? decimal.Round(request.Amount, 2, MidpointRounding.AwayFromZero);
+        logger?.LogInformation(
+            "Voucher issue completed store={StoreCode} voucher={VoucherCode} amount={Amount} remaining={RemainingAmount} expiresAt={ExpiresAt:O}",
+            normalizedStoreCode,
+            voucher.VoucherCode,
+            amount,
+            voucher.RemainingAmount,
+            voucher.ExpiredDate);
         return new StoreVoucherIssueResponse(
             voucher.VoucherCode ?? string.Empty,
             amount,
@@ -186,6 +245,17 @@ public sealed class StoreVoucherService(
     private static string? NormalizeOptional(string? value)
     {
         return string.IsNullOrWhiteSpace(value) ? null : value.Trim();
+    }
+
+    private static string ShortToken(string? token)
+    {
+        if (string.IsNullOrWhiteSpace(token))
+        {
+            return string.Empty;
+        }
+
+        var normalized = token.Trim();
+        return normalized.Length <= 8 ? normalized : normalized[..8];
     }
 }
 
@@ -569,7 +639,8 @@ public sealed record StoreVoucherReservation(
 
 public sealed class SqlSugarStoreVoucherReservationService(
     HbposSqlSugarContext dbContext,
-    TimeProvider? timeProvider = null) : IStoreVoucherReservationService
+    TimeProvider? timeProvider = null,
+    ILogger<SqlSugarStoreVoucherReservationService>? logger = null) : IStoreVoucherReservationService
 {
     private static readonly TimeSpan ReservationLifetime = TimeSpan.FromMinutes(5);
     private const string PendingStatus = "pending";
@@ -590,6 +661,10 @@ public sealed class SqlSugarStoreVoucherReservationService(
             .Where(x => x.ExpiresAtUtc > now)
             .FirstAsync(cancellationToken);
 
+        logger?.LogInformation(
+            "Voucher reservation get token={ReservationToken} found={Found}",
+            ShortToken(normalizedToken),
+            entity is not null);
         return entity is null ? null : Map(entity);
     }
 
@@ -603,7 +678,14 @@ public sealed class SqlSugarStoreVoucherReservationService(
     {
         cancellationToken.ThrowIfCancellationRequested();
         await EnsureTableAsync(cancellationToken);
-        return await ClaimInsideTransactionAsync(
+        logger?.LogInformation(
+            "Voucher reservation claim start token={ReservationToken} store={StoreCode} voucher={VoucherCode} amount={Amount} reference={Reference}",
+            ShortToken(token),
+            storeCode,
+            voucherCode,
+            amount,
+            consumedByReference);
+        var reservation = await ClaimInsideTransactionAsync(
             dbContext.PosmDb,
             token,
             storeCode,
@@ -612,6 +694,13 @@ public sealed class SqlSugarStoreVoucherReservationService(
             consumedByReference,
             _timeProvider.GetUtcNow(),
             cancellationToken);
+        logger?.LogInformation(
+            "Voucher reservation claim completed token={ReservationToken} store={StoreCode} voucher={VoucherCode} lockedAmount={LockedAmount}",
+            ShortToken(reservation.Token),
+            reservation.StoreCode,
+            reservation.VoucherCode,
+            reservation.LockedAmount);
+        return reservation;
     }
 
     public async Task<StoreVoucherReservation> ReserveAsync(
@@ -635,6 +724,11 @@ public sealed class SqlSugarStoreVoucherReservationService(
         await db.Ado.BeginTranAsync(IsolationLevel.Serializable);
         try
         {
+            logger?.LogInformation(
+                "Voucher reservation reserve start store={StoreCode} voucher={VoucherCode} requestedAmount={RequestedAmount}",
+                normalizedStoreCode,
+                normalizedVoucherCode,
+                requestedAmount);
             var now = _timeProvider.GetUtcNow();
             var nowUtc = now.UtcDateTime;
             var voucher = await db.Queryable<StoreVoucher>()
@@ -673,11 +767,25 @@ public sealed class SqlSugarStoreVoucherReservationService(
             };
             await db.Insertable(entity).ExecuteCommandAsync(cancellationToken);
             await db.Ado.CommitTranAsync();
+            logger?.LogInformation(
+                "Voucher reservation reserve completed store={StoreCode} voucher={VoucherCode} lockedAmount={LockedAmount} reservedAmount={ReservedAmount} token={ReservationToken} expiresAt={ExpiresAt:O}",
+                normalizedStoreCode,
+                normalizedVoucherCode,
+                entity.LockedAmount,
+                reservedAmount,
+                ShortToken(entity.Token),
+                entity.ExpiresAtUtc);
             return Map(entity);
         }
-        catch
+        catch (Exception ex)
         {
             await db.Ado.RollbackTranAsync();
+            logger?.LogWarning(
+                ex,
+                "Voucher reservation reserve failed store={StoreCode} voucher={VoucherCode} requestedAmount={RequestedAmount}",
+                normalizedStoreCode,
+                normalizedVoucherCode,
+                requestedAmount);
             throw;
         }
     }
@@ -743,6 +851,9 @@ public sealed class SqlSugarStoreVoucherReservationService(
             .Where(x => x.Token == normalizedToken)
             .Where(x => x.Status != ConsumedStatus)
             .ExecuteCommandAsync(cancellationToken);
+        logger?.LogInformation(
+            "Voucher reservation consumed token={ReservationToken}",
+            ShortToken(normalizedToken));
     }
 
     private async Task EnsureTableAsync(CancellationToken cancellationToken)
@@ -771,6 +882,17 @@ public sealed class SqlSugarStoreVoucherReservationService(
         }
 
         return value.Trim();
+    }
+
+    private static string ShortToken(string? token)
+    {
+        if (string.IsNullOrWhiteSpace(token))
+        {
+            return string.Empty;
+        }
+
+        var normalized = token.Trim();
+        return normalized.Length <= 8 ? normalized : normalized[..8];
     }
 }
 
