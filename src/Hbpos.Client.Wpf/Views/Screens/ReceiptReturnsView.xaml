@@ -28,6 +28,28 @@
             <Setter Property="Foreground" Value="{StaticResource PosDangerBrush}" />
             <Setter Property="FontWeight" Value="Black" />
         </Style>
+
+        <!-- 退货表格操作按钮固定尺寸，避免全局按钮内边距在窄列中挤压图标。 -->
+        <Style x:Key="ReturnTableActionCellStyle" TargetType="DataGridCell">
+            <Setter Property="HorizontalContentAlignment" Value="Center" />
+            <Setter Property="VerticalContentAlignment" Value="Center" />
+            <Setter Property="Padding" Value="0" />
+        </Style>
+
+        <Style x:Key="ReturnTablePrimaryIconButtonStyle" TargetType="Button" BasedOn="{StaticResource PosPrimaryButtonStyle}">
+            <Setter Property="Width" Value="40" />
+            <Setter Property="Height" Value="40" />
+            <Setter Property="MinWidth" Value="40" />
+            <Setter Property="MinHeight" Value="40" />
+            <Setter Property="Padding" Value="0" />
+            <Setter Property="HorizontalContentAlignment" Value="Center" />
+            <Setter Property="VerticalContentAlignment" Value="Center" />
+        </Style>
+
+        <Style x:Key="ReturnTableDangerIconButtonStyle" TargetType="Button" BasedOn="{StaticResource ReturnTablePrimaryIconButtonStyle}">
+            <Setter Property="Background" Value="{StaticResource PosDangerBrush}" />
+            <Setter Property="BorderBrush" Value="{StaticResource PosDangerBrush}" />
+        </Style>
     </UserControl.Resources>
 
     <Grid>
@@ -163,15 +185,12 @@
                                 <DataGridTextColumn Header="{loc:Loc Barcode}" Binding="{Binding LookupCode}" Width="112" />
                                 <DataGridTextColumn Header="{loc:Loc returns.available}" Binding="{Binding AvailableRemaining, StringFormat={}{0:0.##}}" Width="84" />
                                 <DataGridTextColumn Header="{loc:Loc UnitPrice}" Binding="{Binding ReturnUnitAmount, StringFormat={}{0:C2}}" Width="96" />
-                                <DataGridTemplateColumn Header="" Width="58">
+                                <DataGridTemplateColumn Header="" Width="64" CellStyle="{StaticResource ReturnTableActionCellStyle}">
                                     <DataGridTemplateColumn.CellTemplate>
                                         <DataTemplate>
                                             <Button Command="{Binding DataContext.AddReceiptLineCommand, RelativeSource={RelativeSource AncestorType=DataGrid}}"
                                                     CommandParameter="{Binding}"
-                                                    Width="38"
-                                                    Height="38"
-                                                    Padding="0"
-                                                    Style="{StaticResource PosPrimaryButtonStyle}">
+                                                    Style="{StaticResource ReturnTablePrimaryIconButtonStyle}">
                                                 <materialDesign:PackIcon Kind="ArrowRight" Width="18" Height="18" Foreground="White" />
                                             </Button>
                                         </DataTemplate>
@@ -219,15 +238,12 @@
                                         <Style TargetType="TextBlock" BasedOn="{StaticResource ReturnDangerAmountStyle}" />
                                     </DataGridTextColumn.ElementStyle>
                                 </DataGridTextColumn>
-                                <DataGridTemplateColumn Header="" Width="54">
+                                <DataGridTemplateColumn Header="" Width="64" CellStyle="{StaticResource ReturnTableActionCellStyle}">
                                     <DataGridTemplateColumn.CellTemplate>
                                         <DataTemplate>
                                             <Button Command="{Binding DataContext.RemovePendingLineCommand, RelativeSource={RelativeSource AncestorType=DataGrid}}"
                                                     CommandParameter="{Binding}"
-                                                    Width="36"
-                                                    Height="36"
-                                                    Padding="0"
-                                                    Style="{StaticResource PosDangerButtonStyle}">
+                                                    Style="{StaticResource ReturnTableDangerIconButtonStyle}">
                                                 <materialDesign:PackIcon Kind="Delete" Width="18" Height="18" Foreground="White" />
                                             </Button>
                                         </DataTemplate>
