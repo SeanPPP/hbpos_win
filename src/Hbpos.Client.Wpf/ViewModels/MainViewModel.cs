@@ -63,6 +63,8 @@ public sealed partial class MainViewModel : ObservableObject
     private readonly ICashDrawerService _cashDrawerService;
     private readonly IApplicationExitService _applicationExitService;
     private readonly IConfirmationDialogService _confirmationDialogService;
+    private readonly ITestSalesDataResetService? _testSalesDataResetService;
+    private readonly ILinklyTerminalDialogPresenter? _linklyTerminalDialogPresenter;
     private readonly PosTerminalWorkflowFactory _posTerminalWorkflowFactory;
     private readonly DispatcherTimer _clockTimer = new() { Interval = TimeSpan.FromSeconds(1) };
     private readonly DispatcherTimer _connectivityTimer = new() { Interval = TimeSpan.FromSeconds(30) };
@@ -200,7 +202,8 @@ public sealed partial class MainViewModel : ObservableObject
         IDailyClosePrintService? dailyClosePrintService = null,
         ICashDrawerService? cashDrawerService = null,
         IApplicationExitService? applicationExitService = null,
-        IConfirmationDialogService? confirmationDialogService = null)
+        IConfirmationDialogService? confirmationDialogService = null,
+        ITestSalesDataResetService? testSalesDataResetService = null)
         : this(
             priceIndex,
             cart,
@@ -244,7 +247,8 @@ public sealed partial class MainViewModel : ObservableObject
             dailyClosePrintService: dailyClosePrintService,
             cashDrawerService: cashDrawerService,
             applicationExitService: applicationExitService,
-            confirmationDialogService: confirmationDialogService)
+            confirmationDialogService: confirmationDialogService,
+            testSalesDataResetService: testSalesDataResetService)
     {
     }
 
@@ -286,7 +290,9 @@ public sealed partial class MainViewModel : ObservableObject
         ICashDrawerService? cashDrawerService = null,
         IApplicationExitService? applicationExitService = null,
         IConfirmationDialogService? confirmationDialogService = null,
-        IInstallmentOrderService? installmentOrderService = null)
+        IInstallmentOrderService? installmentOrderService = null,
+        ITestSalesDataResetService? testSalesDataResetService = null,
+        ILinklyTerminalDialogPresenter? linklyTerminalDialogPresenter = null)
     {
         _priceIndex = priceIndex;
         _cart = cart;
@@ -331,6 +337,8 @@ public sealed partial class MainViewModel : ObservableObject
         _cashDrawerService = cashDrawerService ?? new NoopCashDrawerService(_localization);
         _applicationExitService = applicationExitService ?? new WpfApplicationExitService();
         _confirmationDialogService = confirmationDialogService ?? new WpfConfirmationDialogService();
+        _testSalesDataResetService = testSalesDataResetService;
+        _linklyTerminalDialogPresenter = linklyTerminalDialogPresenter;
         _posTerminalWorkflowFactory = posTerminalWorkflowFactory;
 
         PaymentSuccess = new PaymentSuccessViewModel(
@@ -394,6 +402,8 @@ public sealed partial class MainViewModel : ObservableObject
     public DeviceRegistrationViewModel? DeviceRegistration { get; private set; }
 
     public SettingsViewModel? Settings { get; private set; }
+
+    public ILinklyTerminalDialogPresenter? LinklyTerminalDialog => _linklyTerminalDialogPresenter;
 
     public bool IsPosTerminalScreenActive => ReferenceEquals(CurrentScreen, CachedPosTerminalScreen);
 
@@ -1469,6 +1479,21 @@ public sealed partial class MainViewModel : ObservableObject
             return;
         }
 
+        Func<CancellationToken, Task>? resetTestSalesDataAsync = null;
+        Func<bool>? confirmResetTestSalesData = null;
+#if DEBUG
+        resetTestSalesDataAsync = async cancellationToken =>
+        {
+            if (_testSalesDataResetService is null)
+            {
+                throw new InvalidOperationException(_localization.T("settings.status.testSalesDataResetNotConfigured"));
+            }
+
+            await _testSalesDataResetService.ResetAsync(cancellationToken);
+        };
+        confirmResetTestSalesData = _confirmationDialogService.ConfirmResetTestSalesData;
+#endif
+
         Settings ??= new SettingsViewModel(
             _cardTerminalSetupService,
             _localization,
@@ -1483,7 +1508,9 @@ public sealed partial class MainViewModel : ObservableObject
             BeginDeviceReregistrationAsync,
             ShowPos,
             _receiptPrinterSettingsStore,
-            _receiptPrintService);
+            _receiptPrintService,
+            resetTestSalesDataAsync: resetTestSalesDataAsync,
+            confirmResetTestSalesData: confirmResetTestSalesData);
         await Settings.LoadAsync();
         CurrentScreen = Settings;
     }

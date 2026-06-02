@@ -160,6 +160,110 @@ public sealed class InstallmentOrderServiceTests
     }
 
     [Fact]
+    public async Task CreateOrderAsync_authorizes_card_down_payment_before_create_and_uses_authorized_details()
+    {
+        var databasePath = CreateTempDatabasePath();
+
+        try
+        {
+            var events = new List<string>();
+            var cardTransactions = new[]
+            {
+                new CardTransactionDto("ANZ", "TXN-1", "123456", "VISA", 4, "****1234", "MID", "00", "APPROVED", "42", DateTimeOffset.UtcNow, 35m, "receipt")
+            };
+            var store = new LocalSqliteStore(databasePath);
+            var schema = new LocalSchemaService(store);
+            var repository = new LocalInstallmentOrderRepository(store);
+            var apiClient = new StubInstallmentApiClient
+            {
+                CreateResponse = CreateCreateResponse(),
+                OnCreate = _ => events.Add("api")
+            };
+            var cardTerminalClient = new RecordingCardTerminalClient(
+                new PaymentAuthorizationResult(true, "ANZ:TXN-1", AuthorizedAmount: 35m, CardTransactions: cardTransactions),
+                () => events.Add("authorize"));
+            var service = new InstallmentOrderService(repository, apiClient, cardTerminalClient: cardTerminalClient);
+
+            await schema.InitializeAsync();
+
+            var result = await service.CreateOrderAsync(
+                new InstallmentOrderCreateRequest(
+                    CreateOnlineSession(),
+                    CreateCartSnapshot(),
+                    "张三",
+                    "0400111222",
+                    30m,
+                    new InstallmentPaymentDraft(
+                        Guid.Parse("12345678-1111-2222-3333-444444444444"),
+                        PaymentMethodKind.Card,
+                        30m,
+                        "draft-reference"),
+                    "周末取货"));
+
+            Assert.True(result.Succeeded);
+            Assert.Equal(new[] { "authorize", "api" }, events);
+            Assert.Equal(1, cardTerminalClient.AuthorizeCallCount);
+            Assert.Equal(30m, cardTerminalClient.LastAuthorizeAmount);
+            Assert.NotNull(apiClient.LastCreateRequest);
+            Assert.Equal(PaymentMethodKind.Card, apiClient.LastCreateRequest!.DownPayment.Method);
+            Assert.Equal(35m, apiClient.LastCreateRequest.DownPayment.Amount);
+            Assert.Equal("ANZ:TXN-1", apiClient.LastCreateRequest.DownPayment.Reference);
+            Assert.Same(cardTransactions, apiClient.LastCreateRequest.DownPayment.CardTransactions);
+            Assert.False(string.IsNullOrWhiteSpace(apiClient.LastCreateRequest.DownPayment.IdempotencyKey));
+        }
+        finally
+        {
+            DeleteTempDatabase(databasePath);
+        }
+    }
+
+    [Fact]
+    public async Task CreateOrderAsync_does_not_call_api_when_card_down_payment_authorization_fails()
+    {
+        var databasePath = CreateTempDatabasePath();
+
+        try
+        {
+            var store = new LocalSqliteStore(databasePath);
+            var schema = new LocalSchemaService(store);
+            var repository = new LocalInstallmentOrderRepository(store);
+            var apiClient = new StubInstallmentApiClient
+            {
+                CreateResponse = CreateCreateResponse()
+            };
+            var cardTerminalClient = new RecordingCardTerminalClient(
+                new PaymentAuthorizationResult(false, Message: "card auth declined"));
+            var service = new InstallmentOrderService(repository, apiClient, cardTerminalClient: cardTerminalClient);
+
+            await schema.InitializeAsync();
+
+            var result = await service.CreateOrderAsync(
+                new InstallmentOrderCreateRequest(
+                    CreateOnlineSession(),
+                    CreateCartSnapshot(),
+                    "张三",
+                    "0400111222",
+                    30m,
+                    new InstallmentPaymentDraft(
+                        Guid.Parse("12345678-1111-2222-3333-444444444444"),
+                        PaymentMethodKind.Card,
+                        30m,
+                        "draft-reference"),
+                    "周末取货"));
+
+            Assert.False(result.Succeeded);
+            Assert.Equal("card auth declined", result.Message);
+            Assert.Equal(1, cardTerminalClient.AuthorizeCallCount);
+            Assert.Equal(0, apiClient.CreateCallCount);
+            Assert.Null(apiClient.LastCreateRequest);
+        }
+        finally
+        {
+            DeleteTempDatabase(databasePath);
+        }
+    }
+
+    [Fact]
     public async Task AddRepaymentAsync_builds_append_payment_request()
     {
         var databasePath = CreateTempDatabasePath();
@@ -650,6 +754,8 @@ public sealed class InstallmentOrderServiceTests
 
         public InstallmentVoidResponse? VoidResponse { get; set; }
 
+        public Action<InstallmentCreateRequest>? OnCreate { get; set; }
+
         public InstallmentCreateRequest? LastCreateRequest { get; private set; }
 
         public InstallmentAppendPaymentRequest? LastAppendPaymentRequest { get; private set; }
@@ -670,6 +776,7 @@ public sealed class InstallmentOrderServiceTests
 
         public Task<InstallmentCreateResponse> CreateAsync(InstallmentCreateRequest request, CancellationToken cancellationToken = default)
         {
+            OnCreate?.Invoke(request);
             CreateCallCount++;
             LastCreateRequest = request;
             return Task.FromResult(CreateResponse ?? throw new InvalidOperationException("CreateResponse was not configured."));
@@ -700,6 +807,35 @@ public sealed class InstallmentOrderServiceTests
             VoidCallCount++;
             LastVoidRequest = request;
             return Task.FromResult(VoidResponse ?? throw new InvalidOperationException("VoidResponse was not configured."));
+        }
+    }
+
+    private sealed class RecordingCardTerminalClient(
+        PaymentAuthorizationResult authorizeResult,
+        Action? onAuthorize = null) : ICardTerminalClient
+    {
+        public int AuthorizeCallCount { get; private set; }
+
+        public decimal? LastAuthorizeAmount { get; private set; }
+
+        public Task<PaymentAuthorizationResult> AuthorizeAsync(
+            decimal amount,
+            PosSessionState session,
+            CancellationToken cancellationToken = default)
+        {
+            onAuthorize?.Invoke();
+            AuthorizeCallCount++;
+            LastAuthorizeAmount = amount;
+            return Task.FromResult(authorizeResult);
+        }
+
+        public Task<PaymentAuthorizationResult> RefundAsync(
+            decimal amount,
+            PosSessionState session,
+            string? originalReference,
+            CancellationToken cancellationToken = default)
+        {
+            return Task.FromResult(new PaymentAuthorizationResult(false, Message: "card refund declined"));
         }
     }
 

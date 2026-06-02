@@ -20,6 +20,9 @@
   <data name="settings.section.dataReset.title" xml:space="preserve"><value>&#x6570;&#x636E;&#x91CD;&#x7F6E;</value></data>
   <data name="settings.section.dataReset.description" xml:space="preserve"><value>&#x5F3A;&#x5236;&#x91CD;&#x65B0;&#x6784;&#x5EFA;&#x672C;&#x5730;&#x5546;&#x54C1;&#x76EE;&#x5F55;&#x3002;&#x9002;&#x7528;&#x4E8E;&#x6570;&#x636E;&#x8FC7;&#x65E7;&#x3001;&#x4EF7;&#x683C;&#x672A;&#x5237;&#x65B0;&#x6216;&#x5546;&#x54C1;&#x7D22;&#x5F15;&#x9700;&#x8981;&#x5F7B;&#x5E95;&#x91CD;&#x5EFA;&#x65F6;&#x3002;</value></data>
   <data name="settings.section.dataReset.action" xml:space="preserve"><value>&#x6570;&#x636E;&#x91CD;&#x7F6E;</value></data>
+  <data name="settings.section.testSalesDataReset.title" xml:space="preserve"><value>重置测试销售数据</value></data>
+  <data name="settings.section.testSalesDataReset.description" xml:space="preserve"><value>仅 Debug 可见。删除本地测试订单、支付、刷卡交易、同步队列、分期订单、日结和挂单。</value></data>
+  <data name="settings.section.testSalesDataReset.action" xml:space="preserve"><value>重置销售数据</value></data>
   <data name="settings.square.title" xml:space="preserve"><value>Square</value></data>
   <data name="settings.square.description" xml:space="preserve"><value>&#x4F7F;&#x7528; Square &#x8BBF;&#x95EE;&#x4EE4;&#x724C;&#x52A0;&#x8F7D;&#x95E8;&#x5E97;&#x4F4D;&#x7F6E;&#x548C;&#x7EC8;&#x7AEF;&#x8BBE;&#x5907;&#x3002;</value></data>
   <data name="settings.square.switchHelp" xml:space="preserve"><value>&#x53EF;&#x5728;&#x540C;&#x4E00;&#x95E8;&#x5E97;&#x4E0B;&#x5207;&#x6362;&#x5230;&#x5176;&#x4ED6;&#x5DF2;&#x914D;&#x5BF9;&#x7684; Square &#x5237;&#x5361;&#x673A;&#xFF0C;&#x4FDD;&#x5B58;&#x540E;&#x4E0B;&#x4E00;&#x7B14;&#x652F;&#x4ED8;&#x5373;&#x751F;&#x6548;&#x3002;</value></data>
@@ -48,19 +51,22 @@
   <data name="settings.square.timeoutSeconds" xml:space="preserve"><value>&#x7EC8;&#x7AEF;&#x8D85;&#x65F6;&#x79D2;&#x6570;</value></data>
   <data name="settings.square.save" xml:space="preserve"><value>&#x4FDD;&#x5B58; Square</value></data>
   <data name="settings.linkly.title" xml:space="preserve"><value>ANZ Linkly</value></data>
-  <data name="settings.linkly.description" xml:space="preserve"><value>&#x8FDE;&#x63A5;&#x672C;&#x5730; Linkly EFT-Client&#xFF0C;&#x7136;&#x540E;&#x542F;&#x7528; ANZ Linkly &#x5904;&#x7406;&#x5237;&#x5361;&#x652F;&#x4ED8;&#x3002;</value></data>
+  <data name="settings.linkly.description" xml:space="preserve"><value>&#x6839;&#x636E;&#x5F53;&#x524D;&#x6536;&#x94F6;&#x673A;&#x63A5;&#x5165;&#x65B9;&#x5F0F;&#x9009;&#x62E9; Linkly &#x6A21;&#x5F0F;&#xFF1A;&#x672C;&#x5730;/&#x5C40;&#x57DF;&#x7F51; IP &#x63A5;&#x53E3;&#x3001;Cloud &#x76F4;&#x8FDE;&#x540C;&#x6B65;&#x6216; Cloud &#x540E;&#x7AEF;&#x5F02;&#x6B65;&#x3002;</value></data>
   <data name="settings.linkly.cloudMode" xml:space="preserve"><value>&#x4F7F;&#x7528; Linkly Cloud</value></data>
   <data name="settings.linkly.mode.title" xml:space="preserve"><value>连接模式</value></data>
   <data name="settings.linkly.mode.localIp" xml:space="preserve"><value>本地 IP / 端口</value></data>
+  <data name="settings.linkly.mode.localIp.help" xml:space="preserve"><value>用于连接本机或局域网内的 Windows Linkly EFT-Client IP Gateway。</value></data>
   <data name="settings.linkly.mode.cloudDirectSync" xml:space="preserve"><value>Cloud 直连同步</value></data>
+  <data name="settings.linkly.mode.cloudDirectSync.help" xml:space="preserve"><value>直接配对 Linkly Cloud，但 POS 侧只返回交易状态结果。</value></data>
   <data name="settings.linkly.mode.cloudBackendAsync" xml:space="preserve"><value>Cloud 后端异步</value></data>
+  <data name="settings.linkly.mode.cloudBackendAsync.help" xml:space="preserve"><value>走后端异步流程，支持 display、receipt、sendkey 和签名授权。</value></data>
   <data name="settings.linkly.localIp.title" xml:space="preserve"><value>本地 Linkly IP Gateway</value></data>
-  <data name="settings.linkly.localIp.description" xml:space="preserve"><value>通过 IP 地址和端口连接本机 Windows Linkly EFT-Client。</value></data>
+  <data name="settings.linkly.localIp.description" xml:space="preserve"><value>通过 IP 地址和端口连接本机或局域网内的 Windows Linkly EFT-Client。</value></data>
   <data name="settings.linkly.localIp.ipAddress" xml:space="preserve"><value>IP 地址</value></data>
   <data name="settings.linkly.cloudDirect.title" xml:space="preserve"><value>Cloud 直连同步</value></data>
-  <data name="settings.linkly.cloudDirect.description" xml:space="preserve"><value>在本机保存 Cloud API 测试账号，完成刷卡机配对后测试直连 Cloud。</value></data>
+  <data name="settings.linkly.cloudDirect.description" xml:space="preserve"><value>在本机保存 Cloud API 测试账号，完成刷卡机配对后测试直连 Cloud。该模式仅返回交易状态结果。</value></data>
   <data name="settings.linkly.cloudBackend.title" xml:space="preserve"><value>Cloud 后端异步</value></data>
-  <data name="settings.linkly.cloudBackend.description" xml:space="preserve"><value>使用后端 Linkly 流程处理异步 Cloud 交易。启用前先用当前门店和设备测试后端入口。</value></data>
+  <data name="settings.linkly.cloudBackend.description" xml:space="preserve"><value>使用后端 Linkly 流程处理异步 Cloud 交易。该模式支持 display、receipt、sendkey 和签名授权。启用前先用当前门店和设备测试后端入口。</value></data>
   <data name="settings.linkly.cloudBackend.test" xml:space="preserve"><value>测试后端</value></data>
   <data name="settings.linkly.cloud.secret" xml:space="preserve"><value>Cloud &#x914D;&#x5BF9;&#x5BC6;&#x94A5;</value></data>
   <data name="settings.linkly.cloud.secretStatus.cached" xml:space="preserve"><value>&#x8BE5; POS &#x5DF2;&#x5B89;&#x5168;&#x4FDD;&#x5B58;&#x914D;&#x5BF9;&#x5BC6;&#x94A5;&#x3002;</value></data>
@@ -113,8 +119,9 @@
   <data name="settings.linkly.sop.local.step10" xml:space="preserve"><value>Host 通常使用 127.0.0.1，Port 通常使用 2011。</value></data>
   <data name="settings.linkly.sop.local.step11" xml:space="preserve"><value>点击“测试 Linkly”，成功后点击“启用 Linkly”。</value></data>
   <data name="settings.linkly.sop.mode.title" xml:space="preserve"><value>如何判断当前模式</value></data>
-  <data name="settings.linkly.sop.mode.cloud" xml:space="preserve"><value>Cloud：终端能显示 Pairing Code，可用 Func 8880 重新配对，不依赖 Windows Linkly 软件也能通过 Cloud API 发交易。</value></data>
-  <data name="settings.linkly.sop.mode.local" xml:space="preserve"><value>Local USB：刷卡机 In-store Comms 为 USB / Async DLE 9600，Windows PC 运行 Linkly EFT Client，POS 通常连 127.0.0.1:2011。</value></data>
+  <data name="settings.linkly.sop.mode.localIp" xml:space="preserve"><value>本地 IP / 端口：当 Windows Linkly EFT-Client 跑在本机或局域网主机上，POS 通过 IP Gateway 连接时使用。</value></data>
+  <data name="settings.linkly.sop.mode.cloudDirectSync" xml:space="preserve"><value>Cloud 直连同步：当终端已配对 Linkly Cloud，但 POS 只需要交易状态结果时使用。</value></data>
+  <data name="settings.linkly.sop.mode.cloudBackendAsync" xml:space="preserve"><value>Cloud 后端异步：当终端已配对 Linkly Cloud，且 POS 需要 display、receipt、sendkey 或签名授权能力时使用。</value></data>
   <data name="settings.receiptPrinter.title" xml:space="preserve"><value>&#x5C0F;&#x7968;&#x6253;&#x5370;&#x673A;</value></data>
   <data name="settings.receiptPrinter.description" xml:space="preserve"><value>&#x914D;&#x7F6E;&#x70ED;&#x654F;&#x5C0F;&#x7968;&#x6253;&#x5370;&#x673A;&#x548C;&#x5C0F;&#x7968;&#x4E0A;&#x7684;&#x95E8;&#x5E97;&#x4FE1;&#x606F;&#x3002;</value></data>
   <data name="settings.receiptPrinter.port" xml:space="preserve"><value>&#x6253;&#x5370;&#x673A;&#x7AEF;&#x53E3;</value></data>
@@ -160,6 +167,9 @@
   <data name="settings.status.catalogResetNotConfigured" xml:space="preserve"><value>&#x672A;&#x914D;&#x7F6E;&#x6570;&#x636E;&#x91CD;&#x7F6E;&#x670D;&#x52A1;&#x3002;</value></data>
   <data name="settings.status.catalogResetting" xml:space="preserve"><value>&#x6B63;&#x5728;&#x91CD;&#x7F6E;&#x5546;&#x54C1;&#x76EE;&#x5F55;&#x6570;&#x636E;...</value></data>
   <data name="settings.status.catalogResetCompleted" xml:space="preserve"><value>&#x5546;&#x54C1;&#x76EE;&#x5F55;&#x6570;&#x636E;&#x91CD;&#x7F6E;&#x5B8C;&#x6210;&#x3002;</value></data>
+  <data name="settings.status.testSalesDataResetNotConfigured" xml:space="preserve"><value>未配置测试销售数据重置服务。</value></data>
+  <data name="settings.status.testSalesDataResetting" xml:space="preserve"><value>正在删除本地测试销售数据...</value></data>
+  <data name="settings.status.testSalesDataResetCompleted" xml:space="preserve"><value>本地测试销售数据已删除。</value></data>
   <data name="settings.status.reregisterNotConfigured" xml:space="preserve"><value>&#x672A;&#x914D;&#x7F6E;&#x8BBE;&#x5907;&#x91CD;&#x65B0;&#x6CE8;&#x518C;&#x670D;&#x52A1;&#x3002;</value></data>
   <data name="settings.status.reregisterStarting" xml:space="preserve"><value>正在启动更换分店重新注册...</value></data>
   <data name="settings.status.operationCanceled" xml:space="preserve"><value>&#x64CD;&#x4F5C;&#x5DF2;&#x53D6;&#x6D88;&#x3002;</value></data>

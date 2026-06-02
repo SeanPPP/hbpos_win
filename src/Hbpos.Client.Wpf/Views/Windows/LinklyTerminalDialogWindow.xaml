@@ -85,17 +85,10 @@
                      VerticalScrollBarVisibility="Auto" />
         </DockPanel>
 
-        <StackPanel Grid.Row="4"
+        <StackPanel x:Name="ActionButtonsPanel"
+                    Grid.Row="4"
                     Margin="0,18,0,0"
                     HorizontalAlignment="Right"
-                    Orientation="Horizontal">
-            <Button x:Name="CancelButton"
-                    MinWidth="96"
-                    Margin="0,0,10,0"
-                    Click="CancelButton_Click" />
-            <Button x:Name="ConfirmButton"
-                    MinWidth="96"
-                    Click="ConfirmButton_Click" />
-        </StackPanel>
+                    Orientation="Horizontal" />
     </Grid>
 </Window>

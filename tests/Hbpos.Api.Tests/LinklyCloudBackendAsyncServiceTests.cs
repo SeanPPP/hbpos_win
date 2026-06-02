@@ -712,6 +712,109 @@ namespace Hbpos.Api.Tests;
     }
 
     [Fact]
+    public async Task Display_notifications_persist_metadata_for_status_and_active_and_replace_current_prompt()
+    {
+        var service = CreateService(new CapturingLinklyCloudBackendAsyncTransport(HttpStatusCode.Accepted));
+        var session = await service.StartTransactionAsync(
+            "S01",
+            "POS-01",
+            CreateTransactionRequest(),
+            CancellationToken.None);
+        using var firstDisplay = JsonDocument.Parse("""
+            {
+              "Response": {
+                "DisplayText": ["PRESENT CARD"],
+                "DisplayLines": ["PRESENT CARD", "TOTAL $10.00"],
+                "CancelKeyFlag": "0",
+                "OKKeyFlag": "1",
+                "AcceptYesKeyFlag": "1",
+                "DeclineNoKeyFlag": "0",
+                "AuthoriseKeyFlag": "3",
+                "InputType": "2",
+                "GraphicCode": "7"
+              }
+            }
+            """);
+
+        await service.ReceiveNotificationAsync(
+            "Sandbox",
+            session.SessionId,
+            "display",
+            "Bearer sandbox-notify",
+            firstDisplay.RootElement,
+            CancellationToken.None);
+
+        var status = await service.GetStatusAsync("S01", "POS-01", "Sandbox", session.SessionId, CancellationToken.None);
+        var active = await service.GetActiveSessionAsync("S01", "POS-01", "Sandbox", CancellationToken.None);
+
+        Assert.NotNull(status);
+        Assert.NotNull(active);
+        Assert.Equal("PRESENT CARD", status!.DisplayText);
+        Assert.False(status.CancelKeyFlag);
+        Assert.True(status.OKKeyFlag);
+        Assert.True(status.AcceptYesKeyFlag);
+        Assert.False(status.DeclineNoKeyFlag);
+        Assert.True(status.AuthoriseKeyFlag);
+        Assert.Equal("2", status.InputType);
+        Assert.Equal("7", status.GraphicCode);
+        Assert.Equal(["PRESENT CARD", "TOTAL $10.00"], status.DisplayLines);
+        Assert.Equal(status.DisplayLines, active!.DisplayLines);
+        Assert.Equal(status.OKKeyFlag, active.OKKeyFlag);
+
+        using var nextDisplay = JsonDocument.Parse("""
+            {
+              "Response": {
+                "DisplayText": ["ENTER PIN"],
+                "DisplayLines": ["ENTER PIN"],
+                "DeclineNoKeyFlag": "1",
+                "InputType": "1"
+              }
+            }
+            """);
+        await service.ReceiveNotificationAsync(
+            "Sandbox",
+            session.SessionId,
+            "display",
+            "Bearer sandbox-notify",
+            nextDisplay.RootElement,
+            CancellationToken.None);
+
+        status = await service.GetStatusAsync("S01", "POS-01", "Sandbox", session.SessionId, CancellationToken.None);
+        Assert.NotNull(status);
+        Assert.Equal("ENTER PIN", status!.DisplayText);
+        Assert.Equal(["ENTER PIN"], status.DisplayLines);
+        Assert.False(status.CancelKeyFlag);
+        Assert.False(status.OKKeyFlag);
+        Assert.False(status.AcceptYesKeyFlag);
+        Assert.True(status.DeclineNoKeyFlag);
+        Assert.False(status.AuthoriseKeyFlag);
+        Assert.Equal("1", status.InputType);
+        Assert.Null(status.GraphicCode);
+
+        using var approved = JsonDocument.Parse("""{ "Response": { "TxnRef": "TXN-APPROVED", "ResponseCode": "00", "ResponseText": "APPROVED" } }""");
+        using var staleDisplay = JsonDocument.Parse("""{ "Response": { "DisplayText": ["OLD PROMPT"], "OKKeyFlag": "1" } }""");
+        await service.ReceiveNotificationAsync(
+            "Sandbox",
+            session.SessionId,
+            "transaction",
+            "Bearer sandbox-notify",
+            approved.RootElement,
+            CancellationToken.None);
+        await service.ReceiveNotificationAsync(
+            "Sandbox",
+            session.SessionId,
+            "display",
+            "Bearer sandbox-notify",
+            staleDisplay.RootElement,
+            CancellationToken.None);
+
+        status = await service.GetStatusAsync("S01", "POS-01", "Sandbox", session.SessionId, CancellationToken.None);
+        Assert.Equal("Completed", status?.Status);
+        Assert.Equal("00", status?.ResponseCode);
+        Assert.Null(await service.GetActiveSessionAsync("S01", "POS-01", "Sandbox", CancellationToken.None));
+    }
+
+    [Fact]
     public async Task MarkReceiptPrintedAsync_sets_printed_time_after_receipt_arrives()
     {
         var service = CreateService(new CapturingLinklyCloudBackendAsyncTransport(HttpStatusCode.Accepted));

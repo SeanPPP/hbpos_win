@@ -80,8 +80,9 @@ public sealed class LocalizationAndSettingsTests
             "settings.linkly.sop.local.step6",
             "settings.linkly.sop.local.step10",
             "settings.linkly.sop.mode.title",
-            "settings.linkly.sop.mode.cloud",
-            "settings.linkly.sop.mode.local",
+            "settings.linkly.sop.mode.localIp",
+            "settings.linkly.sop.mode.cloudDirectSync",
+            "settings.linkly.sop.mode.cloudBackendAsync",
             "settings.linkly.mode.localIp",
             "settings.linkly.mode.cloudDirectSync",
             "settings.linkly.mode.cloudBackendAsync",
@@ -118,6 +119,147 @@ public sealed class LocalizationAndSettingsTests
 
         Assert.Contains("\u5237\u5361\u673A\u64CD\u4F5C\u6B65\u9AA4", localization.T("settings.linkly.sop.title"), StringComparison.Ordinal);
         Assert.Contains("Async DLE 9600", localization.T("settings.linkly.sop.local.step6"), StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Localization_has_popup_dialog_text()
+    {
+        string[] keys =
+        [
+            "returns.openItem.title",
+            "returns.openItem.subtitle",
+            "returns.openItem.name",
+            "returns.openItem.price",
+            "returns.openItem.defaultName",
+            "Clear",
+            "Backspace",
+            "common.space",
+            "linkly.cloud.directPendingMessage",
+            "linkly.cloud.directStatusHelp",
+            "linkly.cloud.directCancelRequested",
+            "linkly.cloud.directCancelFailed",
+            "linkly.backend.timeout",
+            "linkly.backend.communicationFailed",
+            "linkly.backend.invalidResponse",
+            "linkly.backend.notSubmitted",
+            "linkly.backend.sendKeyFailed",
+            "linkly.backend.dialog.title",
+            "linkly.backend.dialog.status",
+            "linkly.backend.dialog.display",
+            "linkly.backend.dialog.receipt",
+            "linkly.backend.dialog.close",
+            "linkly.backend.dialog.button.cancelPayment",
+            "linkly.backend.dialog.button.okCancel",
+            "linkly.backend.dialog.button.ok",
+            "linkly.backend.dialog.button.yesApproved",
+            "linkly.backend.dialog.button.noDeclined",
+            "linkly.backend.dialog.button.authoriseSignature",
+            "linkly.backend.dialog.button.cancel"
+        ];
+        var localization = new LocalizationService();
+
+        foreach (var key in keys)
+        {
+            Assert.False(localization.T(key).StartsWith("[[", StringComparison.Ordinal), key);
+        }
+
+        Assert.Equal("Cancel payment", localization.T("linkly.backend.dialog.button.cancelPayment"));
+        Assert.Equal("No-barcode return item", localization.T("returns.openItem.title"));
+
+        localization.SetCulture("zh-CN");
+
+        foreach (var key in keys)
+        {
+            Assert.False(localization.T(key).StartsWith("[[", StringComparison.Ordinal), key);
+        }
+
+        Assert.Equal("取消刷卡", localization.T("linkly.backend.dialog.button.cancelPayment"));
+        Assert.Equal("无码退货商品", localization.T("returns.openItem.title"));
+    }
+
+    [Fact]
+    public void Localization_has_installment_text()
+    {
+        string[] keys =
+        [
+            "installment.common.input.reference",
+            "installment.common.input.voucherToken",
+            "installment.center.title",
+            "installment.center.currentOrder.none",
+            "installment.center.currentOrder.amount",
+            "installment.center.action.backToPayment",
+            "installment.center.action.search",
+            "installment.center.action.create",
+            "installment.center.action.repay",
+            "installment.center.action.cancel",
+            "installment.center.action.void",
+            "installment.center.action.confirmPickup",
+            "installment.center.search",
+            "installment.center.offline",
+            "installment.center.column.orderNumber",
+            "installment.center.column.customer",
+            "installment.center.column.phone",
+            "installment.center.column.total",
+            "installment.center.column.paid",
+            "installment.center.column.outstanding",
+            "installment.center.column.status",
+            "installment.center.column.terminal",
+            "installment.center.column.updated",
+            "installment.center.selected.none",
+            "installment.center.selected.customer.empty",
+            "installment.center.selected.outstanding.empty",
+            "installment.center.selected.outstanding",
+            "installment.center.input.repaymentAmount",
+            "installment.center.input.voidReason",
+            "installment.center.status.ready",
+            "installment.center.status.loaded",
+            "installment.center.status.searched",
+            "installment.center.status.empty",
+            "installment.center.status.refreshFailed",
+            "installment.center.status.cardTerminalRequired",
+            "installment.center.status.cardNotAuthorized",
+            "installment.create.title",
+            "installment.create.action.back",
+            "installment.create.action.submit",
+            "installment.create.offline",
+            "installment.create.section.customer",
+            "installment.create.section.cart",
+            "installment.create.section.payment",
+            "installment.create.input.customerName",
+            "installment.create.input.customerPhone",
+            "installment.create.input.downPaymentAmount",
+            "installment.create.input.note",
+            "installment.create.order.total",
+            "installment.create.order.financed",
+            "installment.create.status.ready",
+            "installment.create.status.missingCart",
+            "installment.create.payment.status.offline",
+            "installment.create.payment.status.cash",
+            "installment.create.payment.status.card.empty",
+            "installment.create.payment.status.card.ready",
+            "installment.create.payment.status.voucher.missingCode",
+            "installment.create.payment.status.voucher.missingToken",
+            "installment.create.payment.status.voucher.ready"
+        ];
+        var localization = new LocalizationService();
+
+        foreach (var key in keys)
+        {
+            Assert.False(localization.T(key).StartsWith("[[", StringComparison.Ordinal), key);
+        }
+
+        Assert.Equal("Installment Center", localization.T("installment.center.title"));
+        Assert.Equal("Create Installment", localization.T("installment.create.title"));
+
+        localization.SetCulture("zh-CN");
+
+        foreach (var key in keys)
+        {
+            Assert.False(localization.T(key).StartsWith("[[", StringComparison.Ordinal), key);
+        }
+
+        Assert.Equal("分期中心", localization.T("installment.center.title"));
+        Assert.Equal("创建分期", localization.T("installment.create.title"));
     }
 
     [Fact]

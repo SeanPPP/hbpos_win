@@ -1,7 +1,11 @@
+using System.Reflection;
+using System.Runtime.CompilerServices;
 using BlazorApp.Service.Models.HBPOSM_POSM;
 using Hbpos.Api.Services;
+using Hbpos.Api.Data;
 using BlazorApp.Shared.Models.POSM;
 using Hbpos.Contracts.Vouchers;
+using SqlSugar;
 
 namespace Hbpos.Api.Tests;
 
@@ -13,7 +17,7 @@ public sealed class StoreVoucherServiceTests
         var voucher = CreateVoucher(remainingAmount: 12.5m);
         var service = new StoreVoucherService(
             new FakeStoreVoucherRepository(voucher),
-            new InMemoryStoreVoucherReservationService(new FakeTimeProvider(DateTimeOffset.Parse("2026-05-26T10:00:00Z"))));
+            new FakeReservationService());
 
         var response = await service.QueryAsync("S01", "V001", CancellationToken.None);
 
@@ -26,10 +30,12 @@ public sealed class StoreVoucherServiceTests
     [Fact]
     public async Task LockAsync_ReturnsPartialAmountWhenExistingReservationReducesAvailability()
     {
-        var reservationService = new InMemoryStoreVoucherReservationService(new FakeTimeProvider(DateTimeOffset.Parse("2026-05-26T10:00:00Z")));
+        await using var fixture = await StoreVoucherSqliteFixture.CreateAsync();
+        var timeProvider = new MutableFakeTimeProvider(DateTimeOffset.Parse("2026-05-26T10:00:00Z"));
+        await fixture.SeedVoucherAsync(CreateVoucher(remainingAmount: 10m));
         var service = new StoreVoucherService(
-            new FakeStoreVoucherRepository(CreateVoucher(remainingAmount: 10m)),
-            reservationService);
+            new SqlSugarStoreVoucherRepository(fixture.DbContext),
+            new SqlSugarStoreVoucherReservationService(fixture.DbContext, timeProvider));
 
         var first = await service.LockAsync(new StoreVoucherLockRequest("S01", "V001", 6m), CancellationToken.None);
         var second = await service.LockAsync(new StoreVoucherLockRequest("S01", "V001", 6m), CancellationToken.None);
@@ -37,6 +43,157 @@ public sealed class StoreVoucherServiceTests
         Assert.Equal(6m, first.LockedAmount);
         Assert.Equal(4m, second.LockedAmount);
         Assert.NotEqual(first.ReservationToken, second.ReservationToken);
+    }
+
+    [Fact]
+    public async Task Reservation_GetAsync_ReturnsOnlyPendingUnexpiredRecords()
+    {
+        await using var fixture = await StoreVoucherSqliteFixture.CreateAsync();
+        var timeProvider = new MutableFakeTimeProvider(DateTimeOffset.Parse("2026-05-26T10:00:00Z"));
+        await fixture.SeedVoucherAsync(CreateVoucher(remainingAmount: 10m));
+        var service = new SqlSugarStoreVoucherReservationService(fixture.DbContext, timeProvider);
+
+        var reservation = await service.ReserveAsync("S01", "V001", 5m, 10m, CancellationToken.None);
+        var found = await service.GetAsync(reservation.Token, CancellationToken.None);
+        timeProvider.UtcNow = timeProvider.UtcNow.AddMinutes(6);
+        var expired = await service.GetAsync(reservation.Token, CancellationToken.None);
+
+        Assert.NotNull(found);
+        Assert.Null(expired);
+        Assert.NotNull(await fixture.GetReservationEntityAsync(reservation.Token));
+    }
+
+    [Fact]
+    public async Task Reservation_ExpiredPendingAmount_DoesNotReduceFutureLocks()
+    {
+        await using var fixture = await StoreVoucherSqliteFixture.CreateAsync();
+        var timeProvider = new MutableFakeTimeProvider(DateTimeOffset.Parse("2026-05-26T10:00:00Z"));
+        await fixture.SeedVoucherAsync(CreateVoucher(remainingAmount: 10m));
+        var service = new SqlSugarStoreVoucherReservationService(fixture.DbContext, timeProvider);
+
+        await service.ReserveAsync("S01", "V001", 9m, 10m, CancellationToken.None);
+        timeProvider.UtcNow = timeProvider.UtcNow.AddMinutes(6);
+        var fresh = await service.ReserveAsync("S01", "V001", 10m, 10m, CancellationToken.None);
+
+        Assert.Equal(10m, fresh.LockedAmount);
+    }
+
+    [Fact]
+    public async Task Reservation_ConsumeAsync_MarksConsumedAndIsIdempotent()
+    {
+        await using var fixture = await StoreVoucherSqliteFixture.CreateAsync();
+        var timeProvider = new MutableFakeTimeProvider(DateTimeOffset.Parse("2026-05-26T10:00:00Z"));
+        await fixture.SeedVoucherAsync(CreateVoucher(remainingAmount: 10m));
+        var service = new SqlSugarStoreVoucherReservationService(fixture.DbContext, timeProvider);
+        var reservation = await service.ReserveAsync("S01", "V001", 5m, 10m, CancellationToken.None);
+
+        await service.ConsumeAsync(reservation.Token, CancellationToken.None);
+        await service.ConsumeAsync(reservation.Token, CancellationToken.None);
+
+        var found = await service.GetAsync(reservation.Token, CancellationToken.None);
+        var entity = await fixture.GetReservationEntityAsync(reservation.Token);
+        Assert.Null(found);
+        Assert.NotNull(entity);
+        Assert.Equal("consumed", entity!.Status);
+        Assert.NotNull(entity.ConsumedAtUtc);
+    }
+
+    [Fact]
+    public async Task Reservation_ClaimAsync_AllowsTokenOnlyOnce()
+    {
+        await using var fixture = await StoreVoucherSqliteFixture.CreateAsync();
+        var timeProvider = new MutableFakeTimeProvider(DateTimeOffset.Parse("2026-05-26T10:00:00Z"));
+        await fixture.SeedVoucherAsync(CreateVoucher(remainingAmount: 10m));
+        var service = new SqlSugarStoreVoucherReservationService(fixture.DbContext, timeProvider);
+        var reservation = await service.ReserveAsync("S01", "V001", 5m, 10m, CancellationToken.None);
+
+        var claimed = await service.ClaimAsync(reservation.Token, "S01", "V001", 5m, "ORDER-1", CancellationToken.None);
+        var second = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            service.ClaimAsync(reservation.Token, "S01", "V001", 5m, "ORDER-2", CancellationToken.None));
+
+        var entity = await fixture.GetReservationEntityAsync(reservation.Token);
+        Assert.Equal(reservation.Token, claimed.Token);
+        Assert.Contains("already claimed", second.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Null(await service.GetAsync(reservation.Token, CancellationToken.None));
+        Assert.Equal("claimed", entity?.Status);
+        Assert.Equal("ORDER-1", entity?.ConsumedByReference);
+
+        await service.ConsumeAsync(reservation.Token, CancellationToken.None);
+        var consumed = await fixture.GetReservationEntityAsync(reservation.Token);
+        Assert.Equal("consumed", consumed?.Status);
+        Assert.Equal("ORDER-1", consumed?.ConsumedByReference);
+    }
+
+    [Fact]
+    public async Task Reservation_ClaimAsync_RejectsExpiredAndConsumedTokens()
+    {
+        await using var fixture = await StoreVoucherSqliteFixture.CreateAsync();
+        var timeProvider = new MutableFakeTimeProvider(DateTimeOffset.Parse("2026-05-26T10:00:00Z"));
+        await fixture.SeedVoucherAsync(CreateVoucher(remainingAmount: 10m));
+        var service = new SqlSugarStoreVoucherReservationService(fixture.DbContext, timeProvider);
+        var expired = await service.ReserveAsync("S01", "V001", 4m, 10m, CancellationToken.None);
+        timeProvider.UtcNow = timeProvider.UtcNow.AddMinutes(6);
+        var active = await service.ReserveAsync("S01", "V001", 4m, 10m, CancellationToken.None);
+        await service.ConsumeAsync(active.Token, CancellationToken.None);
+
+        await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            service.ClaimAsync(expired.Token, "S01", "V001", 4m, "ORDER-EXPIRED", CancellationToken.None));
+        await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            service.ClaimAsync(active.Token, "S01", "V001", 4m, "ORDER-CONSUMED", CancellationToken.None));
+    }
+
+    [Fact]
+    public async Task Reservation_CanBeReadAcrossServiceInstances()
+    {
+        await using var fixture = await StoreVoucherSqliteFixture.CreateAsync();
+        var timeProvider = new MutableFakeTimeProvider(DateTimeOffset.Parse("2026-05-26T10:00:00Z"));
+        await fixture.SeedVoucherAsync(CreateVoucher(remainingAmount: 10m));
+        var firstInstance = new SqlSugarStoreVoucherReservationService(fixture.DbContext, timeProvider);
+        var secondInstance = new SqlSugarStoreVoucherReservationService(fixture.DbContext, timeProvider);
+
+        var reservation = await firstInstance.ReserveAsync("S01", "V001", 5m, 10m, CancellationToken.None);
+        var found = await secondInstance.GetAsync(reservation.Token, CancellationToken.None);
+
+        Assert.NotNull(found);
+        Assert.Equal(reservation.Token, found!.Token);
+    }
+
+    [Fact]
+    public async Task RedeemInsideTransactionAsync_UsesAtomicBalanceCondition()
+    {
+        await using var fixture = await StoreVoucherSqliteFixture.CreateAsync();
+        await fixture.SeedVoucherAsync(CreateVoucher(remainingAmount: 10m));
+        await RedeemVoucherAsync(fixture, 6m);
+
+        var ex = await Assert.ThrowsAsync<InvalidOperationException>(() => RedeemVoucherAsync(fixture, 6m));
+        var voucher = await fixture.GetVoucherAsync("V001");
+
+        Assert.Contains("balance is not enough", ex.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.NotNull(voucher);
+        Assert.Equal(4m, voucher!.RemainingAmount);
+        Assert.Equal("1", voucher.Status);
+    }
+
+    [Fact]
+    public async Task ClaimAndRedeemInsideTransaction_UsesReservationOnlyOnce()
+    {
+        await using var fixture = await StoreVoucherSqliteFixture.CreateAsync();
+        var timeProvider = new MutableFakeTimeProvider(DateTimeOffset.Parse("2026-05-26T10:00:00Z"));
+        await fixture.SeedVoucherAsync(CreateVoucher(remainingAmount: 10m));
+        var reservationService = new SqlSugarStoreVoucherReservationService(fixture.DbContext, timeProvider);
+        var reservation = await reservationService.ReserveAsync("S01", "V001", 5m, 10m, CancellationToken.None);
+
+        await ClaimAndRedeemVoucherAsync(fixture, reservation.Token, 5m, "ORDER-1", timeProvider.UtcNow);
+        var second = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            ClaimAndRedeemVoucherAsync(fixture, reservation.Token, 5m, "ORDER-2", timeProvider.UtcNow));
+
+        var voucher = await fixture.GetVoucherAsync("V001");
+        var storedReservation = await fixture.GetReservationEntityAsync(reservation.Token);
+        Assert.Contains("already claimed", second.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.NotNull(voucher);
+        Assert.Equal(5m, voucher!.RemainingAmount);
+        Assert.Equal("claimed", storedReservation?.Status);
+        Assert.Equal("ORDER-1", storedReservation?.ConsumedByReference);
     }
 
     [Fact]
@@ -49,7 +206,7 @@ public sealed class StoreVoucherServiceTests
         };
         var service = new StoreVoucherService(
             repository,
-            new InMemoryStoreVoucherReservationService(new FakeTimeProvider(time)),
+            new FakeReservationService(),
             new FakeTimeProvider(time));
 
         var response = await service.IssueRefundAsync(
@@ -78,7 +235,7 @@ public sealed class StoreVoucherServiceTests
         };
         var service = new StoreVoucherService(
             repository,
-            new InMemoryStoreVoucherReservationService(new FakeTimeProvider(time)),
+            new FakeReservationService(),
             new FakeTimeProvider(time));
         var request = new StoreVoucherIssueRefundRequest(
             "S01",
@@ -107,7 +264,7 @@ public sealed class StoreVoucherServiceTests
         };
         var service = new StoreVoucherService(
             repository,
-            new InMemoryStoreVoucherReservationService(new FakeTimeProvider(time)),
+            new FakeReservationService(),
             new FakeTimeProvider(time));
 
         var response = await service.IssueAsync(
@@ -136,7 +293,7 @@ public sealed class StoreVoucherServiceTests
         };
         var service = new StoreVoucherService(
             repository,
-            new InMemoryStoreVoucherReservationService(new FakeTimeProvider(time)),
+            new FakeReservationService(),
             new FakeTimeProvider(time));
         var request = new StoreVoucherIssueRequest("S01", 25m, "C001", "ISSUE-1", CustomerCode: "CUS001");
 
@@ -152,6 +309,7 @@ public sealed class StoreVoucherServiceTests
     {
         return new StoreVoucher
         {
+            ID = 1,
             StoreCode = "S01",
             VoucherCode = "V001",
             VoucherType = 3,
@@ -164,6 +322,62 @@ public sealed class StoreVoucherServiceTests
             Remark = "cash voucher",
             IsDelete = false
         };
+    }
+
+    private static async Task RedeemVoucherAsync(StoreVoucherSqliteFixture fixture, decimal amount)
+    {
+        await fixture.Client.Ado.BeginTranAsync();
+        try
+        {
+            await SqlSugarStoreVoucherRepository.RedeemInsideTransactionAsync(
+                fixture.Client,
+                "S01",
+                "V001",
+                amount,
+                "C001",
+                CancellationToken.None);
+            await fixture.Client.Ado.CommitTranAsync();
+        }
+        catch
+        {
+            await fixture.Client.Ado.RollbackTranAsync();
+            throw;
+        }
+    }
+
+    private static async Task ClaimAndRedeemVoucherAsync(
+        StoreVoucherSqliteFixture fixture,
+        string reservationToken,
+        decimal amount,
+        string orderReference,
+        DateTimeOffset now)
+    {
+        await fixture.Client.Ado.BeginTranAsync();
+        try
+        {
+            await SqlSugarStoreVoucherReservationService.ClaimInsideTransactionAsync(
+                fixture.Client,
+                reservationToken,
+                "S01",
+                "V001",
+                amount,
+                orderReference,
+                now,
+                CancellationToken.None);
+            await SqlSugarStoreVoucherRepository.RedeemInsideTransactionAsync(
+                fixture.Client,
+                "S01",
+                "V001",
+                amount,
+                "C001",
+                CancellationToken.None);
+            await fixture.Client.Ado.CommitTranAsync();
+        }
+        catch
+        {
+            await fixture.Client.Ado.RollbackTranAsync();
+            throw;
+        }
     }
 
     private sealed class FakeStoreVoucherRepository(StoreVoucher? voucher) : IStoreVoucherRepository
@@ -241,8 +455,134 @@ public sealed class StoreVoucherServiceTests
         }
     }
 
+    private sealed class FakeReservationService : IStoreVoucherReservationService
+    {
+        public Task<StoreVoucherReservation?> GetAsync(string token, CancellationToken cancellationToken)
+        {
+            return Task.FromResult<StoreVoucherReservation?>(null);
+        }
+
+        public Task<StoreVoucherReservation> ReserveAsync(
+            string storeCode,
+            string voucherCode,
+            decimal requestedAmount,
+            decimal currentRemainingAmount,
+            CancellationToken cancellationToken)
+        {
+            throw new NotSupportedException();
+        }
+
+        public Task<StoreVoucherReservation> ClaimAsync(
+            string token,
+            string storeCode,
+            string voucherCode,
+            decimal amount,
+            string? consumedByReference,
+            CancellationToken cancellationToken)
+        {
+            throw new NotSupportedException();
+        }
+
+        public Task ConsumeAsync(string token, CancellationToken cancellationToken)
+        {
+            return Task.CompletedTask;
+        }
+    }
+
     private sealed class FakeTimeProvider(DateTimeOffset now) : TimeProvider
     {
         public override DateTimeOffset GetUtcNow() => now;
+    }
+
+    private sealed class MutableFakeTimeProvider(DateTimeOffset now) : TimeProvider
+    {
+        public DateTimeOffset UtcNow { get; set; } = now;
+
+        public override DateTimeOffset GetUtcNow() => UtcNow;
+    }
+
+    private sealed class StoreVoucherSqliteFixture : IAsyncDisposable
+    {
+        private readonly string databasePath = Path.Combine(
+            Path.GetTempPath(),
+            $"hbpos-store-voucher-tests-{Guid.NewGuid():N}.db");
+        private readonly SqlSugarClient client;
+
+        private StoreVoucherSqliteFixture()
+        {
+            client = new SqlSugarClient(new ConnectionConfig
+            {
+                ConnectionString = $"Data Source={databasePath}",
+                DbType = DbType.Sqlite,
+                InitKeyType = InitKeyType.Attribute,
+                IsAutoCloseConnection = true
+            });
+            client.CodeFirst.InitTables<StoreVoucher, StoreVoucherReservationEntity>();
+            DbContext = CreateDbContext(client);
+        }
+
+        public SqlSugarClient Client => client;
+
+        public HbposSqlSugarContext DbContext { get; }
+
+        public static Task<StoreVoucherSqliteFixture> CreateAsync()
+        {
+            return Task.FromResult(new StoreVoucherSqliteFixture());
+        }
+
+        public Task SeedVoucherAsync(StoreVoucher voucher)
+        {
+            return client.Insertable(voucher).ExecuteCommandAsync();
+        }
+
+        public async Task<StoreVoucher?> GetVoucherAsync(string voucherCode)
+        {
+            return await client.Queryable<StoreVoucher>()
+                .Where(x => x.VoucherCode == voucherCode)
+                .FirstAsync();
+        }
+
+        public async Task<StoreVoucherReservationEntity?> GetReservationEntityAsync(string token)
+        {
+            return await client.Queryable<StoreVoucherReservationEntity>()
+                .Where(x => x.Token == token)
+                .FirstAsync();
+        }
+
+        public ValueTask DisposeAsync()
+        {
+            client.Dispose();
+            if (File.Exists(databasePath))
+            {
+                try
+                {
+                    File.Delete(databasePath);
+                }
+                catch (IOException)
+                {
+                    // SQLite 可能短暂占用测试数据库文件，不影响断言结果。
+                }
+            }
+
+            return ValueTask.CompletedTask;
+        }
+
+        private static HbposSqlSugarContext CreateDbContext(ISqlSugarClient posmDb)
+        {
+            var context = (HbposSqlSugarContext)RuntimeHelpers.GetUninitializedObject(typeof(HbposSqlSugarContext));
+            SetAutoProperty(context, nameof(HbposSqlSugarContext.MainDb), posmDb);
+            SetAutoProperty(context, nameof(HbposSqlSugarContext.PosmDb), posmDb);
+            return context;
+        }
+
+        private static void SetAutoProperty(HbposSqlSugarContext context, string propertyName, ISqlSugarClient value)
+        {
+            var backingField = typeof(HbposSqlSugarContext).GetField(
+                $"<{propertyName}>k__BackingField",
+                BindingFlags.Instance | BindingFlags.NonPublic);
+
+            Assert.NotNull(backingField);
+            backingField!.SetValue(context, value);
+        }
     }
 }

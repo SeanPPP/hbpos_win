@@ -38,6 +38,7 @@ public static class ServiceRegistration
         services.AddSingleton<ISuspendedOrderRepository, SuspendedOrderRepository>();
         services.AddSingleton<ISyncQueueRepository, SyncQueueRepository>();
         services.AddSingleton<ILocalDailyCloseRepository, LocalDailyCloseRepository>();
+        services.AddSingleton<ITestSalesDataResetService, TestSalesDataResetService>();
         services.AddHttpClient<ICatalogApiClient, CatalogApiClient>(client =>
         {
             client.BaseAddress = GetApiBaseAddress();
@@ -172,7 +173,9 @@ public static class ServiceRegistration
         services.AddSingleton<IUserFeedbackService, WindowsMessageBeepUserFeedbackService>();
         services.AddSingleton<IApplicationExitService, WpfApplicationExitService>();
         services.AddSingleton<IConfirmationDialogService, WpfConfirmationDialogService>();
-        services.AddSingleton<ILinklyTerminalDialogService, WpfLinklyTerminalDialogService>();
+        services.AddSingleton<WpfLinklyTerminalDialogService>();
+        services.AddSingleton<ILinklyTerminalDialogService>(sp => sp.GetRequiredService<WpfLinklyTerminalDialogService>());
+        services.AddSingleton<ILinklyTerminalDialogPresenter>(sp => sp.GetRequiredService<WpfLinklyTerminalDialogService>());
         services.AddTransient<IPosTerminalWorkflowService>(sp => new PosTerminalWorkflowService(
             sp.GetRequiredService<LocalSellableItemIndex>(),
             sp.GetRequiredService<PosCartService>(),
@@ -231,7 +234,9 @@ public static class ServiceRegistration
             cashDrawerService: sp.GetRequiredService<ICashDrawerService>(),
             applicationExitService: sp.GetRequiredService<IApplicationExitService>(),
             confirmationDialogService: sp.GetRequiredService<IConfirmationDialogService>(),
-            installmentOrderService: sp.GetRequiredService<IInstallmentOrderService>()));
+            installmentOrderService: sp.GetRequiredService<IInstallmentOrderService>(),
+            testSalesDataResetService: sp.GetRequiredService<ITestSalesDataResetService>(),
+            linklyTerminalDialogPresenter: sp.GetRequiredService<ILinklyTerminalDialogPresenter>()));
         services.AddSingleton<MainWindow>();
 
         return services;

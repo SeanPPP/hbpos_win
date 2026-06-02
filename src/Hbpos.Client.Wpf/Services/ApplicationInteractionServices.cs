@@ -10,6 +10,8 @@ public interface IApplicationExitService
 public interface IConfirmationDialogService
 {
     bool ConfirmExitApplication();
+
+    bool ConfirmResetTestSalesData();
 }
 
 public sealed class WpfApplicationExitService : IApplicationExitService
@@ -41,6 +43,20 @@ public sealed class WpfConfirmationDialogService : IConfirmationDialogService
             owner,
             "确定要退出收银软件吗？",
             "退出软件",
+            MessageBoxButton.YesNo,
+            MessageBoxImage.Warning,
+            MessageBoxResult.No);
+
+        return result == MessageBoxResult.Yes;
+    }
+
+    public bool ConfirmResetTestSalesData()
+    {
+        var owner = Application.Current?.MainWindow;
+        var result = MessageBox.Show(
+            owner,
+            "确定要删除全部测试销售数据吗？此操作无法恢复。",
+            "重置测试销售数据",
             MessageBoxButton.YesNo,
             MessageBoxImage.Warning,
             MessageBoxResult.No);

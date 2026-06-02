@@ -104,6 +104,50 @@ public sealed class ReceiptReturnsWorkflowServiceTests
         Assert.Equal("SKU-001", result.Item.ProductCode);
     }
 
+    [Fact]
+    public void CreateNoReceiptOpenItem_UsesOpenItemWithEnteredNameAndPrice()
+    {
+        var priceIndex = new LocalSellableItemIndex();
+        priceIndex.ReplaceAll([CreateItem("OPEN-SKU", "Open Item", "OPENITEM", 0m)]);
+        var service = CreateService(priceIndex: priceIndex);
+
+        var first = service.CreateNoReceiptOpenItem(CreateOnlineSession(), "Manual Refund", 12.34m);
+        var second = service.CreateNoReceiptOpenItem(CreateOnlineSession(), "Manual Refund", 12.34m);
+
+        Assert.NotNull(first.Line);
+        Assert.NotNull(second.Line);
+        Assert.Equal("OPEN-SKU", first.Line.ProductCode);
+        Assert.Equal("Manual Refund", first.Line.DisplayName);
+        Assert.Equal("OPENITEM", first.Line.LookupCode);
+        Assert.Equal(12.34m, first.Line.UnitPrice);
+        Assert.Null(first.Line.OriginalOrderGuid);
+        Assert.Null(first.Line.OriginalOrderLineGuid);
+        Assert.NotEqual(first.Line.ReturnSourceKey, second.Line.ReturnSourceKey);
+    }
+
+    [Fact]
+    public void CreateNoReceiptOpenItem_ReturnsErrorWhenOpenItemIsMissingOrDuplicated()
+    {
+        var missingService = CreateService(priceIndex: new LocalSellableItemIndex());
+
+        var missing = missingService.CreateNoReceiptOpenItem(CreateOnlineSession(), "Manual Refund", 12.34m);
+
+        Assert.Null(missing.Line);
+        Assert.Equal("OPENITEM was not found in the local catalog.", missing.StatusMessage);
+
+        var duplicateIndex = new LocalSellableItemIndex();
+        duplicateIndex.ReplaceAll([
+            CreateItem("OPEN-SKU-1", "Open Item 1", "OPENITEM", 0m),
+            CreateItem("OPEN-SKU-2", "Open Item 2", "OPENITEM", 0m)
+        ]);
+        var duplicateService = CreateService(priceIndex: duplicateIndex);
+
+        var duplicate = duplicateService.CreateNoReceiptOpenItem(CreateOnlineSession(), "Manual Refund", 12.34m);
+
+        Assert.Null(duplicate.Line);
+        Assert.Equal("Multiple OPENITEM records were found in the local catalog.", duplicate.StatusMessage);
+    }
+
     private static ReceiptReturnsWorkflowService CreateService(
         IRemoteOrderHistoryService? remote = null,
         FakeLocalOrderRepository? localRepository = null,
@@ -158,17 +202,21 @@ public sealed class ReceiptReturnsWorkflowServiceTests
             [new LocalPayment(Guid.NewGuid(), PaymentMethodKind.Cash, 10m, null)]);
     }
 
-    private static SellableItemDto CreateItem()
+    private static SellableItemDto CreateItem(
+        string productCode = "SKU-001",
+        string displayName = "Milk",
+        string lookupCode = "690001",
+        decimal retailPrice = 10m)
     {
         return new SellableItemDto(
             "S001",
-            "SKU-001",
+            productCode,
             "REF-001",
-            "Milk",
-            "690001",
-            "ITEM-001",
-            "690001",
-            10m,
+            displayName,
+            lookupCode,
+            lookupCode,
+            lookupCode,
+            retailPrice,
             PriceSourceKind.StoreRetailPrice,
             PriceSourceKind.StoreRetailPrice.ToString(),
             1m,

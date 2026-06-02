@@ -1,3 +1,4 @@
+using Hbpos.Client.Wpf.Localization;
 using Hbpos.Client.Wpf.Models;
 using Hbpos.Client.Wpf.Services;
 using Hbpos.Client.Wpf.ViewModels;
@@ -20,14 +21,41 @@ public sealed class InstallmentCreateViewModelTests
 
         viewModel.Prepare(CreateSession(), CreateCartSnapshot());
 
-        Assert.Equal("创建分期", viewModel.PageTitleText);
+        Assert.Equal("Create Installment", viewModel.PageTitleText);
         Assert.Single(viewModel.CartLines);
         Assert.Equal(130m, viewModel.GoodsAmount);
         Assert.Equal(10m, viewModel.DiscountAmount);
         Assert.Equal(120m, viewModel.TotalAmount);
         Assert.Equal(20m, viewModel.DownPaymentAmount);
         Assert.Equal(100m, viewModel.FinancedAmount);
-        Assert.Equal("请完善客户、首付和分期信息。", viewModel.StatusMessage);
+        Assert.Equal("Complete the customer, down payment, and installment details.", viewModel.StatusMessage);
+    }
+
+    [Fact]
+    public void PaymentMethodOptions_refresh_when_language_changes()
+    {
+        var localization = new LocalizationService();
+        var viewModel = new InstallmentCreateViewModel(
+            new FakeInstallmentOrderService(),
+            CreateSession(),
+            _ => Task.CompletedTask,
+            () => { },
+            localization);
+
+        Assert.Equal(
+            [PaymentMethodKind.Cash, PaymentMethodKind.Card, PaymentMethodKind.Voucher],
+            viewModel.PaymentMethodOptions.Select(option => option.Method).ToArray());
+        Assert.Equal(["Cash", "Credit/Debit Card", "Voucher"], viewModel.PaymentMethodOptions.Select(option => option.DisplayName).ToArray());
+
+        viewModel.DownPaymentMethod = PaymentMethodKind.Voucher;
+        localization.SetCulture("zh-CN");
+
+        Assert.Equal(
+            [PaymentMethodKind.Cash, PaymentMethodKind.Card, PaymentMethodKind.Voucher],
+            viewModel.PaymentMethodOptions.Select(option => option.Method).ToArray());
+        Assert.Equal(PaymentMethodKind.Voucher, viewModel.DownPaymentMethod);
+        Assert.Equal(["现金", "信用/储蓄卡", "代金券"], viewModel.PaymentMethodOptions.Select(option => option.DisplayName).ToArray());
+        Assert.Equal("创建分期", viewModel.PageTitleText);
     }
 
     [Fact]
@@ -65,7 +93,7 @@ public sealed class InstallmentCreateViewModelTests
         Assert.Equal("VIP001", service.LastCreateRequest.DownPayment.Reference);
         Assert.Equal("LOCK-001", service.LastCreateRequest.DownPayment.ReservationToken);
         Assert.NotNull(createdOrder);
-        Assert.Equal("已创建分期单。", viewModel.StatusMessage);
+        Assert.Equal("Installment order created.", viewModel.StatusMessage);
     }
 
     private static PosSessionState CreateSession()
@@ -133,7 +161,7 @@ public sealed class InstallmentCreateViewModelTests
             LastCreateRequest = request;
             return Task.FromResult(new InstallmentOrderCreateResult(
                 true,
-                "已创建分期单。",
+                "Installment order created.",
                 new InstallmentOrderSummary(
                     Guid.NewGuid(),
                     "IO-001",
@@ -148,7 +176,7 @@ public sealed class InstallmentCreateViewModelTests
                     false,
                     true,
                     true,
-                    "待补款",
+                    "Pending repayment",
                     "POS-01",
                     DateTimeOffset.Now)));
         }

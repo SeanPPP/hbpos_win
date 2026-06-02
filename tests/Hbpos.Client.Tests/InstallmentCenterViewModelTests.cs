@@ -1,3 +1,4 @@
+using Hbpos.Client.Wpf.Localization;
 using Hbpos.Client.Wpf.Models;
 using Hbpos.Client.Wpf.Services;
 using Hbpos.Client.Wpf.ViewModels;
@@ -8,6 +9,34 @@ namespace Hbpos.Client.Tests;
 
 public sealed class InstallmentCenterViewModelTests
 {
+    [Fact]
+    public void PaymentMethodOptions_refresh_when_language_changes()
+    {
+        var localization = new LocalizationService();
+        var viewModel = new InstallmentCenterViewModel(
+            new FakeInstallmentOrderService(),
+            CreateSession(),
+            _ => Task.CompletedTask,
+            () => { },
+            localization);
+
+        Assert.Equal(
+            [PaymentMethodKind.Cash, PaymentMethodKind.Card, PaymentMethodKind.Voucher],
+            viewModel.PaymentMethodOptions.Select(option => option.Method).ToArray());
+        Assert.Equal(["Cash", "Credit/Debit Card", "Voucher"], viewModel.PaymentMethodOptions.Select(option => option.DisplayName).ToArray());
+
+        viewModel.RepaymentMethod = PaymentMethodKind.Card;
+        localization.SetCulture("zh-CN");
+
+        Assert.Equal(
+            [PaymentMethodKind.Cash, PaymentMethodKind.Card, PaymentMethodKind.Voucher],
+            viewModel.PaymentMethodOptions.Select(option => option.Method).ToArray());
+        Assert.Equal(PaymentMethodKind.Card, viewModel.RepaymentMethod);
+        Assert.Equal(["现金", "信用/储蓄卡", "代金券"], viewModel.PaymentMethodOptions.Select(option => option.DisplayName).ToArray());
+        Assert.Equal("分期中心", viewModel.PageTitleText);
+        Assert.Equal("请选择要创建或处理的分期单。", viewModel.StatusMessage);
+    }
+
     [Fact]
     public async Task SearchAsync_filters_orders_by_keyword()
     {

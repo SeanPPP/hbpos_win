@@ -1041,6 +1041,24 @@
   <data name="returns.addToCart" xml:space="preserve">
     <value>加入购物车</value>
   </data>
+  <data name="returns.addOpenItem" xml:space="preserve">
+    <value>无码商品</value>
+  </data>
+  <data name="returns.openItem.title" xml:space="preserve">
+    <value>无码退货商品</value>
+  </data>
+  <data name="returns.openItem.subtitle" xml:space="preserve">
+    <value>复用本地目录 OPENITEM，并录入本次退款零售价。</value>
+  </data>
+  <data name="returns.openItem.name" xml:space="preserve">
+    <value>商品名称</value>
+  </data>
+  <data name="returns.openItem.price" xml:space="preserve">
+    <value>零售价</value>
+  </data>
+  <data name="returns.openItem.defaultName" xml:space="preserve">
+    <value>无码商品</value>
+  </data>
   <data name="payment.cash.status.returnCheckoutNotReady" xml:space="preserve">
     <value>退货结账将在退款支付页实现。请先删除退货行，或后续进入退款支付页处理。</value>
   </data>
@@ -1133,6 +1151,9 @@
   </data>
   <data name="payment.refund.status.remainingBalance" xml:space="preserve">
     <value>退款金额结清后才能完成退款。</value>
+  </data>
+  <data name="payment.refund.status.voucherOfflineUnavailable" xml:space="preserve">
+    <value>离线状态下不可使用退款代金券。请恢复联网后再使用。</value>
   </data>
   <data name="payment.status.duplicateVoucher" xml:space="preserve">
     <value>该代金券已经添加。</value>
@@ -1386,6 +1407,24 @@
   <data name="returns.status.addedReceiptLine" xml:space="preserve">
     <value>已将 {0} 加入退款购物车。</value>
   </data>
+  <data name="returns.status.openItemPrompt" xml:space="preserve">
+    <value>请输入无码商品名称和退款零售价。</value>
+  </data>
+  <data name="returns.status.openItemNameRequired" xml:space="preserve">
+    <value>请输入商品名称。</value>
+  </data>
+  <data name="returns.status.openItemPriceRequired" xml:space="preserve">
+    <value>请输入大于 0 的零售价。</value>
+  </data>
+  <data name="returns.status.openItemMissing" xml:space="preserve">
+    <value>本地目录中未找到 OPENITEM 无码商品。</value>
+  </data>
+  <data name="returns.status.openItemDuplicate" xml:space="preserve">
+    <value>本地目录中存在多个 OPENITEM 无码商品。</value>
+  </data>
+  <data name="returns.status.addedNoReceiptOpenItem" xml:space="preserve">
+    <value>已添加无码退货商品：{0}</value>
+  </data>
   <data name="returns.orderSummary.none" xml:space="preserve">
     <value>尚未加载订单</value>
   </data>
@@ -1635,6 +1674,57 @@
   <data name="linkly.cloud.declined" xml:space="preserve">
     <value>ANZ Linkly Cloud 交易未通过。</value>
   </data>
+  <data name="linkly.cloud.directPendingMessage" xml:space="preserve">
+    <value>正在等待刷卡机返回结果，请在刷卡机上完成操作。</value>
+  </data>
+  <data name="linkly.cloud.directStatusHelp" xml:space="preserve">
+    <value>可在刷卡机上取消，也可由 POS 发送取消请求；最终结果以 Linkly 返回为准。</value>
+  </data>
+  <data name="linkly.cloud.directCancelRequested" xml:space="preserve">
+    <value>已向刷卡机发送取消请求，正在等待最终结果。</value>
+  </data>
+  <data name="linkly.cloud.directCancelFailed" xml:space="preserve">
+    <value>取消请求发送失败，请重试或在刷卡机上操作。</value>
+  </data>
+  <data name="linkly.backend.configValid" xml:space="preserve">
+    <value>ANZ Linkly Cloud 后端配置有效。</value>
+  </data>
+  <data name="linkly.backend.configTestHttpFailed" xml:space="preserve">
+    <value>ANZ Linkly Cloud 后端配置测试失败，HTTP {0}。</value>
+  </data>
+  <data name="linkly.backend.configIncomplete" xml:space="preserve">
+    <value>ANZ Linkly Cloud 后端配置不完整。</value>
+  </data>
+  <data name="linkly.backend.refundMissingReference" xml:space="preserve">
+    <value>Linkly Cloud 退款需要原始 RFN 参考号。</value>
+  </data>
+  <data name="linkly.backend.amountMustBePositive" xml:space="preserve">
+    <value>刷卡金额必须大于零。</value>
+  </data>
+  <data name="linkly.backend.timeout" xml:space="preserve">
+    <value>ANZ Linkly Cloud 交易超时。</value>
+  </data>
+  <data name="linkly.backend.communicationFailed" xml:space="preserve">
+    <value>ANZ Linkly Cloud 后端通讯失败。</value>
+  </data>
+  <data name="linkly.backend.invalidResponse" xml:space="preserve">
+    <value>ANZ Linkly Cloud 后端返回了无效响应。</value>
+  </data>
+  <data name="linkly.backend.activeSessionResume" xml:space="preserve">
+    <value>当前终端有未完成刷卡交易，正在继续轮询/恢复该 session。</value>
+  </data>
+  <data name="linkly.backend.activeSessionUnavailable" xml:space="preserve">
+    <value>当前终端有未完成刷卡交易，但没有取得可恢复的 active session，请稍后重试。</value>
+  </data>
+  <data name="linkly.backend.sendKeyFailed" xml:space="preserve">
+    <value>刷卡机操作发送失败，请重试或恢复交易。</value>
+  </data>
+  <data name="linkly.backend.notSubmitted" xml:space="preserve">
+    <value>Linkly Cloud 交易未成功提交，请重试支付。</value>
+  </data>
+  <data name="linkly.backend.declined" xml:space="preserve">
+    <value>ANZ Linkly Cloud 交易未通过。</value>
+  </data>
   <data name="linkly.backend.dialog.title" xml:space="preserve">
     <value>ANZ Linkly 刷卡机</value>
   </data>
@@ -1652,18 +1742,6 @@
   </data>
   <data name="linkly.backend.dialog.cancel" xml:space="preserve">
     <value>取消</value>
-  </data>
-  <data name="linkly.cloud.directPendingMessage" xml:space="preserve">
-    <value>正在等待刷卡机返回结果，请在刷卡机上完成操作。</value>
-  </data>
-  <data name="linkly.cloud.directStatusHelp" xml:space="preserve">
-    <value>可在刷卡机上取消，也可由 POS 发送取消请求；最终结果以 Linkly 返回为准。</value>
-  </data>
-  <data name="linkly.cloud.directCancelRequested" xml:space="preserve">
-    <value>已向刷卡机发送取消请求，正在等待最终结果。</value>
-  </data>
-  <data name="linkly.cloud.directCancelFailed" xml:space="preserve">
-    <value>取消请求发送失败，请重试或在刷卡机上操作。</value>
   </data>
   <data name="linkly.backend.dialog.close" xml:space="preserve">
     <value>关闭</value>
@@ -1688,5 +1766,179 @@
   </data>
   <data name="linkly.backend.dialog.button.cancel" xml:space="preserve">
     <value>取消</value>
+  </data>
+  <data name="installment.common.input.reference" xml:space="preserve">
+    <value>流水号 / 券码</value>
+  </data>
+  <data name="installment.common.input.voucherToken" xml:space="preserve">
+    <value>代金券锁定令牌</value>
+  </data>
+  <data name="installment.center.title" xml:space="preserve">
+    <value>分期中心</value>
+  </data>
+  <data name="installment.center.currentOrder.none" xml:space="preserve">
+    <value>当前没有可用于新建分期的订单。</value>
+  </data>
+  <data name="installment.center.currentOrder.amount" xml:space="preserve">
+    <value>当前订单金额 {0:C2}，可发起新的分期单。</value>
+  </data>
+  <data name="installment.center.action.backToPayment" xml:space="preserve">
+    <value>返回付款</value>
+  </data>
+  <data name="installment.center.action.search" xml:space="preserve">
+    <value>搜索</value>
+  </data>
+  <data name="installment.center.action.create" xml:space="preserve">
+    <value>创建分期</value>
+  </data>
+  <data name="installment.center.action.repay" xml:space="preserve">
+    <value>补款</value>
+  </data>
+  <data name="installment.center.action.cancel" xml:space="preserve">
+    <value>取消退款</value>
+  </data>
+  <data name="installment.center.action.void" xml:space="preserve">
+    <value>作废</value>
+  </data>
+  <data name="installment.center.action.confirmPickup" xml:space="preserve">
+    <value>确认提货</value>
+  </data>
+  <data name="installment.center.search" xml:space="preserve">
+    <value>搜索单号、姓名或电话</value>
+  </data>
+  <data name="installment.center.offline" xml:space="preserve">
+    <value>离线状态仅支持查看本机缓存的分期单。</value>
+  </data>
+  <data name="installment.center.column.orderNumber" xml:space="preserve">
+    <value>分期单号</value>
+  </data>
+  <data name="installment.center.column.customer" xml:space="preserve">
+    <value>客户</value>
+  </data>
+  <data name="installment.center.column.phone" xml:space="preserve">
+    <value>电话</value>
+  </data>
+  <data name="installment.center.column.total" xml:space="preserve">
+    <value>总额</value>
+  </data>
+  <data name="installment.center.column.paid" xml:space="preserve">
+    <value>已付</value>
+  </data>
+  <data name="installment.center.column.outstanding" xml:space="preserve">
+    <value>欠款</value>
+  </data>
+  <data name="installment.center.column.status" xml:space="preserve">
+    <value>状态</value>
+  </data>
+  <data name="installment.center.column.terminal" xml:space="preserve">
+    <value>终端</value>
+  </data>
+  <data name="installment.center.column.updated" xml:space="preserve">
+    <value>更新</value>
+  </data>
+  <data name="installment.center.selected.none" xml:space="preserve">
+    <value>未选择分期单</value>
+  </data>
+  <data name="installment.center.selected.customer.empty" xml:space="preserve">
+    <value>请选择左侧分期单</value>
+  </data>
+  <data name="installment.center.selected.outstanding.empty" xml:space="preserve">
+    <value>欠款 -</value>
+  </data>
+  <data name="installment.center.selected.outstanding" xml:space="preserve">
+    <value>欠款 {0:C2}</value>
+  </data>
+  <data name="installment.center.input.repaymentAmount" xml:space="preserve">
+    <value>补款金额</value>
+  </data>
+  <data name="installment.center.input.voidReason" xml:space="preserve">
+    <value>作废原因</value>
+  </data>
+  <data name="installment.center.status.ready" xml:space="preserve">
+    <value>请选择要创建或处理的分期单。</value>
+  </data>
+  <data name="installment.center.status.loaded" xml:space="preserve">
+    <value>已加载 {0} 条分期单。</value>
+  </data>
+  <data name="installment.center.status.searched" xml:space="preserve">
+    <value>已找到 {0} 条分期单。</value>
+  </data>
+  <data name="installment.center.status.empty" xml:space="preserve">
+    <value>当前没有分期单。</value>
+  </data>
+  <data name="installment.center.status.refreshFailed" xml:space="preserve">
+    <value>{0}（刷新失败：{1}）</value>
+  </data>
+  <data name="installment.center.status.cardTerminalRequired" xml:space="preserve">
+    <value>银行卡补款需要先配置刷卡终端。</value>
+  </data>
+  <data name="installment.center.status.cardNotAuthorized" xml:space="preserve">
+    <value>银行卡补款未授权。</value>
+  </data>
+  <data name="installment.create.title" xml:space="preserve">
+    <value>创建分期</value>
+  </data>
+  <data name="installment.create.action.back" xml:space="preserve">
+    <value>返回分期中心</value>
+  </data>
+  <data name="installment.create.action.submit" xml:space="preserve">
+    <value>创建分期单</value>
+  </data>
+  <data name="installment.create.offline" xml:space="preserve">
+    <value>离线状态不能创建分期单。</value>
+  </data>
+  <data name="installment.create.section.customer" xml:space="preserve">
+    <value>客户信息</value>
+  </data>
+  <data name="installment.create.section.cart" xml:space="preserve">
+    <value>购物车明细</value>
+  </data>
+  <data name="installment.create.section.payment" xml:space="preserve">
+    <value>首付支付</value>
+  </data>
+  <data name="installment.create.input.customerName" xml:space="preserve">
+    <value>客户姓名</value>
+  </data>
+  <data name="installment.create.input.customerPhone" xml:space="preserve">
+    <value>客户电话</value>
+  </data>
+  <data name="installment.create.input.downPaymentAmount" xml:space="preserve">
+    <value>首付金额</value>
+  </data>
+  <data name="installment.create.input.note" xml:space="preserve">
+    <value>备注</value>
+  </data>
+  <data name="installment.create.order.total" xml:space="preserve">
+    <value>订单总额</value>
+  </data>
+  <data name="installment.create.order.financed" xml:space="preserve">
+    <value>待补 {0:C2}</value>
+  </data>
+  <data name="installment.create.status.ready" xml:space="preserve">
+    <value>请完善客户、首付和分期信息。</value>
+  </data>
+  <data name="installment.create.status.missingCart" xml:space="preserve">
+    <value>当前没有可用于创建分期的订单。</value>
+  </data>
+  <data name="installment.create.payment.status.offline" xml:space="preserve">
+    <value>当前为离线状态，暂不能提交首付。</value>
+  </data>
+  <data name="installment.create.payment.status.cash" xml:space="preserve">
+    <value>现金首付无需额外凭证。</value>
+  </data>
+  <data name="installment.create.payment.status.card.empty" xml:space="preserve">
+    <value>银行卡首付可填写交易流水号，便于对账。</value>
+  </data>
+  <data name="installment.create.payment.status.card.ready" xml:space="preserve">
+    <value>银行卡首付流水号已填写。</value>
+  </data>
+  <data name="installment.create.payment.status.voucher.missingCode" xml:space="preserve">
+    <value>请输入代金券券码。</value>
+  </data>
+  <data name="installment.create.payment.status.voucher.missingToken" xml:space="preserve">
+    <value>请输入代金券锁定令牌。</value>
+  </data>
+  <data name="installment.create.payment.status.voucher.ready" xml:space="preserve">
+    <value>代金券券码和锁定令牌已准备完成。</value>
   </data>
 </root>

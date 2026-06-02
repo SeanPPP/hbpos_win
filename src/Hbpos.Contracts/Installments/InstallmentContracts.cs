@@ -1,3 +1,4 @@
+using System.Text.Json.Serialization;
 using Hbpos.Contracts.Orders;
 
 namespace Hbpos.Contracts.Installments;
@@ -211,7 +212,8 @@ public sealed record InstallmentPaymentDto(
     string CashierId,
     string DeviceCode,
     IReadOnlyList<CardTransactionDto>? CardTransactions = null,
-    string? IdempotencyKey = null);
+    string? IdempotencyKey = null,
+    [property: JsonIgnore] string? ReservationToken = null);
 
 public sealed record InstallmentPickupInfoDto(
     DateTimeOffset PickedUpAt,

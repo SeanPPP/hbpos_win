@@ -16,6 +16,9 @@ public sealed partial class InstallmentCreateViewModel : ObservableObject
     private readonly Func<InstallmentOrderSummary, Task> _onCreatedAsync;
     private readonly Action _backToCenter;
     private readonly ILocalizationService? _localization;
+    private string? _statusResourceKey;
+    private string _statusFallback = string.Empty;
+    private object[] _statusResourceArgs = [];
 
     [ObservableProperty]
     private PosSessionState _session;
@@ -69,13 +72,8 @@ public sealed partial class InstallmentCreateViewModel : ObservableObject
 
         SubmitCommand = new AsyncRelayCommand(SubmitAsync, CanSubmit);
         BackToCenterCommand = new RelayCommand(BackToCenter);
-        PaymentMethodOptions =
-        [
-            new InstallmentPaymentMethodOption(PaymentMethodKind.Cash, "现金"),
-            new InstallmentPaymentMethodOption(PaymentMethodKind.Card, "银行卡"),
-            new InstallmentPaymentMethodOption(PaymentMethodKind.Voucher, "代金券")
-        ];
-        StatusMessage = T("installment.create.status.ready", "请完善客户、首付和分期信息。");
+        RefreshPaymentMethodOptions();
+        SetStatusResource("installment.create.status.ready", "Complete the customer, down payment, and installment details.");
     }
 
     public ObservableCollection<PosCartLineServiceSnapshot> CartLines { get; } = [];
@@ -84,21 +82,25 @@ public sealed partial class InstallmentCreateViewModel : ObservableObject
 
     public IRelayCommand BackToCenterCommand { get; }
 
-    public IReadOnlyList<InstallmentPaymentMethodOption> PaymentMethodOptions { get; }
+    public ObservableCollection<InstallmentPaymentMethodOption> PaymentMethodOptions { get; } = [];
 
-    public string PageTitleText => T("installment.create.title", "创建分期");
+    public string PageTitleText => T("installment.create.title", "Create Installment");
 
-    public string BackToCenterText => T("installment.create.action.back", "返回分期中心");
+    public string BackToCenterText => T("installment.create.action.back", "Back to Installment Center");
 
-    public string SubmitText => T("installment.create.action.submit", "创建分期单");
+    public string SubmitText => T("installment.create.action.submit", "Create Installment Order");
 
-    public string OfflineNoticeText => T("installment.create.offline", "离线时不能创建分期单。");
+    public string OfflineNoticeText => T("installment.create.offline", "Installment orders cannot be created while offline.");
 
-    public string CustomerSectionText => T("installment.create.section.customer", "客户信息");
+    public string CustomerSectionText => T("installment.create.section.customer", "Customer Information");
 
-    public string CartSectionText => T("installment.create.section.cart", "购物车明细");
+    public string CartSectionText => T("installment.create.section.cart", "Cart Details");
 
-    public string PaymentSectionText => T("installment.create.section.payment", "首付支付");
+    public string PaymentSectionText => T("installment.create.section.payment", "Down Payment");
+
+    public string OrderTotalLabelText => T("installment.create.order.total", "Order Total");
+
+    public string FinancedAmountText => string.Format(GetCulture(), T("installment.create.order.financed", "Financed {0:C2}"), FinancedAmount);
 
     public string DownPaymentMethodText => PaymentMethodOptions
         .FirstOrDefault(option => option.Method == DownPaymentMethod)?.DisplayName ?? DownPaymentMethod.ToString();
@@ -202,9 +204,15 @@ public sealed partial class InstallmentCreateViewModel : ObservableObject
         CustomerName = string.Empty;
         CustomerPhone = string.Empty;
         Note = string.Empty;
-        StatusMessage = cartSnapshot is null
-            ? T("installment.create.status.missingCart", "当前没有可用于创建分期的订单。")
-            : T("installment.create.status.ready", "请完善客户、首付和分期信息。");
+        if (cartSnapshot is null)
+        {
+            SetStatusResource("installment.create.status.missingCart", "There is no current order available for installment creation.");
+        }
+        else
+        {
+            SetStatusResource("installment.create.status.ready", "Complete the customer, down payment, and installment details.");
+        }
+
         RaiseAmountStateChanged();
         RaiseActionStateChanged();
     }
@@ -213,14 +221,14 @@ public sealed partial class InstallmentCreateViewModel : ObservableObject
     {
         if (CartSnapshot is null)
         {
-            StatusMessage = T("installment.create.status.missingCart", "当前没有可用于创建分期的订单。");
+            SetStatusResource("installment.create.status.missingCart", "There is no current order available for installment creation.");
             return;
         }
 
         IsSubmitting = true;
         try
         {
-            // ViewModel 只负责收集 UI 输入，请求对象由客户端服务统一落地。
+            // ViewModel 只收集 UI 输入，请求对象由客户端服务统一落地并提交。
             var request = new InstallmentOrderCreateRequest(
                 Session,
                 CartSnapshot,
@@ -235,7 +243,7 @@ public sealed partial class InstallmentCreateViewModel : ObservableObject
                     NormalizeOptional(VoucherReservationToken)),
                 Note.Trim());
             var result = await _installmentOrderService.CreateOrderAsync(request);
-            StatusMessage = result.Message;
+            SetLiteralStatus(result.Message);
             if (result.Succeeded && result.Order is not null)
             {
                 await _onCreatedAsync(result.Order);
@@ -243,7 +251,7 @@ public sealed partial class InstallmentCreateViewModel : ObservableObject
         }
         catch (Exception ex)
         {
-            StatusMessage = ex.Message;
+            SetLiteralStatus(ex.Message);
         }
         finally
         {
@@ -288,6 +296,7 @@ public sealed partial class InstallmentCreateViewModel : ObservableObject
         OnPropertyChanged(nameof(DiscountAmount));
         OnPropertyChanged(nameof(TotalAmount));
         OnPropertyChanged(nameof(FinancedAmount));
+        OnPropertyChanged(nameof(FinancedAmountText));
         OnPropertyChanged(nameof(DownPaymentMethodText));
         OnPropertyChanged(nameof(DownPaymentStatusText));
     }
@@ -304,6 +313,12 @@ public sealed partial class InstallmentCreateViewModel : ObservableObject
 
     private void RaiseLocalizedProperties()
     {
+        RefreshPaymentMethodOptions();
+        if (_statusResourceKey is not null)
+        {
+            StatusMessage = FormatResource(_statusResourceKey, _statusFallback, _statusResourceArgs);
+        }
+
         OnPropertyChanged(nameof(PageTitleText));
         OnPropertyChanged(nameof(BackToCenterText));
         OnPropertyChanged(nameof(SubmitText));
@@ -311,6 +326,8 @@ public sealed partial class InstallmentCreateViewModel : ObservableObject
         OnPropertyChanged(nameof(CustomerSectionText));
         OnPropertyChanged(nameof(CartSectionText));
         OnPropertyChanged(nameof(PaymentSectionText));
+        OnPropertyChanged(nameof(OrderTotalLabelText));
+        OnPropertyChanged(nameof(FinancedAmountText));
         OnPropertyChanged(nameof(DownPaymentMethodText));
         OnPropertyChanged(nameof(DownPaymentStatusText));
     }
@@ -319,23 +336,54 @@ public sealed partial class InstallmentCreateViewModel : ObservableObject
     {
         if (IsOffline)
         {
-            return T("installment.create.payment.status.offline", "当前为离线状态，暂不能提交首付。");
+            return T("installment.create.payment.status.offline", "Offline mode cannot submit a down payment.");
         }
 
         return DownPaymentMethod switch
         {
-            PaymentMethodKind.Cash => T("installment.create.payment.status.cash", "现金首付无需额外凭证。"),
+            PaymentMethodKind.Cash => T("installment.create.payment.status.cash", "Cash down payment does not require an additional reference."),
             PaymentMethodKind.Card => string.IsNullOrWhiteSpace(DownPaymentReference)
-                ? T("installment.create.payment.status.card.empty", "银行卡首付可填写交易流水号，便于对账。")
-                : T("installment.create.payment.status.card.ready", "银行卡首付流水号已填写。"),
+                ? T("installment.create.payment.status.card.empty", "Card down payment may include a transaction reference for reconciliation.")
+                : T("installment.create.payment.status.card.ready", "Card down payment reference is ready."),
             PaymentMethodKind.Voucher when string.IsNullOrWhiteSpace(DownPaymentReference) =>
-                T("installment.create.payment.status.voucher.missingCode", "请输入代金券券码。"),
+                T("installment.create.payment.status.voucher.missingCode", "Enter a voucher code."),
             PaymentMethodKind.Voucher when string.IsNullOrWhiteSpace(VoucherReservationToken) =>
-                T("installment.create.payment.status.voucher.missingToken", "请输入代金券锁定令牌。"),
+                T("installment.create.payment.status.voucher.missingToken", "Enter the voucher reservation token."),
             PaymentMethodKind.Voucher =>
-                T("installment.create.payment.status.voucher.ready", "代金券券码和锁定令牌已准备完成。"),
+                T("installment.create.payment.status.voucher.ready", "Voucher code and reservation token are ready."),
             _ => string.Empty
         };
+    }
+
+    private void RefreshPaymentMethodOptions()
+    {
+        PaymentMethodOptions.Clear();
+        PaymentMethodOptions.Add(new InstallmentPaymentMethodOption(PaymentMethodKind.Cash, T("payment.method.cash", "Cash")));
+        PaymentMethodOptions.Add(new InstallmentPaymentMethodOption(PaymentMethodKind.Card, T("payment.method.card", "Credit/Debit Card")));
+        PaymentMethodOptions.Add(new InstallmentPaymentMethodOption(PaymentMethodKind.Voucher, T("payment.method.voucher", "Voucher")));
+        OnPropertyChanged(nameof(PaymentMethodOptions));
+    }
+
+    private void SetStatusResource(string key, string fallback, params object[] args)
+    {
+        _statusResourceKey = key;
+        _statusFallback = fallback;
+        _statusResourceArgs = args;
+        StatusMessage = FormatResource(key, fallback, args);
+    }
+
+    private void SetLiteralStatus(string value)
+    {
+        _statusResourceKey = null;
+        _statusFallback = string.Empty;
+        _statusResourceArgs = [];
+        StatusMessage = value;
+    }
+
+    private string FormatResource(string key, string fallback, object[] args)
+    {
+        var format = T(key, fallback);
+        return args.Length == 0 ? format : string.Format(GetCulture(), format, args);
     }
 
     private static decimal CalculateDefaultDownPayment(decimal orderAmount)
@@ -356,8 +404,17 @@ public sealed partial class InstallmentCreateViewModel : ObservableObject
     private string T(string key, string fallback)
     {
         var value = _localization?.T(key);
-        return string.IsNullOrWhiteSpace(value) || value == key ? fallback : value;
+        return IsMissingLocalizedValue(key, value) ? fallback : value!;
     }
+
+    private static bool IsMissingLocalizedValue(string key, string? value)
+    {
+        return string.IsNullOrWhiteSpace(value) ||
+            value == key ||
+            (value.StartsWith("[[", StringComparison.Ordinal) && value.EndsWith("]]", StringComparison.Ordinal));
+    }
+
+    private IFormatProvider GetCulture() => _localization?.CurrentCulture ?? System.Globalization.CultureInfo.CurrentCulture;
 }
 
 public sealed record InstallmentPaymentMethodOption(PaymentMethodKind Method, string DisplayName);

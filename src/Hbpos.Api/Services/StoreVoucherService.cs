@@ -1,4 +1,3 @@
-using System.Collections.Concurrent;
 using System.Data;
 using System.Reflection;
 using System.Text;
@@ -296,6 +295,12 @@ public sealed class SqlSugarStoreVoucherRepository(HbposSqlSugarContext dbContex
         string? updatedBy,
         CancellationToken cancellationToken)
     {
+        if (amount <= 0m)
+        {
+            throw new InvalidOperationException("Voucher redemption amount must be greater than zero.");
+        }
+
+        var now = DateTime.UtcNow;
         var voucher = await db.Queryable<StoreVoucher>()
             .Where(x => x.VoucherCode == voucherCode)
             .Where(x => x.StoreCode == null || x.StoreCode == string.Empty || x.StoreCode == storeCode)
@@ -310,21 +315,45 @@ public sealed class SqlSugarStoreVoucherRepository(HbposSqlSugarContext dbContex
             throw new InvalidOperationException($"Voucher {voucherCode} balance is not enough.");
         }
 
-        var newRemaining = decimal.Round(remaining - amount, 2, MidpointRounding.AwayFromZero);
-        voucher.RemainingAmount = newRemaining <= 0m ? 0m : newRemaining;
-        voucher.Status = voucher.RemainingAmount <= 0m ? "0" : "1";
-        voucher.UpdateTime = DateTime.UtcNow;
-        voucher.UpdateUser = updatedBy;
-
-        await db.Updateable(voucher)
-            .UpdateColumns(x => new
+        // 余额扣减必须由数据库条件更新完成，避免并发请求先读后写覆盖彼此结果。
+        var affectedRows = await db.Ado.ExecuteCommandAsync(
+            """
+            UPDATE [StoreVoucher]
+            SET
+                [RemainingAmount] = ROUND([RemainingAmount] - @Amount, 2),
+                [Status] = CASE WHEN ROUND([RemainingAmount] - @Amount, 2) <= 0 THEN '0' ELSE '1' END,
+                [UpdateTime] = @UpdateTime,
+                [UpdateUser] = @UpdateUser
+            WHERE [ID] = @ID
+                AND [Status] = '1'
+                AND ([IsDelete] IS NULL OR [IsDelete] = 0)
+                AND ([ExpiredDate] IS NULL OR [ExpiredDate] > @UpdateTime)
+                AND [RemainingAmount] IS NOT NULL
+                AND [RemainingAmount] >= @Amount
+            """,
+            new List<SugarParameter>
             {
-                x.RemainingAmount,
-                x.Status,
-                x.UpdateTime,
-                x.UpdateUser
-            })
-            .ExecuteCommandAsync(cancellationToken);
+                new SugarParameter("@Amount", amount),
+                new SugarParameter("@UpdateTime", now),
+                new SugarParameter("@UpdateUser", updatedBy),
+                new SugarParameter("@ID", voucher.ID)
+            });
+        if (affectedRows > 0)
+        {
+            return;
+        }
+
+        var latest = await db.Queryable<StoreVoucher>()
+            .Where(x => x.ID == voucher.ID)
+            .FirstAsync(cancellationToken)
+            ?? throw new InvalidOperationException($"Voucher {voucherCode} was not found.");
+        ValidateVoucherForRedemption(latest, storeCode);
+        if ((latest.RemainingAmount ?? 0m) < amount)
+        {
+            throw new InvalidOperationException($"Voucher {voucherCode} balance is not enough.");
+        }
+
+        throw new InvalidOperationException($"Voucher {voucherCode} is unavailable.");
     }
 
     private static void ValidateVoucherForRedemption(StoreVoucher voucher, string storeCode)
@@ -513,6 +542,14 @@ public interface IStoreVoucherReservationService
 {
     Task<StoreVoucherReservation?> GetAsync(string token, CancellationToken cancellationToken);
 
+    Task<StoreVoucherReservation> ClaimAsync(
+        string token,
+        string storeCode,
+        string voucherCode,
+        decimal amount,
+        string? consumedByReference,
+        CancellationToken cancellationToken);
+
     Task<StoreVoucherReservation> ReserveAsync(
         string storeCode,
         string voucherCode,
@@ -530,20 +567,54 @@ public sealed record StoreVoucherReservation(
     decimal LockedAmount,
     DateTimeOffset ExpiresAt);
 
-public sealed class InMemoryStoreVoucherReservationService(TimeProvider timeProvider) : IStoreVoucherReservationService
+public sealed class SqlSugarStoreVoucherReservationService(
+    HbposSqlSugarContext dbContext,
+    TimeProvider? timeProvider = null) : IStoreVoucherReservationService
 {
     private static readonly TimeSpan ReservationLifetime = TimeSpan.FromMinutes(5);
-    private readonly ConcurrentDictionary<string, StoreVoucherReservation> reservations = new(StringComparer.OrdinalIgnoreCase);
+    private const string PendingStatus = "pending";
+    private const string ClaimedStatus = "claimed";
+    private const string ConsumedStatus = "consumed";
+    private readonly TimeProvider _timeProvider = timeProvider ?? TimeProvider.System;
 
-    public Task<StoreVoucherReservation?> GetAsync(string token, CancellationToken cancellationToken)
+    public async Task<StoreVoucherReservation?> GetAsync(string token, CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
-        PruneExpiredReservations();
+        var normalizedToken = NormalizeRequired(token, nameof(token));
+        await EnsureTableAsync(cancellationToken);
 
-        return Task.FromResult(reservations.TryGetValue(token, out var reservation) ? reservation : null);
+        var now = _timeProvider.GetUtcNow().UtcDateTime;
+        var entity = await dbContext.PosmDb.Queryable<StoreVoucherReservationEntity>()
+            .Where(x => x.Token == normalizedToken)
+            .Where(x => x.Status == PendingStatus)
+            .Where(x => x.ExpiresAtUtc > now)
+            .FirstAsync(cancellationToken);
+
+        return entity is null ? null : Map(entity);
     }
 
-    public Task<StoreVoucherReservation> ReserveAsync(
+    public async Task<StoreVoucherReservation> ClaimAsync(
+        string token,
+        string storeCode,
+        string voucherCode,
+        decimal amount,
+        string? consumedByReference,
+        CancellationToken cancellationToken)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        await EnsureTableAsync(cancellationToken);
+        return await ClaimInsideTransactionAsync(
+            dbContext.PosmDb,
+            token,
+            storeCode,
+            voucherCode,
+            amount,
+            consumedByReference,
+            _timeProvider.GetUtcNow(),
+            cancellationToken);
+    }
+
+    public async Task<StoreVoucherReservation> ReserveAsync(
         string storeCode,
         string voucherCode,
         decimal requestedAmount,
@@ -551,45 +622,182 @@ public sealed class InMemoryStoreVoucherReservationService(TimeProvider timeProv
         CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
-        PruneExpiredReservations();
-
-        var reservedAmount = reservations.Values
-            .Where(x =>
-                string.Equals(x.StoreCode, storeCode, StringComparison.OrdinalIgnoreCase)
-                && string.Equals(x.VoucherCode, voucherCode, StringComparison.OrdinalIgnoreCase))
-            .Sum(x => x.LockedAmount);
-        var lockableAmount = Math.Min(requestedAmount, Math.Max(0m, currentRemainingAmount - reservedAmount));
-        if (lockableAmount <= 0)
+        _ = currentRemainingAmount;
+        var normalizedStoreCode = NormalizeRequired(storeCode, nameof(storeCode));
+        var normalizedVoucherCode = NormalizeRequired(voucherCode, nameof(voucherCode));
+        if (requestedAmount <= 0m)
         {
-            throw new InvalidOperationException("Voucher has no remaining amount available to lock.");
+            throw new InvalidOperationException("Requested amount must be greater than zero.");
         }
 
-        var reservation = new StoreVoucherReservation(
-            Guid.NewGuid().ToString("N"),
-            storeCode,
-            voucherCode,
-            lockableAmount,
-            timeProvider.GetUtcNow().Add(ReservationLifetime));
-        reservations[reservation.Token] = reservation;
-        return Task.FromResult(reservation);
+        await EnsureTableAsync(cancellationToken);
+        var db = dbContext.PosmDb;
+        await db.Ado.BeginTranAsync(IsolationLevel.Serializable);
+        try
+        {
+            var now = _timeProvider.GetUtcNow();
+            var nowUtc = now.UtcDateTime;
+            var voucher = await db.Queryable<StoreVoucher>()
+                .Where(x => x.VoucherCode == normalizedVoucherCode)
+                .Where(x => x.Status == "1")
+                .Where(x => x.IsDelete == null || x.IsDelete == false)
+                .Where(x => x.RemainingAmount != null && x.RemainingAmount > 0)
+                .Where(x => x.ExpiredDate == null || x.ExpiredDate > nowUtc)
+                .Where(x => x.StoreCode == null || x.StoreCode == string.Empty || x.StoreCode == normalizedStoreCode)
+                .OrderBy(x => x.StoreCode == normalizedStoreCode, OrderByType.Desc)
+                .FirstAsync(cancellationToken)
+                ?? throw new InvalidOperationException("Voucher is unavailable.");
+            var reservedAmount = await db.Queryable<StoreVoucherReservationEntity>()
+                .Where(x => x.StoreCode == normalizedStoreCode)
+                .Where(x => x.VoucherCode == normalizedVoucherCode)
+                .Where(x => x.Status == PendingStatus)
+                .Where(x => x.ExpiresAtUtc > nowUtc)
+                .SumAsync(x => x.LockedAmount);
+            var lockableAmount = Math.Min(
+                requestedAmount,
+                Math.Max(0m, (voucher.RemainingAmount ?? 0m) - reservedAmount));
+            if (lockableAmount <= 0m)
+            {
+                throw new InvalidOperationException("Voucher has no remaining amount available to lock.");
+            }
+
+            var entity = new StoreVoucherReservationEntity
+            {
+                Token = Guid.NewGuid().ToString("N"),
+                StoreCode = normalizedStoreCode,
+                VoucherCode = normalizedVoucherCode,
+                LockedAmount = decimal.Round(lockableAmount, 2, MidpointRounding.AwayFromZero),
+                Status = PendingStatus,
+                ExpiresAtUtc = now.Add(ReservationLifetime).UtcDateTime,
+                CreatedAtUtc = nowUtc
+            };
+            await db.Insertable(entity).ExecuteCommandAsync(cancellationToken);
+            await db.Ado.CommitTranAsync();
+            return Map(entity);
+        }
+        catch
+        {
+            await db.Ado.RollbackTranAsync();
+            throw;
+        }
     }
 
-    public Task ConsumeAsync(string token, CancellationToken cancellationToken)
+    internal static async Task<StoreVoucherReservation> ClaimInsideTransactionAsync(
+        ISqlSugarClient db,
+        string token,
+        string storeCode,
+        string voucherCode,
+        decimal amount,
+        string? consumedByReference,
+        DateTimeOffset now,
+        CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
-        reservations.TryRemove(token, out _);
-        return Task.CompletedTask;
+        var normalizedToken = NormalizeRequired(token, nameof(token));
+        var normalizedStoreCode = NormalizeRequired(storeCode, nameof(storeCode));
+        var normalizedVoucherCode = NormalizeRequired(voucherCode, nameof(voucherCode));
+        if (amount <= 0m)
+        {
+            throw new InvalidOperationException("Voucher reservation claim amount must be greater than zero.");
+        }
+
+        var nowUtc = now.UtcDateTime;
+        var normalizedReference = string.IsNullOrWhiteSpace(consumedByReference)
+            ? null
+            : consumedByReference.Trim();
+
+        // claim 是 token 的一次性闸门：只有 pending 且未过期的匹配记录能被原子更新。
+        var affectedRows = await db.Updateable<StoreVoucherReservationEntity>()
+            .SetColumns(x => x.Status == ClaimedStatus)
+            .SetColumns(x => x.ConsumedAtUtc == nowUtc)
+            .SetColumns(x => x.ConsumedByReference == normalizedReference)
+            .Where(x => x.Token == normalizedToken)
+            .Where(x => x.Status == PendingStatus)
+            .Where(x => x.ExpiresAtUtc > nowUtc)
+            .Where(x => x.StoreCode == normalizedStoreCode)
+            .Where(x => x.VoucherCode == normalizedVoucherCode)
+            .Where(x => x.LockedAmount >= amount)
+            .ExecuteCommandAsync(cancellationToken);
+        if (affectedRows != 1)
+        {
+            throw new InvalidOperationException("Voucher reservation token is invalid, expired, or already claimed.");
+        }
+
+        var entity = await db.Queryable<StoreVoucherReservationEntity>()
+            .Where(x => x.Token == normalizedToken)
+            .FirstAsync(cancellationToken)
+            ?? throw new InvalidOperationException("Voucher reservation token is invalid, expired, or already claimed.");
+        return Map(entity);
     }
 
-    private void PruneExpiredReservations()
+    public async Task ConsumeAsync(string token, CancellationToken cancellationToken)
     {
-        var now = timeProvider.GetUtcNow();
-        foreach (var pair in reservations)
-        {
-            if (pair.Value.ExpiresAt <= now)
-            {
-                reservations.TryRemove(pair.Key, out _);
-            }
-        }
+        cancellationToken.ThrowIfCancellationRequested();
+        var normalizedToken = NormalizeRequired(token, nameof(token));
+        await EnsureTableAsync(cancellationToken);
+
+        var now = _timeProvider.GetUtcNow().UtcDateTime;
+        await dbContext.PosmDb.Updateable<StoreVoucherReservationEntity>()
+            .SetColumns(x => x.Status == ConsumedStatus)
+            .SetColumns(x => x.ConsumedAtUtc == now)
+            .Where(x => x.Token == normalizedToken)
+            .Where(x => x.Status != ConsumedStatus)
+            .ExecuteCommandAsync(cancellationToken);
     }
+
+    private async Task EnsureTableAsync(CancellationToken cancellationToken)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        await Task.Run(
+            () => dbContext.PosmDb.CodeFirst.InitTables<StoreVoucherReservationEntity>(),
+            cancellationToken);
+    }
+
+    private static StoreVoucherReservation Map(StoreVoucherReservationEntity entity)
+    {
+        return new StoreVoucherReservation(
+            entity.Token,
+            entity.StoreCode,
+            entity.VoucherCode,
+            entity.LockedAmount,
+            new DateTimeOffset(DateTime.SpecifyKind(entity.ExpiresAtUtc, DateTimeKind.Utc)));
+    }
+
+    private static string NormalizeRequired(string value, string paramName)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            throw new InvalidOperationException($"{paramName} is required.");
+        }
+
+        return value.Trim();
+    }
+}
+
+[SugarTable("StoreVoucherReservation")]
+public sealed class StoreVoucherReservationEntity
+{
+    [SugarColumn(IsPrimaryKey = true, Length = 32)]
+    public string Token { get; set; } = string.Empty;
+
+    [SugarColumn(Length = 50)]
+    public string StoreCode { get; set; } = string.Empty;
+
+    [SugarColumn(Length = 50)]
+    public string VoucherCode { get; set; } = string.Empty;
+
+    public decimal LockedAmount { get; set; }
+
+    [SugarColumn(Length = 20)]
+    public string Status { get; set; } = string.Empty;
+
+    public DateTime ExpiresAtUtc { get; set; }
+
+    public DateTime CreatedAtUtc { get; set; }
+
+    [SugarColumn(IsNullable = true)]
+    public DateTime? ConsumedAtUtc { get; set; }
+
+    [SugarColumn(Length = 100, IsNullable = true)]
+    public string? ConsumedByReference { get; set; }
 }

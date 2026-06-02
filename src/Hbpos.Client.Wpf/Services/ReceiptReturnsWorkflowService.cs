@@ -17,6 +17,11 @@ public interface IReceiptReturnsWorkflowService
         PosSessionState session,
         string productQuery);
 
+    ReceiptReturnPendingLineResult CreateNoReceiptOpenItem(
+        PosSessionState session,
+        string displayName,
+        decimal unitPrice);
+
     IReadOnlyList<CartLine> AddReturnLinesToCart(
         IEnumerable<PendingReturnLine> lines,
         IReadOnlyList<OrderReturnPaymentCapacityDto>? paymentCapacities = null);
@@ -30,6 +35,10 @@ public sealed record ReceiptReturnLookupResult(
 
 public sealed record ReceiptReturnProductLookupResult(
     SellableItemDto? Item,
+    string StatusMessage);
+
+public sealed record ReceiptReturnPendingLineResult(
+    PendingReturnLine? Line,
     string StatusMessage);
 
 public sealed record ReceiptReturnOrder(
@@ -86,6 +95,8 @@ public sealed class ReceiptReturnsWorkflowService(
     PosCartService cart,
     ILocalizationService? localization = null) : IReceiptReturnsWorkflowService
 {
+    private const string OpenItemLookupCode = "OPENITEM";
+
     public async Task<ReceiptReturnLookupResult> LookupOrderAsync(
         PosSessionState session,
         string orderQuery,
@@ -147,6 +158,55 @@ public sealed class ReceiptReturnsWorkflowService(
         return item is null
             ? new ReceiptReturnProductLookupResult(null, T("returns.status.productNotFound", "Product was not found."))
             : new ReceiptReturnProductLookupResult(item, Format("returns.status.addedNoReceipt", "Added no-receipt return item: {0}", item.DisplayName));
+    }
+
+    public ReceiptReturnPendingLineResult CreateNoReceiptOpenItem(
+        PosSessionState session,
+        string displayName,
+        decimal unitPrice)
+    {
+        var normalizedName = NormalizeQuery(displayName);
+        if (string.IsNullOrWhiteSpace(normalizedName))
+        {
+            return new ReceiptReturnPendingLineResult(null, T("returns.status.openItemNameRequired", "Enter an item name."));
+        }
+
+        if (unitPrice <= 0m)
+        {
+            return new ReceiptReturnPendingLineResult(null, T("returns.status.openItemPriceRequired", "Enter a retail price greater than zero."));
+        }
+
+        var matches = priceIndex.FindExactMatches(session.StoreCode, OpenItemLookupCode);
+        if (matches.Count == 0)
+        {
+            return new ReceiptReturnPendingLineResult(null, T("returns.status.openItemMissing", "OPENITEM was not found in the local catalog."));
+        }
+
+        if (matches.Count > 1)
+        {
+            return new ReceiptReturnPendingLineResult(null, T("returns.status.openItemDuplicate", "Multiple OPENITEM records were found in the local catalog."));
+        }
+
+        var item = matches[0];
+        var line = new PendingReturnLine(
+            item.StoreCode,
+            item.ProductCode,
+            item.ReferenceCode,
+            normalizedName,
+            item.LookupCode,
+            item.ItemNumber,
+            item.ProductImage,
+            1m,
+            unitPrice,
+            item.PriceSource,
+            item.PriceSourceLabel,
+            $"noreceipt-open:{item.StoreCode}:{Guid.NewGuid():N}",
+            null,
+            null);
+
+        return new ReceiptReturnPendingLineResult(
+            line,
+            Format("returns.status.addedNoReceiptOpenItem", "Added no-barcode return item: {0}", normalizedName));
     }
 
     public IReadOnlyList<CartLine> AddReturnLinesToCart(

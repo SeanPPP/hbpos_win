@@ -9,12 +9,19 @@ using Hbpos.Contracts.Catalog;
 
 namespace Hbpos.Client.Wpf.ViewModels;
 
+public enum OpenItemKeyboardTarget
+{
+    Description,
+    Amount
+}
+
 public sealed partial class ReceiptReturnsViewModel : ObservableObject, IScannerInputTarget, IDisposable
 {
     public const string PageId = "ReceiptReturns";
 
     private const string DefaultStatusMessage = "Scan an order number to start a receipt return.";
     private const string DefaultOrderSummaryText = "No order loaded";
+    private const string DefaultOpenItemName = "Open Item";
 
     private readonly IReceiptReturnsWorkflowService _workflowService;
     private readonly IRawScannerService? _rawScannerService;
@@ -44,6 +51,18 @@ public sealed partial class ReceiptReturnsViewModel : ObservableObject, IScanner
     [ObservableProperty]
     private bool _returnRecordsMayBeStale;
 
+    [ObservableProperty]
+    private bool _isOpenItemDialogOpen;
+
+    [ObservableProperty]
+    private string _openItemDisplayName = string.Empty;
+
+    [ObservableProperty]
+    private string _openItemUnitPriceText = string.Empty;
+
+    [ObservableProperty]
+    private OpenItemKeyboardTarget _openItemKeyboardTarget = OpenItemKeyboardTarget.Description;
+
     public ReceiptReturnsViewModel(
         IReceiptReturnsWorkflowService workflowService,
         PosSessionState session,
@@ -67,6 +86,12 @@ public sealed partial class ReceiptReturnsViewModel : ObservableObject, IScanner
         AddReceiptLineCommand = new RelayCommand<ReceiptReturnOrderLineViewModel>(AddReceiptLine, CanAddReceiptLine);
         RemovePendingLineCommand = new RelayCommand<PendingReturnLineViewModel>(RemovePendingLine);
         ConfirmToCartCommand = new RelayCommand(ConfirmToCart, () => PendingLines.Count > 0 && !IsBusy);
+        OpenNoReceiptOpenItemDialogCommand = new RelayCommand(OpenNoReceiptOpenItemDialog, CanOpenNoReceiptOpenItemDialog);
+        CancelNoReceiptOpenItemDialogCommand = new RelayCommand(CancelNoReceiptOpenItemDialog);
+        ConfirmNoReceiptOpenItemCommand = new RelayCommand(ConfirmNoReceiptOpenItem, CanConfirmNoReceiptOpenItem);
+        SelectOpenItemDescriptionKeyboardCommand = new RelayCommand(() => OpenItemKeyboardTarget = OpenItemKeyboardTarget.Description);
+        SelectOpenItemAmountKeyboardCommand = new RelayCommand(() => OpenItemKeyboardTarget = OpenItemKeyboardTarget.Amount);
+        OpenItemKeyboardInputCommand = new RelayCommand<string>(AppendOpenItemKeyboardInput);
         BackCommand = new RelayCommand(Back);
         ClearCommand = new RelayCommand(ClearSelection);
 
@@ -89,6 +114,18 @@ public sealed partial class ReceiptReturnsViewModel : ObservableObject, IScanner
 
     public IRelayCommand ConfirmToCartCommand { get; }
 
+    public IRelayCommand OpenNoReceiptOpenItemDialogCommand { get; }
+
+    public IRelayCommand CancelNoReceiptOpenItemDialogCommand { get; }
+
+    public IRelayCommand ConfirmNoReceiptOpenItemCommand { get; }
+
+    public IRelayCommand SelectOpenItemDescriptionKeyboardCommand { get; }
+
+    public IRelayCommand SelectOpenItemAmountKeyboardCommand { get; }
+
+    public IRelayCommand<string> OpenItemKeyboardInputCommand { get; }
+
     public IRelayCommand BackCommand { get; }
 
     public IRelayCommand ClearCommand { get; }
@@ -96,6 +133,10 @@ public sealed partial class ReceiptReturnsViewModel : ObservableObject, IScanner
     public decimal PendingTotal => PendingLines.Sum(line => line.NegativeSubtotal);
 
     public int PendingSkuCount => PendingLines.Count;
+
+    public bool IsOpenItemDescriptionKeyboardVisible => OpenItemKeyboardTarget == OpenItemKeyboardTarget.Description;
+
+    public bool IsOpenItemAmountKeyboardVisible => OpenItemKeyboardTarget == OpenItemKeyboardTarget.Amount;
 
     public void Dispose()
     {
@@ -133,14 +174,39 @@ public sealed partial class ReceiptReturnsViewModel : ObservableObject, IScanner
         LookupCommand.NotifyCanExecuteChanged();
         AddReceiptLineCommand.NotifyCanExecuteChanged();
         ConfirmToCartCommand.NotifyCanExecuteChanged();
+        OpenNoReceiptOpenItemDialogCommand.NotifyCanExecuteChanged();
+        ConfirmNoReceiptOpenItemCommand.NotifyCanExecuteChanged();
     }
 
     partial void OnIsNoReceiptModeChanged(bool value)
     {
         ClearSelection();
+        if (!value)
+        {
+            ResetOpenItemDialog();
+        }
+
         StatusMessage = value
             ? T("returns.status.noReceiptMode", "No-receipt return is on. Scan products to add them to the return area.")
             : T("returns.status.receiptMode", "Receipt return is on. Scan an order number.");
+        OpenNoReceiptOpenItemDialogCommand.NotifyCanExecuteChanged();
+        ConfirmNoReceiptOpenItemCommand.NotifyCanExecuteChanged();
+    }
+
+    partial void OnOpenItemDisplayNameChanged(string value)
+    {
+        ConfirmNoReceiptOpenItemCommand.NotifyCanExecuteChanged();
+    }
+
+    partial void OnOpenItemUnitPriceTextChanged(string value)
+    {
+        ConfirmNoReceiptOpenItemCommand.NotifyCanExecuteChanged();
+    }
+
+    partial void OnOpenItemKeyboardTargetChanged(OpenItemKeyboardTarget value)
+    {
+        OnPropertyChanged(nameof(IsOpenItemDescriptionKeyboardVisible));
+        OnPropertyChanged(nameof(IsOpenItemAmountKeyboardVisible));
     }
 
     private async Task LookupAsync()
@@ -231,6 +297,142 @@ public sealed partial class ReceiptReturnsViewModel : ObservableObject, IScanner
             null));
     }
 
+    private bool CanOpenNoReceiptOpenItemDialog()
+    {
+        return IsNoReceiptMode && !IsBusy;
+    }
+
+    private void OpenNoReceiptOpenItemDialog()
+    {
+        if (!CanOpenNoReceiptOpenItemDialog())
+        {
+            return;
+        }
+
+        OpenItemDisplayName = T("returns.openItem.defaultName", DefaultOpenItemName);
+        OpenItemUnitPriceText = string.Empty;
+        OpenItemKeyboardTarget = OpenItemKeyboardTarget.Description;
+        IsOpenItemDialogOpen = true;
+        StatusMessage = T("returns.status.openItemPrompt", "Enter a no-barcode item name and retail price.");
+    }
+
+    private void AppendOpenItemKeyboardInput(string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return;
+        }
+
+        if (OpenItemKeyboardTarget == OpenItemKeyboardTarget.Amount)
+        {
+            AppendOpenItemAmount(value);
+            return;
+        }
+
+        AppendOpenItemDescription(value);
+    }
+
+    private void AppendOpenItemDescription(string value)
+    {
+        switch (value)
+        {
+            case "Back":
+                if (OpenItemDisplayName.Length > 0)
+                {
+                    OpenItemDisplayName = OpenItemDisplayName[..^1];
+                }
+
+                return;
+            case "Clear":
+                OpenItemDisplayName = string.Empty;
+                return;
+            case "Space":
+                OpenItemDisplayName += " ";
+                return;
+        }
+
+        if (value.Length == 1 && value[0] is >= 'A' and <= 'Z')
+        {
+            OpenItemDisplayName += value;
+        }
+    }
+
+    private void AppendOpenItemAmount(string value)
+    {
+        switch (value)
+        {
+            case "Back":
+                if (OpenItemUnitPriceText.Length > 0)
+                {
+                    OpenItemUnitPriceText = OpenItemUnitPriceText[..^1];
+                }
+
+                return;
+            case "Clear":
+                OpenItemUnitPriceText = string.Empty;
+                return;
+            case ".":
+                if (!OpenItemUnitPriceText.Contains('.', StringComparison.Ordinal))
+                {
+                    OpenItemUnitPriceText = string.IsNullOrEmpty(OpenItemUnitPriceText)
+                        ? "0."
+                        : OpenItemUnitPriceText + ".";
+                }
+
+                return;
+        }
+
+        if (value.Length != 1 || value[0] is < '0' or > '9')
+        {
+            return;
+        }
+
+        // 无码商品金额通过触屏数字键盘输入，固定限制到两位小数，避免生成无法结账的金额文本。
+        var candidate = OpenItemUnitPriceText + value;
+        var decimalIndex = candidate.IndexOf('.');
+        if (decimalIndex >= 0 && candidate.Length - decimalIndex - 1 > 2)
+        {
+            return;
+        }
+
+        OpenItemUnitPriceText = candidate;
+    }
+
+    private void CancelNoReceiptOpenItemDialog()
+    {
+        ResetOpenItemDialog();
+    }
+
+    private bool CanConfirmNoReceiptOpenItem()
+    {
+        return IsNoReceiptMode &&
+            !IsBusy &&
+            IsOpenItemDialogOpen &&
+            !string.IsNullOrWhiteSpace(OpenItemDisplayName) &&
+            TryParsePositiveAmount(OpenItemUnitPriceText, out _);
+    }
+
+    private void ConfirmNoReceiptOpenItem()
+    {
+        if (!CanConfirmNoReceiptOpenItem() ||
+            !TryParsePositiveAmount(OpenItemUnitPriceText, out var unitPrice))
+        {
+            StatusMessage = T("returns.status.openItemPriceRequired", "Enter a retail price greater than zero.");
+            return;
+        }
+
+        var result = _workflowService.CreateNoReceiptOpenItem(Session, OpenItemDisplayName, unitPrice);
+        StatusMessage = result.StatusMessage;
+        if (result.Line is null)
+        {
+            return;
+        }
+
+        AddOrIncreasePendingLine(ToPendingLineViewModel(result.Line));
+        ResetOpenItemDialog();
+        RefreshCommandStates();
+    }
+
     private bool CanAddReceiptLine(ReceiptReturnOrderLineViewModel? line)
     {
         return !IsBusy && line is not null && line.AvailableRemaining > 0m;
@@ -284,6 +486,26 @@ public sealed partial class ReceiptReturnsViewModel : ObservableObject, IScanner
         OnPendingLinesChanged();
     }
 
+    private static PendingReturnLineViewModel ToPendingLineViewModel(PendingReturnLine line)
+    {
+        return new PendingReturnLineViewModel(
+            line.ReturnSourceKey,
+            null,
+            line.StoreCode,
+            line.ProductCode,
+            line.ReferenceCode,
+            line.DisplayName,
+            line.LookupCode,
+            line.ItemNumber,
+            line.ProductImage,
+            line.Quantity,
+            line.UnitPrice,
+            line.PriceSource,
+            line.PriceSourceLabel,
+            line.OriginalOrderGuid,
+            line.OriginalOrderLineGuid);
+    }
+
     private void RemovePendingLine(PendingReturnLineViewModel? line)
     {
         if (line is null)
@@ -330,6 +552,7 @@ public sealed partial class ReceiptReturnsViewModel : ObservableObject, IScanner
     {
         OrderLines.Clear();
         PendingLines.Clear();
+        ResetOpenItemDialog();
         _currentOrder = null;
         ReturnRecordsMayBeStale = false;
         OrderSummaryText = T("returns.orderSummary.none", DefaultOrderSummaryText);
@@ -349,6 +572,16 @@ public sealed partial class ReceiptReturnsViewModel : ObservableObject, IScanner
         LookupCommand.NotifyCanExecuteChanged();
         AddReceiptLineCommand.NotifyCanExecuteChanged();
         ConfirmToCartCommand.NotifyCanExecuteChanged();
+        OpenNoReceiptOpenItemDialogCommand.NotifyCanExecuteChanged();
+        ConfirmNoReceiptOpenItemCommand.NotifyCanExecuteChanged();
+    }
+
+    private void ResetOpenItemDialog()
+    {
+        IsOpenItemDialogOpen = false;
+        OpenItemDisplayName = string.Empty;
+        OpenItemUnitPriceText = string.Empty;
+        OpenItemKeyboardTarget = OpenItemKeyboardTarget.Description;
     }
 
     private void RefreshLocalizedState()
@@ -390,6 +623,13 @@ public sealed partial class ReceiptReturnsViewModel : ObservableObject, IScanner
             _localization?.CurrentCulture ?? CultureInfo.CurrentCulture,
             _localization?.T(key) ?? fallback,
             args);
+    }
+
+    private static bool TryParsePositiveAmount(string value, out decimal amount)
+    {
+        return (decimal.TryParse(value, NumberStyles.Number, CultureInfo.CurrentCulture, out amount) ||
+                decimal.TryParse(value, NumberStyles.Number, CultureInfo.InvariantCulture, out amount)) &&
+            amount > 0m;
     }
 }
 
@@ -518,7 +758,6 @@ public sealed partial class PendingReturnLineViewModel : ObservableObject
 
     public PendingReturnLine ToPendingReturnLine()
     {
-        // 将界面里的可编辑数量映射回工作流模型，保持服务层只接收纯业务数据。
         return new PendingReturnLine(
             StoreCode,
             ProductCode,

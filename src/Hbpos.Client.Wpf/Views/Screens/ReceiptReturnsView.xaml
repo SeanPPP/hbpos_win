@@ -89,6 +89,17 @@
                               VerticalAlignment="Center"
                               FontWeight="Bold"
                               Margin="0,0,0,0" />
+                    <Button Command="{Binding OpenNoReceiptOpenItemDialogCommand}"
+                            Visibility="{Binding IsNoReceiptMode, Converter={StaticResource BoolToVis}}"
+                            Style="{StaticResource PosSecondaryButtonStyle}"
+                            Height="38"
+                            MinWidth="150"
+                            Margin="12,0,0,0">
+                        <StackPanel Orientation="Horizontal">
+                            <materialDesign:PackIcon Kind="PlusCircle" Width="17" Height="17" Margin="0,0,8,0" />
+                            <TextBlock Text="{loc:Loc returns.addOpenItem}" />
+                        </StackPanel>
+                    </Button>
                 </StackPanel>
             </Grid>
         </Border>
@@ -111,9 +122,12 @@
                                              Height="24"
                                              Foreground="{StaticResource PosPrimaryBrush}"
                                              VerticalAlignment="Center" />
+                    <!-- 条码/订单号扫码框关闭中文输入法，避免扫码时弹出候选窗。 -->
                     <TextBox Grid.Column="1"
                              Text="{Binding ScanText, UpdateSourceTrigger=PropertyChanged}"
                              materialDesign:HintAssist.Hint="{loc:Loc returns.searchHint}"
+                             InputMethod.IsInputMethodEnabled="False"
+                             InputMethod.PreferredImeState="Off"
                              Background="Transparent"
                              BorderThickness="0"
                              FontSize="18"
@@ -292,6 +306,163 @@
                            FontWeight="SemiBold"
                            TextWrapping="Wrap" />
             </DockPanel>
+        </Border>
+
+        <Border Grid.RowSpan="3"
+                Panel.ZIndex="20"
+                Background="#66000000"
+                Visibility="{Binding IsOpenItemDialogOpen, Converter={StaticResource BoolToVis}}">
+            <Border Width="720"
+                    Padding="24"
+                    Background="{StaticResource PosSurfaceBrush}"
+                    CornerRadius="12"
+                    HorizontalAlignment="Center"
+                    VerticalAlignment="Center">
+                <Grid>
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="Auto" />
+                    </Grid.RowDefinitions>
+
+                    <StackPanel Grid.Row="0" Margin="0,0,0,18">
+                        <TextBlock Text="{loc:Loc returns.openItem.title}"
+                                   FontSize="20"
+                                   FontWeight="Black" />
+                        <TextBlock Text="{loc:Loc returns.openItem.subtitle}"
+                                   Margin="0,6,0,0"
+                                   Foreground="{StaticResource PosMutedForegroundBrush}"
+                                   TextWrapping="Wrap" />
+                    </StackPanel>
+
+                    <Grid Grid.Row="1" Margin="0,0,0,16">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="16" />
+                            <ColumnDefinition Width="220" />
+                        </Grid.ColumnDefinitions>
+
+                        <StackPanel Grid.Column="0">
+                            <TextBlock Text="{loc:Loc returns.openItem.name}"
+                                       Style="{StaticResource ReturnHeaderLabelStyle}"
+                                       Margin="0,0,0,6" />
+                            <Button Command="{Binding SelectOpenItemDescriptionKeyboardCommand}"
+                                    MinHeight="54"
+                                    Padding="12,8"
+                                    HorizontalContentAlignment="Stretch"
+                                    Style="{StaticResource PosSecondaryButtonStyle}">
+                                <TextBlock Text="{Binding OpenItemDisplayName}"
+                                           FontSize="18"
+                                           FontWeight="SemiBold"
+                                           TextWrapping="Wrap" />
+                            </Button>
+                        </StackPanel>
+
+                        <StackPanel Grid.Column="2">
+                            <TextBlock Text="{loc:Loc returns.openItem.price}"
+                                       Style="{StaticResource ReturnHeaderLabelStyle}"
+                                       Margin="0,0,0,6" />
+                            <Button Command="{Binding SelectOpenItemAmountKeyboardCommand}"
+                                    MinHeight="54"
+                                    Padding="12,8"
+                                    HorizontalContentAlignment="Right"
+                                    Style="{StaticResource PosSecondaryButtonStyle}">
+                                <TextBlock Text="{Binding OpenItemUnitPriceText}"
+                                           FontSize="24"
+                                           FontWeight="Black"
+                                           Foreground="{StaticResource PosDangerBrush}" />
+                            </Button>
+                        </StackPanel>
+                    </Grid>
+
+                    <Grid Grid.Row="2" Margin="0,0,0,18">
+                        <StackPanel Visibility="{Binding IsOpenItemDescriptionKeyboardVisible, Converter={StaticResource BoolToVis}}">
+                            <UniformGrid Columns="10">
+                                <Button Content="Q" Command="{Binding OpenItemKeyboardInputCommand}" CommandParameter="Q" Style="{StaticResource PosStitchNumberButtonStyle}" />
+                                <Button Content="W" Command="{Binding OpenItemKeyboardInputCommand}" CommandParameter="W" Style="{StaticResource PosStitchNumberButtonStyle}" />
+                                <Button Content="E" Command="{Binding OpenItemKeyboardInputCommand}" CommandParameter="E" Style="{StaticResource PosStitchNumberButtonStyle}" />
+                                <Button Content="R" Command="{Binding OpenItemKeyboardInputCommand}" CommandParameter="R" Style="{StaticResource PosStitchNumberButtonStyle}" />
+                                <Button Content="T" Command="{Binding OpenItemKeyboardInputCommand}" CommandParameter="T" Style="{StaticResource PosStitchNumberButtonStyle}" />
+                                <Button Content="Y" Command="{Binding OpenItemKeyboardInputCommand}" CommandParameter="Y" Style="{StaticResource PosStitchNumberButtonStyle}" />
+                                <Button Content="U" Command="{Binding OpenItemKeyboardInputCommand}" CommandParameter="U" Style="{StaticResource PosStitchNumberButtonStyle}" />
+                                <Button Content="I" Command="{Binding OpenItemKeyboardInputCommand}" CommandParameter="I" Style="{StaticResource PosStitchNumberButtonStyle}" />
+                                <Button Content="O" Command="{Binding OpenItemKeyboardInputCommand}" CommandParameter="O" Style="{StaticResource PosStitchNumberButtonStyle}" />
+                                <Button Content="P" Command="{Binding OpenItemKeyboardInputCommand}" CommandParameter="P" Style="{StaticResource PosStitchNumberButtonStyle}" />
+                            </UniformGrid>
+                            <UniformGrid Columns="9" Margin="28,0">
+                                <Button Content="A" Command="{Binding OpenItemKeyboardInputCommand}" CommandParameter="A" Style="{StaticResource PosStitchNumberButtonStyle}" />
+                                <Button Content="S" Command="{Binding OpenItemKeyboardInputCommand}" CommandParameter="S" Style="{StaticResource PosStitchNumberButtonStyle}" />
+                                <Button Content="D" Command="{Binding OpenItemKeyboardInputCommand}" CommandParameter="D" Style="{StaticResource PosStitchNumberButtonStyle}" />
+                                <Button Content="F" Command="{Binding OpenItemKeyboardInputCommand}" CommandParameter="F" Style="{StaticResource PosStitchNumberButtonStyle}" />
+                                <Button Content="G" Command="{Binding OpenItemKeyboardInputCommand}" CommandParameter="G" Style="{StaticResource PosStitchNumberButtonStyle}" />
+                                <Button Content="H" Command="{Binding OpenItemKeyboardInputCommand}" CommandParameter="H" Style="{StaticResource PosStitchNumberButtonStyle}" />
+                                <Button Content="J" Command="{Binding OpenItemKeyboardInputCommand}" CommandParameter="J" Style="{StaticResource PosStitchNumberButtonStyle}" />
+                                <Button Content="K" Command="{Binding OpenItemKeyboardInputCommand}" CommandParameter="K" Style="{StaticResource PosStitchNumberButtonStyle}" />
+                                <Button Content="L" Command="{Binding OpenItemKeyboardInputCommand}" CommandParameter="L" Style="{StaticResource PosStitchNumberButtonStyle}" />
+                            </UniformGrid>
+                            <UniformGrid Columns="7" Margin="72,0">
+                                <Button Content="Z" Command="{Binding OpenItemKeyboardInputCommand}" CommandParameter="Z" Style="{StaticResource PosStitchNumberButtonStyle}" />
+                                <Button Content="X" Command="{Binding OpenItemKeyboardInputCommand}" CommandParameter="X" Style="{StaticResource PosStitchNumberButtonStyle}" />
+                                <Button Content="C" Command="{Binding OpenItemKeyboardInputCommand}" CommandParameter="C" Style="{StaticResource PosStitchNumberButtonStyle}" />
+                                <Button Content="V" Command="{Binding OpenItemKeyboardInputCommand}" CommandParameter="V" Style="{StaticResource PosStitchNumberButtonStyle}" />
+                                <Button Content="B" Command="{Binding OpenItemKeyboardInputCommand}" CommandParameter="B" Style="{StaticResource PosStitchNumberButtonStyle}" />
+                                <Button Content="N" Command="{Binding OpenItemKeyboardInputCommand}" CommandParameter="N" Style="{StaticResource PosStitchNumberButtonStyle}" />
+                                <Button Content="M" Command="{Binding OpenItemKeyboardInputCommand}" CommandParameter="M" Style="{StaticResource PosStitchNumberButtonStyle}" />
+                            </UniformGrid>
+                            <Grid>
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="1.2*" />
+                                    <ColumnDefinition Width="3*" />
+                                    <ColumnDefinition Width="1.2*" />
+                                </Grid.ColumnDefinitions>
+                                <Button Grid.Column="0" Content="{loc:Loc Clear}" Command="{Binding OpenItemKeyboardInputCommand}" CommandParameter="Clear" Style="{StaticResource PosStitchClearNumberButtonStyle}" />
+                                <Button Grid.Column="1" Content="{loc:Loc common.space}" Command="{Binding OpenItemKeyboardInputCommand}" CommandParameter="Space" Style="{StaticResource PosStitchNumberButtonStyle}" />
+                                <Button Grid.Column="2" Content="{loc:Loc Backspace}" Command="{Binding OpenItemKeyboardInputCommand}" CommandParameter="Back" Style="{StaticResource PosStitchClearNumberButtonStyle}" />
+                            </Grid>
+                        </StackPanel>
+
+                        <UniformGrid Columns="3"
+                                     Width="360"
+                                     HorizontalAlignment="Center"
+                                     Visibility="{Binding IsOpenItemAmountKeyboardVisible, Converter={StaticResource BoolToVis}}">
+                            <Button Content="1" Command="{Binding OpenItemKeyboardInputCommand}" CommandParameter="1" Style="{StaticResource PosStitchNumberButtonStyle}" />
+                            <Button Content="2" Command="{Binding OpenItemKeyboardInputCommand}" CommandParameter="2" Style="{StaticResource PosStitchNumberButtonStyle}" />
+                            <Button Content="3" Command="{Binding OpenItemKeyboardInputCommand}" CommandParameter="3" Style="{StaticResource PosStitchNumberButtonStyle}" />
+                            <Button Content="4" Command="{Binding OpenItemKeyboardInputCommand}" CommandParameter="4" Style="{StaticResource PosStitchNumberButtonStyle}" />
+                            <Button Content="5" Command="{Binding OpenItemKeyboardInputCommand}" CommandParameter="5" Style="{StaticResource PosStitchNumberButtonStyle}" />
+                            <Button Content="6" Command="{Binding OpenItemKeyboardInputCommand}" CommandParameter="6" Style="{StaticResource PosStitchNumberButtonStyle}" />
+                            <Button Content="7" Command="{Binding OpenItemKeyboardInputCommand}" CommandParameter="7" Style="{StaticResource PosStitchNumberButtonStyle}" />
+                            <Button Content="8" Command="{Binding OpenItemKeyboardInputCommand}" CommandParameter="8" Style="{StaticResource PosStitchNumberButtonStyle}" />
+                            <Button Content="9" Command="{Binding OpenItemKeyboardInputCommand}" CommandParameter="9" Style="{StaticResource PosStitchNumberButtonStyle}" />
+                            <Button Content="{loc:Loc Clear}" Command="{Binding OpenItemKeyboardInputCommand}" CommandParameter="Clear" Style="{StaticResource PosStitchClearNumberButtonStyle}" />
+                            <Button Content="0" Command="{Binding OpenItemKeyboardInputCommand}" CommandParameter="0" Style="{StaticResource PosStitchNumberButtonStyle}" />
+                            <Button Content="{loc:Loc Backspace}" Command="{Binding OpenItemKeyboardInputCommand}" CommandParameter="Back" Style="{StaticResource PosStitchClearNumberButtonStyle}" />
+                            <Button Content="." Command="{Binding OpenItemKeyboardInputCommand}" CommandParameter="." Style="{StaticResource PosStitchNumberButtonStyle}" />
+                        </UniformGrid>
+                    </Grid>
+
+                    <StackPanel Grid.Row="3" Orientation="Horizontal" HorizontalAlignment="Right">
+                        <Button Command="{Binding CancelNoReceiptOpenItemDialogCommand}"
+                                Style="{StaticResource PosSecondaryButtonStyle}"
+                                MinWidth="110"
+                                Height="44"
+                                Margin="0,0,10,0">
+                            <TextBlock Text="{loc:Loc Cancel}" />
+                        </Button>
+                        <Button Command="{Binding ConfirmNoReceiptOpenItemCommand}"
+                                Style="{StaticResource PosPrimaryButtonStyle}"
+                                MinWidth="128"
+                                Height="44">
+                            <StackPanel Orientation="Horizontal">
+                                <materialDesign:PackIcon Kind="CheckCircle" Width="18" Height="18" Foreground="White" Margin="0,0,8,0" />
+                                <TextBlock Text="{loc:Loc Add}" Foreground="White" />
+                            </StackPanel>
+                        </Button>
+                    </StackPanel>
+                </Grid>
+            </Border>
         </Border>
     </Grid>
 </UserControl>

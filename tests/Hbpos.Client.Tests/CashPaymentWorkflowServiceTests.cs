@@ -527,7 +527,7 @@ public sealed class CashPaymentWorkflowServiceTests
     }
 
     [Fact]
-    public async Task Payment_workflow_reuses_refund_voucher_idempotency_key_when_save_retries()
+    public async Task Payment_workflow_does_not_issue_refund_voucher_before_local_save_succeeds()
     {
         var cart = new PosCartService();
         cart.AddReturnLine(new ReturnCartLineRequest(
@@ -565,7 +565,7 @@ public sealed class CashPaymentWorkflowServiceTests
             session,
             [tender],
             cashTenderedAmount: 0m));
-        var firstKey = vouchers.LastIdempotencyKey;
+        Assert.Equal(0, vouchers.IssueRefundCallCount);
 
         await workflow.CompletePaymentAsync(
             cart,
@@ -573,13 +573,14 @@ public sealed class CashPaymentWorkflowServiceTests
             [tender],
             cashTenderedAmount: 0m);
 
-        Assert.Equal(firstKey, vouchers.LastIdempotencyKey);
-        Assert.Equal(2, vouchers.IssueRefundCallCount);
+        Assert.False(string.IsNullOrWhiteSpace(vouchers.LastIdempotencyKey));
+        Assert.Equal(tender.IdempotencyKey, vouchers.LastIdempotencyKey);
+        Assert.Equal(1, vouchers.IssueRefundCallCount);
         Assert.Single(orders.SavedOrders);
     }
 
     [Fact]
-    public async Task Payment_workflow_does_not_save_voucher_refund_order_when_issue_fails()
+    public async Task Payment_workflow_persists_pending_voucher_refund_order_when_issue_fails()
     {
         var cart = new PosCartService();
         cart.AddReturnLine(new ReturnCartLineRequest(
@@ -606,14 +607,71 @@ public sealed class CashPaymentWorkflowServiceTests
             voucherTenderClient: vouchers);
         var session = new PosSessionState("HB POS", "S001", "Main Store", "POS-01", "C001", "Alice", true, 0);
 
-        await Assert.ThrowsAsync<InvalidOperationException>(() => workflow.CompletePaymentAsync(
+        await Assert.ThrowsAsync<PaymentUploadFailedException>(() => workflow.CompletePaymentAsync(
             cart,
             session,
             [new PaymentTender(PaymentMethodKind.Voucher, -6m, "VOUCHER_REFUND_PENDING")],
             cashTenderedAmount: 0m));
 
-        Assert.Empty(orders.SavedOrders);
+        var saved = Assert.Single(orders.SavedOrders);
+        var payment = Assert.Single(saved.Payments);
+        Assert.Equal("VOUCHER_REFUND_PENDING", payment.Reference);
+        Assert.False(string.IsNullOrWhiteSpace(payment.IdempotencyKey));
         Assert.Equal(1, vouchers.IssueRefundCallCount);
+    }
+
+    [Fact]
+    public async Task Payment_workflow_retry_reuses_pending_refund_voucher_idempotency_key_and_updates_local_reference()
+    {
+        var cart = new PosCartService();
+        cart.AddReturnLine(new ReturnCartLineRequest(
+            "S001",
+            "SKU-VR-RECOVER",
+            null,
+            "Voucher Refund Recover",
+            "930504",
+            "ITEM-VR-RECOVER",
+            null,
+            1m,
+            6m,
+            PriceSourceKind.StoreRetailPrice,
+            PriceSourceKind.StoreRetailPrice.ToString(),
+            "RETURN-VOUCHER-RECOVER",
+            Guid.NewGuid(),
+            Guid.NewGuid()));
+        var orders = new RecordingOrderRepository();
+        var vouchers = new RetriableVoucherTenderClient("VOUCHER_REFUND:RF123");
+        var workflow = new CashPaymentWorkflowService(
+            new CashCheckoutService(),
+            orders,
+            new StubSyncQueueRepository(pendingCount: 1),
+            voucherTenderClient: vouchers);
+        var session = new PosSessionState("HB POS", "S001", "Main Store", "POS-01", "C001", "Alice", true, 0);
+
+        var failed = await Assert.ThrowsAsync<PaymentUploadFailedException>(() => workflow.CompletePaymentAsync(
+            cart,
+            session,
+            [new PaymentTender(PaymentMethodKind.Voucher, -6m, "VOUCHER_REFUND_PENDING")],
+            cashTenderedAmount: 0m));
+        vouchers.FailIssueRefund = false;
+
+        var savedBeforeRetry = Assert.Single(orders.SavedOrders);
+        var pendingPayment = Assert.Single(savedBeforeRetry.Payments);
+        var result = await workflow.RetryVoucherUploadAsync(
+            savedBeforeRetry.OrderGuid,
+            cart,
+            session,
+            tenderedAmount: 0m,
+            changeAmount: 0m);
+
+        Assert.Contains("issue failed", failed.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Equal(2, vouchers.IssueRefundCallCount);
+        Assert.Equal(2, vouchers.IssueRefundIdempotencyKeys.Count);
+        Assert.Equal(vouchers.IssueRefundIdempotencyKeys[0], vouchers.IssueRefundIdempotencyKeys[1]);
+        Assert.Equal(pendingPayment.IdempotencyKey, vouchers.IssueRefundIdempotencyKeys[0]);
+        Assert.Equal("VOUCHER_REFUND:RF123", Assert.Single(result.Order.Payments).Reference);
+        Assert.Equal("VOUCHER_REFUND:RF123", Assert.Single(Assert.Single(orders.SavedOrders).Payments).Reference);
+        Assert.Empty(cart.Lines);
     }
 
     private static ICashPaymentWorkflowService CreateWorkflow()
@@ -651,6 +709,31 @@ public sealed class CashPaymentWorkflowServiceTests
             return Task.CompletedTask;
         }
 
+        public Task UpdatePaymentReferenceAsync(
+            Guid paymentGuid,
+            string? reference,
+            CancellationToken cancellationToken = default)
+        {
+            for (var index = 0; index < SavedOrders.Count; index++)
+            {
+                var order = SavedOrders[index];
+                var paymentIndex = order.Payments
+                    .ToList()
+                    .FindIndex(payment => payment.PaymentGuid == paymentGuid);
+                if (paymentIndex < 0 || paymentIndex >= order.Payments.Count)
+                {
+                    continue;
+                }
+
+                var updatedPayments = order.Payments.ToList();
+                updatedPayments[paymentIndex] = updatedPayments[paymentIndex] with { Reference = reference };
+                SavedOrders[index] = order with { Payments = updatedPayments };
+                break;
+            }
+
+            return Task.CompletedTask;
+        }
+
         public Task<IReadOnlyList<LocalOrderSummary>> GetRecentOrdersAsync(int take = 50, CancellationToken cancellationToken = default)
         {
             return Task.FromResult<IReadOnlyList<LocalOrderSummary>>([]);
@@ -685,6 +768,31 @@ public sealed class CashPaymentWorkflowServiceTests
             }
 
             SavedOrders.Add(order);
+            return Task.CompletedTask;
+        }
+
+        public Task UpdatePaymentReferenceAsync(
+            Guid paymentGuid,
+            string? reference,
+            CancellationToken cancellationToken = default)
+        {
+            for (var index = 0; index < SavedOrders.Count; index++)
+            {
+                var order = SavedOrders[index];
+                var paymentIndex = order.Payments
+                    .ToList()
+                    .FindIndex(payment => payment.PaymentGuid == paymentGuid);
+                if (paymentIndex < 0 || paymentIndex >= order.Payments.Count)
+                {
+                    continue;
+                }
+
+                var updatedPayments = order.Payments.ToList();
+                updatedPayments[paymentIndex] = updatedPayments[paymentIndex] with { Reference = reference };
+                SavedOrders[index] = order with { Payments = updatedPayments };
+                break;
+            }
+
             return Task.CompletedTask;
         }
 
@@ -780,6 +888,39 @@ public sealed class CashPaymentWorkflowServiceTests
             return Task.FromResult(approveRefund
                 ? new PaymentAuthorizationResult(true, reference, AuthorizedAmount: authorizedAmount ?? amount)
                 : new PaymentAuthorizationResult(false, null, "issue failed"));
+        }
+    }
+
+    private sealed class RetriableVoucherTenderClient(string reference) : IVoucherTenderClient
+    {
+        public bool FailIssueRefund { get; set; } = true;
+
+        public int IssueRefundCallCount { get; private set; }
+
+        public List<string> IssueRefundIdempotencyKeys { get; } = [];
+
+        public Task<PaymentAuthorizationResult> RedeemAsync(
+            decimal amount,
+            PosSessionState session,
+            string? voucherCode,
+            CancellationToken cancellationToken = default)
+        {
+            throw new NotSupportedException();
+        }
+
+        public Task<PaymentAuthorizationResult> IssueRefundAsync(
+            decimal amount,
+            PosSessionState session,
+            string orderReference,
+            string idempotencyKey,
+            string? reason = null,
+            CancellationToken cancellationToken = default)
+        {
+            IssueRefundCallCount++;
+            IssueRefundIdempotencyKeys.Add(idempotencyKey);
+            return Task.FromResult(FailIssueRefund
+                ? new PaymentAuthorizationResult(false, null, "issue failed")
+                : new PaymentAuthorizationResult(true, reference, AuthorizedAmount: amount));
         }
     }
 

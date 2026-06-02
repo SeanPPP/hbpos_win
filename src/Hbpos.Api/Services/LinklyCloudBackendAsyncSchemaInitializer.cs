@@ -31,6 +31,14 @@ public sealed class SqlSugarLinklyCloudBackendAsyncSchemaInitializer(
                 [ResponseText] NVARCHAR(512) NULL,
                 [RecoveryAction] NVARCHAR(64) NULL,
                 [DisplayText] NVARCHAR(512) NULL,
+                [DisplayLines] NVARCHAR(MAX) NULL,
+                [CancelKeyFlag] BIT NOT NULL CONSTRAINT [DF_POSM_LinklyCloudBackendSession_CancelKeyFlag] DEFAULT (0),
+                [OKKeyFlag] BIT NOT NULL CONSTRAINT [DF_POSM_LinklyCloudBackendSession_OKKeyFlag] DEFAULT (0),
+                [AcceptYesKeyFlag] BIT NOT NULL CONSTRAINT [DF_POSM_LinklyCloudBackendSession_AcceptYesKeyFlag] DEFAULT (0),
+                [DeclineNoKeyFlag] BIT NOT NULL CONSTRAINT [DF_POSM_LinklyCloudBackendSession_DeclineNoKeyFlag] DEFAULT (0),
+                [AuthoriseKeyFlag] BIT NOT NULL CONSTRAINT [DF_POSM_LinklyCloudBackendSession_AuthoriseKeyFlag] DEFAULT (0),
+                [InputType] NVARCHAR(64) NULL,
+                [GraphicCode] NVARCHAR(64) NULL,
                 [ReceiptText] NVARCHAR(MAX) NULL,
                 [RecoveryCount] INT NOT NULL CONSTRAINT [DF_POSM_LinklyCloudBackendSession_RecoveryCount] DEFAULT (0),
                 [ReceiptPrintedAt] DATETIME2(7) NULL,
@@ -48,6 +56,59 @@ public sealed class SqlSugarLinklyCloudBackendAsyncSchemaInitializer(
             BEGIN
                 ALTER TABLE [dbo].[POSM_LinklyCloudBackendSession]
                     ADD [DisplayText] NVARCHAR(512) NULL;
+            END;
+
+            IF COL_LENGTH(N'dbo.POSM_LinklyCloudBackendSession', N'DisplayLines') IS NULL
+            BEGIN
+                ALTER TABLE [dbo].[POSM_LinklyCloudBackendSession]
+                    ADD [DisplayLines] NVARCHAR(MAX) NULL;
+            END;
+
+            IF COL_LENGTH(N'dbo.POSM_LinklyCloudBackendSession', N'CancelKeyFlag') IS NULL
+            BEGIN
+                ALTER TABLE [dbo].[POSM_LinklyCloudBackendSession]
+                    ADD [CancelKeyFlag] BIT NOT NULL
+                        CONSTRAINT [DF_POSM_LinklyCloudBackendSession_CancelKeyFlag_Upgrade] DEFAULT (0) WITH VALUES;
+            END;
+
+            IF COL_LENGTH(N'dbo.POSM_LinklyCloudBackendSession', N'OKKeyFlag') IS NULL
+            BEGIN
+                ALTER TABLE [dbo].[POSM_LinklyCloudBackendSession]
+                    ADD [OKKeyFlag] BIT NOT NULL
+                        CONSTRAINT [DF_POSM_LinklyCloudBackendSession_OKKeyFlag_Upgrade] DEFAULT (0) WITH VALUES;
+            END;
+
+            IF COL_LENGTH(N'dbo.POSM_LinklyCloudBackendSession', N'AcceptYesKeyFlag') IS NULL
+            BEGIN
+                ALTER TABLE [dbo].[POSM_LinklyCloudBackendSession]
+                    ADD [AcceptYesKeyFlag] BIT NOT NULL
+                        CONSTRAINT [DF_POSM_LinklyCloudBackendSession_AcceptYesKeyFlag_Upgrade] DEFAULT (0) WITH VALUES;
+            END;
+
+            IF COL_LENGTH(N'dbo.POSM_LinklyCloudBackendSession', N'DeclineNoKeyFlag') IS NULL
+            BEGIN
+                ALTER TABLE [dbo].[POSM_LinklyCloudBackendSession]
+                    ADD [DeclineNoKeyFlag] BIT NOT NULL
+                        CONSTRAINT [DF_POSM_LinklyCloudBackendSession_DeclineNoKeyFlag_Upgrade] DEFAULT (0) WITH VALUES;
+            END;
+
+            IF COL_LENGTH(N'dbo.POSM_LinklyCloudBackendSession', N'AuthoriseKeyFlag') IS NULL
+            BEGIN
+                ALTER TABLE [dbo].[POSM_LinklyCloudBackendSession]
+                    ADD [AuthoriseKeyFlag] BIT NOT NULL
+                        CONSTRAINT [DF_POSM_LinklyCloudBackendSession_AuthoriseKeyFlag_Upgrade] DEFAULT (0) WITH VALUES;
+            END;
+
+            IF COL_LENGTH(N'dbo.POSM_LinklyCloudBackendSession', N'InputType') IS NULL
+            BEGIN
+                ALTER TABLE [dbo].[POSM_LinklyCloudBackendSession]
+                    ADD [InputType] NVARCHAR(64) NULL;
+            END;
+
+            IF COL_LENGTH(N'dbo.POSM_LinklyCloudBackendSession', N'GraphicCode') IS NULL
+            BEGIN
+                ALTER TABLE [dbo].[POSM_LinklyCloudBackendSession]
+                    ADD [GraphicCode] NVARCHAR(64) NULL;
             END;
 
             IF COL_LENGTH(N'dbo.POSM_LinklyCloudBackendSession', N'ReceiptText') IS NULL

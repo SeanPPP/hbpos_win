@@ -103,6 +103,63 @@ public sealed class SettingsViewModelTests
     }
 
     [Fact]
+    public void ResetTestSalesDataCommand_is_visible_and_enabled_in_debug_when_service_is_configured()
+    {
+        var viewModel = new SettingsViewModel(
+            new FakeCardTerminalSetupService(),
+            resetTestSalesDataAsync: _ => Task.CompletedTask,
+            confirmResetTestSalesData: () => true);
+
+        Assert.True(viewModel.IsDebugTestSalesDataResetVisible);
+        Assert.True(viewModel.ResetTestSalesDataCommand.CanExecute(null));
+    }
+
+    [Fact]
+    public async Task ResetTestSalesDataCommand_does_not_call_reset_when_confirmation_is_cancelled()
+    {
+        var resetCallCount = 0;
+        var confirmCallCount = 0;
+        var viewModel = new SettingsViewModel(
+            new FakeCardTerminalSetupService(),
+            resetTestSalesDataAsync: _ =>
+            {
+                resetCallCount++;
+                return Task.CompletedTask;
+            },
+            confirmResetTestSalesData: () =>
+            {
+                confirmCallCount++;
+                return false;
+            });
+
+        await viewModel.ResetTestSalesDataCommand.ExecuteAsync(null);
+
+        Assert.Equal(1, confirmCallCount);
+        Assert.Equal(0, resetCallCount);
+        Assert.Equal("Ready.", viewModel.StatusMessage);
+    }
+
+    [Fact]
+    public async Task ResetTestSalesDataCommand_calls_reset_after_confirmation()
+    {
+        var resetCallCount = 0;
+        var viewModel = new SettingsViewModel(
+            new FakeCardTerminalSetupService(),
+            resetTestSalesDataAsync: cancellationToken =>
+            {
+                Assert.False(cancellationToken.IsCancellationRequested);
+                resetCallCount++;
+                return Task.CompletedTask;
+            },
+            confirmResetTestSalesData: () => true);
+
+        await viewModel.ResetTestSalesDataCommand.ExecuteAsync(null);
+
+        Assert.Equal(1, resetCallCount);
+        Assert.Equal("Local test sales data deleted.", viewModel.StatusMessage);
+    }
+
+    [Fact]
     public async Task ReregisterDeviceCommand_calls_injected_reregister_delegate()
     {
         var reregisterCallCount = 0;
@@ -475,6 +532,42 @@ public sealed class SettingsViewModelTests
         Assert.True(backendViewModel.IsLinklyCloudBackendAsyncMode);
     }
 
+    [Theory]
+    [InlineData("LocalIp", "LocalIp", 1, 0, false)]
+    [InlineData("CloudDirectSync", "CloudDirectSync", 0, 1, true)]
+    [InlineData("CloudBackendAsync", "CloudBackendAsync", 0, 1, false)]
+    public async Task SaveLinklyCommand_persists_and_restores_selected_three_mode(
+        string selectedMode,
+        string expectedStoredMode,
+        int expectedLocalSaveCount,
+        int expectedCloudSaveCount,
+        bool hasSavedCloudSecret)
+    {
+        var service = new FakeCardTerminalSetupService();
+        var viewModel = new SettingsViewModel(service)
+        {
+            SelectedLinklyMode = Enum.Parse<LinklySettingsMode>(selectedMode, ignoreCase: true),
+            LinklyConnectionSucceeded = true,
+            HasSavedLinklyCloudSecret = hasSavedCloudSecret
+        };
+
+        await viewModel.SaveLinklyCommand.ExecuteAsync(null);
+
+        Assert.NotNull(service.SavedConfiguration);
+        Assert.Equal(
+            Enum.Parse<LinklyConnectionMode>(expectedStoredMode, ignoreCase: true),
+            service.SavedConfiguration!.LinklyConnectionMode);
+        Assert.Equal(expectedLocalSaveCount, service.SaveLinklyCallCount);
+        Assert.Equal(expectedCloudSaveCount, service.SaveLinklyCloudCallCount);
+
+        var restoredViewModel = new SettingsViewModel(service);
+        await restoredViewModel.LoadAsync();
+
+        Assert.Equal(
+            Enum.Parse<LinklySettingsMode>(selectedMode, ignoreCase: true),
+            restoredViewModel.SelectedLinklyMode);
+    }
+
     [Fact]
     public async Task Changing_linkly_mode_clears_test_status_without_clearing_configuration_fields()
     {
@@ -569,7 +662,7 @@ public sealed class SettingsViewModelTests
         Assert.NotNull(service.SavedConfiguration);
         Assert.Equal(CardProcessorKind.Linkly, service.SavedConfiguration!.Processor);
         Assert.Equal(CardTerminalEnvironment.Sandbox, service.SavedConfiguration.Environment);
-        Assert.Equal(LinklyConnectionMode.Cloud, service.SavedConfiguration.LinklyConnectionMode);
+        Assert.Equal(LinklyConnectionMode.CloudDirectSync, service.SavedConfiguration.LinklyConnectionMode);
     }
 
     [Fact]
@@ -965,6 +1058,10 @@ public sealed class SettingsViewModelTests
 
         public int LinklyCloudBackendTestCallCount { get; private set; }
 
+        public int SaveLinklyCallCount { get; private set; }
+
+        public int SaveLinklyCloudCallCount { get; private set; }
+
         public Dictionary<CardTerminalEnvironment, bool> LinklyCloudSecretStatuses { get; } = [];
 
         public Dictionary<CardTerminalEnvironment, LinklyCloudCredentialSettings> LinklyCloudCredentials { get; } = [];
@@ -1108,6 +1205,7 @@ public sealed class SettingsViewModelTests
             CardTerminalConfiguration configuration,
             CancellationToken cancellationToken = default)
         {
+            SaveLinklyCallCount++;
             SavedConfiguration = configuration;
             _configuration = configuration;
             return Task.CompletedTask;
@@ -1288,6 +1386,7 @@ public sealed class SettingsViewModelTests
             CardTerminalConfiguration configuration,
             CancellationToken cancellationToken = default)
         {
+            SaveLinklyCloudCallCount++;
             SavedConfiguration = configuration;
             _configuration = configuration;
             return Task.CompletedTask;

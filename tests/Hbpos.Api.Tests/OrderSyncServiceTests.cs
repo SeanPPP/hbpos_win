@@ -1277,6 +1277,26 @@ public sealed class OrderSyncServiceTests
             throw new NotSupportedException();
         }
 
+        public Task<StoreVoucherReservation> ClaimAsync(
+            string token,
+            string storeCode,
+            string voucherCode,
+            decimal amount,
+            string? consumedByReference,
+            CancellationToken cancellationToken)
+        {
+            if (!reservations.TryGetValue(token, out var reservation) ||
+                !string.Equals(reservation.StoreCode, storeCode, StringComparison.OrdinalIgnoreCase) ||
+                !string.Equals(reservation.VoucherCode, voucherCode, StringComparison.OrdinalIgnoreCase) ||
+                reservation.LockedAmount < amount)
+            {
+                throw new InvalidOperationException("Voucher reservation token is invalid, expired, or already claimed.");
+            }
+
+            reservations.Remove(token);
+            return Task.FromResult(reservation);
+        }
+
         public Task ConsumeAsync(string token, CancellationToken cancellationToken)
         {
             ConsumedTokens.Add(token);

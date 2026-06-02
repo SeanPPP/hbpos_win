@@ -20,6 +20,9 @@
   <data name="settings.section.dataReset.title" xml:space="preserve"><value>Data Reset</value></data>
   <data name="settings.section.dataReset.description" xml:space="preserve"><value>Force a fresh local catalog rebuild when data looks stale, prices do not refresh, or the product index needs a clean reset.</value></data>
   <data name="settings.section.dataReset.action" xml:space="preserve"><value>Data Reset</value></data>
+  <data name="settings.section.testSalesDataReset.title" xml:space="preserve"><value>Reset Test Sales Data</value></data>
+  <data name="settings.section.testSalesDataReset.description" xml:space="preserve"><value>Debug only. Deletes local test orders, payments, card transactions, sync queue items, installment orders, daily closes, and suspended orders.</value></data>
+  <data name="settings.section.testSalesDataReset.action" xml:space="preserve"><value>Reset Sales Data</value></data>
   <data name="settings.square.title" xml:space="preserve"><value>Square</value></data>
   <data name="settings.square.description" xml:space="preserve"><value>Use a Square access token to load locations and terminal devices.</value></data>
   <data name="settings.square.switchHelp" xml:space="preserve"><value>Switch to another paired Square terminal in the same location, then save to use it for the next payment.</value></data>
@@ -48,19 +51,22 @@
   <data name="settings.square.timeoutSeconds" xml:space="preserve"><value>Terminal Timeout Seconds</value></data>
   <data name="settings.square.save" xml:space="preserve"><value>Save Square</value></data>
   <data name="settings.linkly.title" xml:space="preserve"><value>ANZ Linkly</value></data>
-  <data name="settings.linkly.description" xml:space="preserve"><value>Connect to the local Linkly EFT-Client, then enable ANZ Linkly for card payments.</value></data>
+  <data name="settings.linkly.description" xml:space="preserve"><value>Choose the Linkly connection mode that matches this checkout: local/LAN IP gateway, Cloud direct sync, or Cloud backend async.</value></data>
   <data name="settings.linkly.cloudMode" xml:space="preserve"><value>Use Linkly Cloud</value></data>
   <data name="settings.linkly.mode.title" xml:space="preserve"><value>Connection mode</value></data>
   <data name="settings.linkly.mode.localIp" xml:space="preserve"><value>Local IP / Port</value></data>
+  <data name="settings.linkly.mode.localIp.help" xml:space="preserve"><value>Use the Windows Linkly EFT-Client on this PC or the local network through the IP gateway.</value></data>
   <data name="settings.linkly.mode.cloudDirectSync" xml:space="preserve"><value>Cloud direct sync</value></data>
+  <data name="settings.linkly.mode.cloudDirectSync.help" xml:space="preserve"><value>Pair directly to Linkly Cloud. This mode only returns transaction status results.</value></data>
   <data name="settings.linkly.mode.cloudBackendAsync" xml:space="preserve"><value>Cloud backend async</value></data>
+  <data name="settings.linkly.mode.cloudBackendAsync.help" xml:space="preserve"><value>Use the backend async workflow with display, receipt, sendkey, and signature authorization support.</value></data>
   <data name="settings.linkly.localIp.title" xml:space="preserve"><value>Local Linkly IP Gateway</value></data>
-  <data name="settings.linkly.localIp.description" xml:space="preserve"><value>Connect this POS to the Windows Linkly EFT-Client by IP address and port.</value></data>
+  <data name="settings.linkly.localIp.description" xml:space="preserve"><value>Connect this POS to the Windows Linkly EFT-Client on the same PC or LAN by IP address and port.</value></data>
   <data name="settings.linkly.localIp.ipAddress" xml:space="preserve"><value>IP Address</value></data>
   <data name="settings.linkly.cloudDirect.title" xml:space="preserve"><value>Cloud direct sync</value></data>
-  <data name="settings.linkly.cloudDirect.description" xml:space="preserve"><value>Save the Cloud API test account on this POS, pair the terminal, then test the direct Cloud connection.</value></data>
+  <data name="settings.linkly.cloudDirect.description" xml:space="preserve"><value>Save the Cloud API test account on this POS, pair the terminal, then test the direct Cloud connection. This mode only exposes transaction status results.</value></data>
   <data name="settings.linkly.cloudBackend.title" xml:space="preserve"><value>Cloud backend async</value></data>
-  <data name="settings.linkly.cloudBackend.description" xml:space="preserve"><value>Use the backend Linkly workflow for asynchronous Cloud processing. Test this store and device against the backend before enabling Linkly.</value></data>
+  <data name="settings.linkly.cloudBackend.description" xml:space="preserve"><value>Use the backend Linkly workflow for asynchronous Cloud processing. This mode supports display, receipt, sendkey, and signature authorization. Test this store and device against the backend before enabling Linkly.</value></data>
   <data name="settings.linkly.cloudBackend.test" xml:space="preserve"><value>Test Backend</value></data>
   <data name="settings.linkly.cloud.secret" xml:space="preserve"><value>Cloud Pairing Secret</value></data>
   <data name="settings.linkly.cloud.secretStatus.cached" xml:space="preserve"><value>Paired secret is saved securely on this POS.</value></data>
@@ -113,8 +119,9 @@
   <data name="settings.linkly.sop.local.step10" xml:space="preserve"><value>Host is usually 127.0.0.1 and Port is usually 2011.</value></data>
   <data name="settings.linkly.sop.local.step11" xml:space="preserve"><value>Click Test Linkly. After the test succeeds, click Enable Linkly.</value></data>
   <data name="settings.linkly.sop.mode.title" xml:space="preserve"><value>How to identify the current mode</value></data>
-  <data name="settings.linkly.sop.mode.cloud" xml:space="preserve"><value>Cloud: the terminal can show a Pairing Code, Func 8880 can re-pair it, and Windows Linkly software is not required for Cloud API transactions.</value></data>
-  <data name="settings.linkly.sop.mode.local" xml:space="preserve"><value>Local USB: In-store Comms is USB / Async DLE 9600, Windows Linkly EFT Client is running, and this POS usually connects to 127.0.0.1:2011.</value></data>
+  <data name="settings.linkly.sop.mode.localIp" xml:space="preserve"><value>Local IP / Port: use when the Windows Linkly EFT-Client is running locally or on the LAN and the POS connects to its IP gateway.</value></data>
+  <data name="settings.linkly.sop.mode.cloudDirectSync" xml:space="preserve"><value>Cloud direct sync: use when the terminal is paired to Linkly Cloud, but the POS only needs transaction status results.</value></data>
+  <data name="settings.linkly.sop.mode.cloudBackendAsync" xml:space="preserve"><value>Cloud backend async: use when the terminal is paired to Linkly Cloud and the POS needs display, receipt, sendkey, or signature authorization support.</value></data>
   <data name="settings.receiptPrinter.title" xml:space="preserve"><value>Receipt printer</value></data>
   <data name="settings.receiptPrinter.description" xml:space="preserve"><value>Configure the thermal receipt printer and the store information printed on receipts.</value></data>
   <data name="settings.receiptPrinter.port" xml:space="preserve"><value>Printer Port</value></data>
@@ -160,6 +167,9 @@
   <data name="settings.status.catalogResetNotConfigured" xml:space="preserve"><value>Catalog reset service is not configured.</value></data>
   <data name="settings.status.catalogResetting" xml:space="preserve"><value>Resetting catalog data...</value></data>
   <data name="settings.status.catalogResetCompleted" xml:space="preserve"><value>Catalog data reset completed.</value></data>
+  <data name="settings.status.testSalesDataResetNotConfigured" xml:space="preserve"><value>Test sales data reset service is not configured.</value></data>
+  <data name="settings.status.testSalesDataResetting" xml:space="preserve"><value>Deleting local test sales data...</value></data>
+  <data name="settings.status.testSalesDataResetCompleted" xml:space="preserve"><value>Local test sales data deleted.</value></data>
   <data name="settings.status.reregisterNotConfigured" xml:space="preserve"><value>Device reregistration service is not configured.</value></data>
   <data name="settings.status.reregisterStarting" xml:space="preserve"><value>Starting change store registration...</value></data>
   <data name="settings.status.operationCanceled" xml:space="preserve"><value>Operation canceled.</value></data>

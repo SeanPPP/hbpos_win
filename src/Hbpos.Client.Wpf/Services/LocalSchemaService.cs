@@ -23,6 +23,7 @@ public sealed class LocalSchemaService(LocalSqliteStore store) : ILocalSchemaSer
         await EnsureDeviceCacheColumnsAsync(connection, cancellationToken);
         await EnsureLocalOrderColumnsAsync(connection, cancellationToken);
         await EnsureLocalOrderLineColumnsAsync(connection, cancellationToken);
+        await EnsureLocalPaymentColumnsAsync(connection, cancellationToken);
         await EnsureLocalInstallmentColumnsAsync(connection, cancellationToken);
         await EnsureSuspendedOrderLineColumnsAsync(connection, cancellationToken);
         await EnsureSuspendedOrderReturnPaymentCapacityColumnsAsync(connection, cancellationToken);
@@ -184,6 +185,18 @@ public sealed class LocalSchemaService(LocalSqliteStore store) : ILocalSchemaSer
         if (!columns.Contains("OriginalOrderDetailGuid"))
         {
             await ExecuteAsync(connection, "ALTER TABLE LocalOrderLines ADD COLUMN OriginalOrderDetailGuid TEXT NULL;", cancellationToken);
+        }
+    }
+
+    private static async Task EnsureLocalPaymentColumnsAsync(
+        SqliteConnection connection,
+        CancellationToken cancellationToken)
+    {
+        var columns = await ReadColumnNamesAsync(connection, "LocalPayments", cancellationToken);
+        if (!columns.Contains("IdempotencyKey"))
+        {
+            // 为已落库但尚未发券的退款支付保留幂等键，便于后续恢复时继续使用原键。
+            await ExecuteAsync(connection, "ALTER TABLE LocalPayments ADD COLUMN IdempotencyKey TEXT NULL;", cancellationToken);
         }
     }
 
@@ -362,7 +375,8 @@ public sealed class LocalSchemaService(LocalSqliteStore store) : ILocalSchemaSer
             OrderGuid TEXT NOT NULL,
             Method INTEGER NOT NULL,
             Amount TEXT NOT NULL,
-            Reference TEXT NULL
+            Reference TEXT NULL,
+            IdempotencyKey TEXT NULL
         );
         """,
         """

@@ -133,7 +133,11 @@ public sealed class InstallmentService(
         var existingPayment = await repository.FindPaymentAsync(normalized.PaymentGuid, cancellationToken);
         if (existingPayment is null && !string.IsNullOrWhiteSpace(normalized.IdempotencyKey))
         {
-            existingPayment = await repository.FindPaymentByIdempotencyKeyAsync(normalized.IdempotencyKey, cancellationToken);
+            // 幂等键只在当前分期单内复用，避免同店同设备的其他分期单误命中。
+            existingPayment = await repository.FindPaymentByIdempotencyKeyAsync(
+                normalized.InstallmentGuid,
+                normalized.IdempotencyKey,
+                cancellationToken);
         }
 
         if (existingPayment is not null)
@@ -200,7 +204,8 @@ public sealed class InstallmentService(
             normalized.CashierId,
             normalized.DeviceCode,
             normalized.CardTransactions,
-            normalized.IdempotencyKey);
+            normalized.IdempotencyKey,
+            normalized.ReservationToken);
 
         var updated = await repository.AppendPaymentAsync(
             details.InstallmentGuid,
@@ -625,7 +630,8 @@ public sealed class InstallmentService(
             cashierId,
             deviceCode,
             payment.CardTransactions,
-            payment.IdempotencyKey);
+            payment.IdempotencyKey,
+            payment.ReservationToken);
     }
 
     private static InstallmentPaymentDto MapRefundPayment(
@@ -644,7 +650,8 @@ public sealed class InstallmentService(
             cashierId,
             deviceCode,
             payment.CardTransactions,
-            payment.IdempotencyKey);
+            payment.IdempotencyKey,
+            ReservationToken: null);
     }
 
     private static string CreateInstallmentNumber(string storeCode, Guid installmentGuid)
@@ -702,6 +709,7 @@ public interface IInstallmentRepository
         CancellationToken cancellationToken);
 
     Task<InstallmentPaymentLookup?> FindPaymentByIdempotencyKeyAsync(
+        Guid installmentGuid,
         string idempotencyKey,
         CancellationToken cancellationToken);
 
@@ -732,6 +740,16 @@ public sealed class SqlSugarInstallmentRepository(HbposSqlSugarContext dbContext
                 .ExecuteCommandAsync(cancellationToken);
             foreach (var payment in details.Payments.Where(payment => payment.Method == PaymentMethodKind.Voucher))
             {
+                // 分期首付用券必须在同一事务里先占用 reservation，再扣减券余额。
+                await SqlSugarStoreVoucherReservationService.ClaimInsideTransactionAsync(
+                    db,
+                    payment.ReservationToken ?? string.Empty,
+                    details.StoreCode,
+                    payment.Reference ?? string.Empty,
+                    payment.Amount,
+                    details.InstallmentGuid.ToString("D"),
+                    payment.RecordedAt,
+                    cancellationToken);
                 await SqlSugarStoreVoucherRepository.RedeemInsideTransactionAsync(
                     db,
                     details.StoreCode,
@@ -770,6 +788,16 @@ public sealed class SqlSugarInstallmentRepository(HbposSqlSugarContext dbContext
             {
                 if (payment.Method == PaymentMethodKind.Voucher)
                 {
+                    // 补款用券同样通过 reservation claim 做一次性闸门。
+                    await SqlSugarStoreVoucherReservationService.ClaimInsideTransactionAsync(
+                        db,
+                        payment.ReservationToken ?? string.Empty,
+                        current.StoreCode,
+                        payment.Reference ?? string.Empty,
+                        payment.Amount,
+                        payment.PaymentGuid.ToString("D"),
+                        payment.RecordedAt,
+                        cancellationToken);
                     await SqlSugarStoreVoucherRepository.RedeemInsideTransactionAsync(
                         db,
                         current.StoreCode,
@@ -906,13 +934,15 @@ public sealed class SqlSugarInstallmentRepository(HbposSqlSugarContext dbContext
     }
 
     public async Task<InstallmentPaymentLookup?> FindPaymentByIdempotencyKeyAsync(
+        Guid installmentGuid,
         string idempotencyKey,
         CancellationToken cancellationToken)
     {
         var db = dbContext.PosmDb;
         await EnsureTablesAsync(db, cancellationToken);
+        var installmentGuidText = installmentGuid.ToString("D");
         var entity = await db.Queryable<InstallmentPaymentEntity>()
-            .FirstAsync(x => x.IdempotencyKey == idempotencyKey, cancellationToken);
+            .FirstAsync(x => x.InstallmentGuid == installmentGuidText && x.IdempotencyKey == idempotencyKey, cancellationToken);
         return entity is null ? null : new InstallmentPaymentLookup(ParseGuid(entity.InstallmentGuid), MapPayment(entity));
     }
 

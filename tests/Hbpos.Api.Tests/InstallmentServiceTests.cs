@@ -1,6 +1,11 @@
+using System.Reflection;
+using System.Runtime.CompilerServices;
+using BlazorApp.Shared.Models.POSM;
+using Hbpos.Api.Data;
 using Hbpos.Api.Services;
 using Hbpos.Contracts.Installments;
 using Hbpos.Contracts.Orders;
+using SqlSugar;
 
 namespace Hbpos.Api.Tests;
 
@@ -84,6 +89,30 @@ public sealed class InstallmentServiceTests
         Assert.True(duplicate.AlreadyRecorded);
         Assert.Equal(firstPaymentGuid, duplicate.PaymentGuid);
         Assert.Equal(30m, duplicate.PaidAmount);
+    }
+
+    [Fact]
+    public async Task Append_payment_allows_same_idempotency_key_on_different_installments()
+    {
+        var service = CreateService();
+        var first = await service.CreateAsync(CreateRequest(totalAmount: 60m, downPaymentAmount: 20m), CancellationToken.None);
+        var second = await service.CreateAsync(CreateRequest(totalAmount: 70m, downPaymentAmount: 20m), CancellationToken.None);
+        var idempotencyKey = "SHARED-PAYMENT-KEY";
+        var firstPaymentGuid = Guid.NewGuid();
+        var secondPaymentGuid = Guid.NewGuid();
+
+        await service.AppendPaymentAsync(
+            CreatePayment(first.InstallmentGuid, firstPaymentGuid, amount: 10m, idempotencyKey: idempotencyKey),
+            CancellationToken.None);
+
+        var response = await service.AppendPaymentAsync(
+            CreatePayment(second.InstallmentGuid, secondPaymentGuid, amount: 15m, idempotencyKey: idempotencyKey),
+            CancellationToken.None);
+
+        Assert.False(response.AlreadyRecorded);
+        Assert.Equal(second.InstallmentGuid, response.InstallmentGuid);
+        Assert.Equal(secondPaymentGuid, response.PaymentGuid);
+        Assert.Equal(35m, response.PaidAmount);
     }
 
     [Fact]
@@ -212,6 +241,117 @@ public sealed class InstallmentServiceTests
     }
 
     [Fact]
+    public async Task Create_with_voucher_payment_redeems_voucher_and_consumes_reservation()
+    {
+        await using var fixture = await InstallmentSqliteFixture.CreateAsync();
+        var timeProvider = new MutableFakeTimeProvider(DateTimeOffset.Parse("2026-05-26T10:00:00Z"));
+        await fixture.SeedVoucherAsync(CreateVoucher(remainingAmount: 30m));
+        var reservationService = new SqlSugarStoreVoucherReservationService(fixture.DbContext, timeProvider);
+        var reservation = await reservationService.ReserveAsync("S01", "V001", 20m, 30m, CancellationToken.None);
+        var service = new InstallmentService(
+            new InMemoryInstallmentRepository(fixture.DbContext),
+            reservationService,
+            timeProvider);
+
+        var response = await service.CreateAsync(
+            CreateRequest(
+                totalAmount: 50m,
+                downPaymentAmount: 20m,
+                method: PaymentMethodKind.Voucher,
+                reference: "V001",
+                reservationToken: reservation.Token),
+            CancellationToken.None);
+
+        var voucher = await fixture.GetVoucherAsync("V001");
+        var storedReservation = await fixture.GetReservationEntityAsync(reservation.Token);
+        Assert.Equal(20m, response.PaidAmount);
+        Assert.NotNull(voucher);
+        Assert.Equal(10m, voucher!.RemainingAmount);
+        Assert.Equal("consumed", storedReservation?.Status);
+        Assert.Null(await reservationService.GetAsync(reservation.Token, CancellationToken.None));
+    }
+
+    [Fact]
+    public async Task Append_with_voucher_payment_redeems_voucher_and_consumes_reservation()
+    {
+        await using var fixture = await InstallmentSqliteFixture.CreateAsync();
+        var timeProvider = new MutableFakeTimeProvider(DateTimeOffset.Parse("2026-05-26T10:00:00Z"));
+        await fixture.SeedVoucherAsync(CreateVoucher(remainingAmount: 50m));
+        var reservationService = new SqlSugarStoreVoucherReservationService(fixture.DbContext, timeProvider);
+        var service = new InstallmentService(
+            new InMemoryInstallmentRepository(fixture.DbContext),
+            reservationService,
+            timeProvider);
+        var created = await service.CreateAsync(
+            CreateRequest(totalAmount: 60m, downPaymentAmount: 20m),
+            CancellationToken.None);
+        var reservation = await reservationService.ReserveAsync("S01", "V001", 30m, 50m, CancellationToken.None);
+
+        var response = await service.AppendPaymentAsync(
+            CreatePayment(
+                created.InstallmentGuid,
+                Guid.NewGuid(),
+                amount: 30m,
+                method: PaymentMethodKind.Voucher,
+                reference: "V001",
+                reservationToken: reservation.Token),
+            CancellationToken.None);
+
+        var voucher = await fixture.GetVoucherAsync("V001");
+        var storedReservation = await fixture.GetReservationEntityAsync(reservation.Token);
+        Assert.Equal(50m, response.PaidAmount);
+        Assert.Equal(10m, response.BalanceAmount);
+        Assert.NotNull(voucher);
+        Assert.Equal(20m, voucher!.RemainingAmount);
+        Assert.Equal("consumed", storedReservation?.Status);
+        Assert.Null(await reservationService.GetAsync(reservation.Token, CancellationToken.None));
+    }
+
+    [Fact]
+    public async Task Append_with_voucher_payment_rejects_reused_reservation_token()
+    {
+        await using var fixture = await InstallmentSqliteFixture.CreateAsync();
+        var timeProvider = new MutableFakeTimeProvider(DateTimeOffset.Parse("2026-05-26T10:00:00Z"));
+        await fixture.SeedVoucherAsync(CreateVoucher(remainingAmount: 50m));
+        var reservationService = new SqlSugarStoreVoucherReservationService(fixture.DbContext, timeProvider);
+        var service = new InstallmentService(
+            new InMemoryInstallmentRepository(fixture.DbContext),
+            reservationService,
+            timeProvider);
+        var created = await service.CreateAsync(
+            CreateRequest(totalAmount: 60m, downPaymentAmount: 20m),
+            CancellationToken.None);
+        var reservation = await reservationService.ReserveAsync("S01", "V001", 15m, 50m, CancellationToken.None);
+
+        await service.AppendPaymentAsync(
+            CreatePayment(
+                created.InstallmentGuid,
+                Guid.NewGuid(),
+                amount: 15m,
+                method: PaymentMethodKind.Voucher,
+                reference: "V001",
+                reservationToken: reservation.Token),
+            CancellationToken.None);
+
+        var ex = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            service.AppendPaymentAsync(
+                CreatePayment(
+                    created.InstallmentGuid,
+                    Guid.NewGuid(),
+                    amount: 15m,
+                    method: PaymentMethodKind.Voucher,
+                    reference: "V001",
+                    reservationToken: reservation.Token),
+                CancellationToken.None));
+        var voucher = await fixture.GetVoucherAsync("V001");
+        var storedReservation = await fixture.GetReservationEntityAsync(reservation.Token);
+        Assert.Contains("Voucher reservation token", ex.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.NotNull(voucher);
+        Assert.Equal(35m, voucher!.RemainingAmount);
+        Assert.Equal("consumed", storedReservation?.Status);
+    }
+
+    [Fact]
     public async Task Cancel_with_refund_marks_active_installment_cancelled()
     {
         var service = CreateService();
@@ -320,7 +460,9 @@ public sealed class InstallmentServiceTests
         Guid paymentGuid,
         decimal amount,
         PaymentMethodKind method = PaymentMethodKind.Cash,
-        string? idempotencyKey = null)
+        string? idempotencyKey = null,
+        string? reference = null,
+        string? reservationToken = null)
     {
         return new InstallmentAppendPaymentRequest(
             installmentGuid,
@@ -331,8 +473,26 @@ public sealed class InstallmentServiceTests
             "Cashier",
             amount,
             method,
-            null,
+            reference,
+            reservationToken,
             IdempotencyKey: idempotencyKey);
+    }
+
+    private static StoreVoucher CreateVoucher(decimal remainingAmount)
+    {
+        return new StoreVoucher
+        {
+            ID = 1,
+            StoreCode = "S01",
+            VoucherCode = "V001",
+            VoucherType = 3,
+            Amount = remainingAmount,
+            RemainingAmount = remainingAmount,
+            Status = "1",
+            ExpiredDate = DateTime.UtcNow.AddDays(3),
+            DiscountRate = 0m,
+            IsDelete = false
+        };
     }
 
     private static InstallmentConfirmPickupRequest CreatePickup(Guid installmentGuid)
@@ -373,23 +533,26 @@ public sealed class InstallmentServiceTests
             "Void without refund");
     }
 
-    private sealed class InMemoryInstallmentRepository : IInstallmentRepository
+    private sealed class InMemoryInstallmentRepository(HbposSqlSugarContext? dbContext = null) : IInstallmentRepository
     {
         private readonly Dictionary<Guid, InstallmentDetailsDto> details = [];
         private readonly Dictionary<Guid, Guid> paymentIndex = [];
 
-        public Task CreateAsync(InstallmentDetailsDto details, CancellationToken cancellationToken)
+        public async Task CreateAsync(InstallmentDetailsDto details, CancellationToken cancellationToken)
         {
+            if (dbContext is not null)
+            {
+                await RedeemVoucherPaymentsAsync(details.StoreCode, details.CashierId, details.Payments, cancellationToken);
+            }
+
             this.details[details.InstallmentGuid] = details;
             foreach (var payment in details.Payments)
             {
                 paymentIndex[payment.PaymentGuid] = details.InstallmentGuid;
             }
-
-            return Task.CompletedTask;
         }
 
-        public Task<InstallmentDetailsDto> AppendPaymentAsync(
+        public async Task<InstallmentDetailsDto> AppendPaymentAsync(
             Guid installmentGuid,
             InstallmentPaymentDto payment,
             CancellationToken cancellationToken)
@@ -397,6 +560,11 @@ public sealed class InstallmentServiceTests
             var current = details[installmentGuid];
             if (!paymentIndex.ContainsKey(payment.PaymentGuid))
             {
+                if (dbContext is not null && payment.Method == PaymentMethodKind.Voucher)
+                {
+                    await RedeemVoucherPaymentsAsync(current.StoreCode, payment.CashierId, [payment], cancellationToken);
+                }
+
                 paymentIndex[payment.PaymentGuid] = installmentGuid;
                 var paidAmount = current.PaidAmount + payment.Amount;
                 var balanceAmount = Math.Max(0m, current.TotalAmount - paidAmount);
@@ -410,7 +578,53 @@ public sealed class InstallmentServiceTests
                 details[installmentGuid] = current;
             }
 
-            return Task.FromResult(current);
+            return current;
+        }
+
+        private async Task RedeemVoucherPaymentsAsync(
+            string storeCode,
+            string cashierId,
+            IReadOnlyList<InstallmentPaymentDto> payments,
+            CancellationToken cancellationToken)
+        {
+            var voucherPayments = payments
+                .Where(payment => payment.Method == PaymentMethodKind.Voucher)
+                .ToList();
+            if (voucherPayments.Count == 0 || dbContext is null)
+            {
+                return;
+            }
+
+            await dbContext.PosmDb.Ado.BeginTranAsync();
+            try
+            {
+                foreach (var payment in voucherPayments)
+                {
+                    await SqlSugarStoreVoucherReservationService.ClaimInsideTransactionAsync(
+                        dbContext.PosmDb,
+                        payment.ReservationToken ?? string.Empty,
+                        storeCode,
+                        payment.Reference ?? string.Empty,
+                        payment.Amount,
+                        payment.PaymentGuid.ToString("D"),
+                        payment.RecordedAt,
+                        cancellationToken);
+                    await SqlSugarStoreVoucherRepository.RedeemInsideTransactionAsync(
+                        dbContext.PosmDb,
+                        storeCode,
+                        payment.Reference ?? string.Empty,
+                        payment.Amount,
+                        cashierId,
+                        cancellationToken);
+                }
+
+                await dbContext.PosmDb.Ado.CommitTranAsync();
+            }
+            catch
+            {
+                await dbContext.PosmDb.Ado.RollbackTranAsync();
+                throw;
+            }
         }
 
         public Task<InstallmentDetailsDto> ConfirmPickupAsync(
@@ -480,9 +694,13 @@ public sealed class InstallmentServiceTests
             return Task.FromResult<InstallmentPaymentLookup?>(new InstallmentPaymentLookup(installmentGuid, payment));
         }
 
-        public Task<InstallmentPaymentLookup?> FindPaymentByIdempotencyKeyAsync(string idempotencyKey, CancellationToken cancellationToken)
+        public Task<InstallmentPaymentLookup?> FindPaymentByIdempotencyKeyAsync(
+            Guid installmentGuid,
+            string idempotencyKey,
+            CancellationToken cancellationToken)
         {
             var match = details.Values
+                .Where(order => order.InstallmentGuid == installmentGuid)
                 .SelectMany(order => order.Payments.Select(payment => new { order.InstallmentGuid, Payment = payment }))
                 .FirstOrDefault(x => string.Equals(x.Payment.IdempotencyKey, idempotencyKey, StringComparison.Ordinal));
             return Task.FromResult(match is null
@@ -581,10 +799,120 @@ public sealed class InstallmentServiceTests
             throw new NotSupportedException();
         }
 
+        public Task<StoreVoucherReservation> ClaimAsync(
+            string token,
+            string storeCode,
+            string voucherCode,
+            decimal amount,
+            string? consumedByReference,
+            CancellationToken cancellationToken)
+        {
+            if (!reservations.TryGetValue(token, out var reservation) ||
+                !string.Equals(reservation.StoreCode, storeCode, StringComparison.OrdinalIgnoreCase) ||
+                !string.Equals(reservation.VoucherCode, voucherCode, StringComparison.OrdinalIgnoreCase) ||
+                reservation.LockedAmount < amount)
+            {
+                throw new InvalidOperationException("Voucher reservation token is invalid, expired, or already claimed.");
+            }
+
+            reservations.Remove(token);
+            return Task.FromResult(reservation);
+        }
+
         public Task ConsumeAsync(string token, CancellationToken cancellationToken)
         {
             reservations.Remove(token);
             return Task.CompletedTask;
+        }
+    }
+
+    private sealed class MutableFakeTimeProvider(DateTimeOffset now) : TimeProvider
+    {
+        public DateTimeOffset UtcNow { get; set; } = now;
+
+        public override DateTimeOffset GetUtcNow() => UtcNow;
+    }
+
+    private sealed class InstallmentSqliteFixture : IAsyncDisposable
+    {
+        private readonly string databasePath = Path.Combine(
+            Path.GetTempPath(),
+            $"hbpos-installment-voucher-tests-{Guid.NewGuid():N}.db");
+        private readonly SqlSugarClient client;
+
+        private InstallmentSqliteFixture()
+        {
+            client = new SqlSugarClient(new ConnectionConfig
+            {
+                ConnectionString = $"Data Source={databasePath}",
+                DbType = DbType.Sqlite,
+                InitKeyType = InitKeyType.Attribute,
+                IsAutoCloseConnection = true
+            });
+            client.CodeFirst.InitTables<StoreVoucher, StoreVoucherReservationEntity>();
+            DbContext = CreateDbContext(client);
+        }
+
+        public HbposSqlSugarContext DbContext { get; }
+
+        public static Task<InstallmentSqliteFixture> CreateAsync()
+        {
+            return Task.FromResult(new InstallmentSqliteFixture());
+        }
+
+        public Task SeedVoucherAsync(StoreVoucher voucher)
+        {
+            return client.Insertable(voucher).ExecuteCommandAsync();
+        }
+
+        public async Task<StoreVoucher?> GetVoucherAsync(string voucherCode)
+        {
+            return await client.Queryable<StoreVoucher>()
+                .Where(x => x.VoucherCode == voucherCode)
+                .FirstAsync();
+        }
+
+        public async Task<StoreVoucherReservationEntity?> GetReservationEntityAsync(string token)
+        {
+            return await client.Queryable<StoreVoucherReservationEntity>()
+                .Where(x => x.Token == token)
+                .FirstAsync();
+        }
+
+        public ValueTask DisposeAsync()
+        {
+            client.Dispose();
+            if (File.Exists(databasePath))
+            {
+                try
+                {
+                    File.Delete(databasePath);
+                }
+                catch (IOException)
+                {
+                    // SQLite 可能短暂占用测试数据库文件，不影响断言结果。
+                }
+            }
+
+            return ValueTask.CompletedTask;
+        }
+
+        private static HbposSqlSugarContext CreateDbContext(ISqlSugarClient posmDb)
+        {
+            var context = (HbposSqlSugarContext)RuntimeHelpers.GetUninitializedObject(typeof(HbposSqlSugarContext));
+            SetAutoProperty(context, nameof(HbposSqlSugarContext.MainDb), posmDb);
+            SetAutoProperty(context, nameof(HbposSqlSugarContext.PosmDb), posmDb);
+            return context;
+        }
+
+        private static void SetAutoProperty(HbposSqlSugarContext context, string propertyName, ISqlSugarClient value)
+        {
+            var backingField = typeof(HbposSqlSugarContext).GetField(
+                $"<{propertyName}>k__BackingField",
+                BindingFlags.Instance | BindingFlags.NonPublic);
+
+            Assert.NotNull(backingField);
+            backingField!.SetValue(context, value);
         }
     }
 }

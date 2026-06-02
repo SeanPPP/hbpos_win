@@ -267,9 +267,24 @@ public sealed class CashPaymentWorkflowService(
         CancellationToken cancellationToken = default)
     {
         var result = checkout.CreatePaymentOrder(cart, session, tenders, cashTenderedAmount);
-        var order = await IssueRefundVouchersAsync(result.Order, session, cancellationToken);
-        result = result with { Order = order };
+        // 退款代金券先以待发券状态落本地，确保崩溃后仍能沿用原始幂等键恢复。
+        var order = PrepareOrderForVoucherRefundPersistence(result.Order);
         await orderRepository.SavePendingOrderAsync(order, cancellationToken);
+        try
+        {
+            order = await IssuePendingRefundVouchersAsync(order, session, cancellationToken);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            throw new PaymentUploadFailedException(
+                order.OrderGuid,
+                CalculateTenderedAmount(tenders),
+                result.ChangeAmount,
+                ex.Message,
+                ex);
+        }
+
+        result = result with { Order = order };
 
         var hasPositiveVoucher = result.Order.Payments.Any(payment =>
             payment.Method == Hbpos.Contracts.Orders.PaymentMethodKind.Voucher &&
@@ -317,17 +332,11 @@ public sealed class CashPaymentWorkflowService(
         decimal changeAmount,
         CancellationToken cancellationToken = default)
     {
-        if (orderUploadService is null)
-        {
-            throw new InvalidOperationException("Voucher payments require online order upload.");
-        }
-
         var order = await orderRepository.GetOrderAsync(orderGuid, cancellationToken)
             ?? throw new InvalidOperationException("Pending voucher order was not found.");
-
         try
         {
-            await orderUploadService.UploadOrderAsync(orderGuid, cancellationToken);
+            order = await IssuePendingRefundVouchersAsync(order, session, cancellationToken);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
@@ -337,6 +346,31 @@ public sealed class CashPaymentWorkflowService(
                 changeAmount,
                 ex.Message,
                 ex);
+        }
+
+        var hasPositiveVoucher = order.Payments.Any(payment =>
+            payment.Method == PaymentMethodKind.Voucher &&
+            payment.Amount > 0m);
+        if (hasPositiveVoucher)
+        {
+            if (orderUploadService is null)
+            {
+                throw new InvalidOperationException("Voucher payments require online order upload.");
+            }
+
+            try
+            {
+                await orderUploadService.UploadOrderAsync(orderGuid, cancellationToken);
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                throw new PaymentUploadFailedException(
+                    orderGuid,
+                    tenderedAmount,
+                    changeAmount,
+                    ex.Message,
+                    ex);
+            }
         }
 
         cart.Clear();
@@ -481,7 +515,38 @@ public sealed class CashPaymentWorkflowService(
             approvedStatusKey);
     }
 
-    private async Task<LocalOrder> IssueRefundVouchersAsync(
+    private static LocalOrder PrepareOrderForVoucherRefundPersistence(LocalOrder order)
+    {
+        var updatedPayments = new List<LocalPayment>(order.Payments.Count);
+        var changed = false;
+
+        foreach (var payment in order.Payments)
+        {
+            if (!IsVoucherRefundPayment(payment))
+            {
+                updatedPayments.Add(payment);
+                continue;
+            }
+
+            var normalizedIdempotencyKey = EnsureRefundVoucherIdempotencyKey(order.OrderGuid, payment);
+            var normalizedReference = HasIssuedVoucherRefundReference(payment.Reference)
+                ? payment.Reference?.Trim()
+                : "VOUCHER_REFUND_PENDING";
+            var updatedPayment = payment with
+            {
+                Reference = normalizedReference,
+                IdempotencyKey = normalizedIdempotencyKey
+            };
+            updatedPayments.Add(updatedPayment);
+            changed |= !Equals(updatedPayment, payment);
+        }
+
+        return changed
+            ? order with { Payments = updatedPayments }
+            : order;
+    }
+
+    private async Task<LocalOrder> IssuePendingRefundVouchersAsync(
         LocalOrder order,
         PosSessionState session,
         CancellationToken cancellationToken)
@@ -491,19 +556,18 @@ public sealed class CashPaymentWorkflowService(
 
         foreach (var payment in order.Payments)
         {
-            if (payment.Method != PaymentMethodKind.Voucher || payment.Amount >= 0m)
+            if (!IsPendingVoucherRefundPayment(payment))
             {
                 updatedPayments.Add(payment);
                 continue;
             }
 
+            var idempotencyKey = EnsureRefundVoucherIdempotencyKey(order.OrderGuid, payment);
             var authorization = await _voucherTenderClient.IssueRefundAsync(
                 Math.Abs(payment.Amount),
                 session,
                 order.OrderGuid.ToString("D"),
-                string.IsNullOrWhiteSpace(payment.IdempotencyKey)
-                    ? $"{order.OrderGuid:D}:{payment.PaymentGuid:D}"
-                    : payment.IdempotencyKey.Trim(),
+                idempotencyKey,
                 "Refund",
                 cancellationToken);
             if (!authorization.Approved || string.IsNullOrWhiteSpace(authorization.Reference))
@@ -511,13 +575,42 @@ public sealed class CashPaymentWorkflowService(
                 throw new InvalidOperationException(authorization.Message ?? "Voucher refund issuing failed.");
             }
 
-            updatedPayments.Add(payment with { Reference = authorization.Reference });
+            // 每张退款券发券成功后立刻回写本地引用，避免后续步骤失败时再次展示为待处理。
+            await orderRepository.UpdatePaymentReferenceAsync(payment.PaymentGuid, authorization.Reference, cancellationToken);
+            updatedPayments.Add(payment with
+            {
+                Reference = authorization.Reference,
+                IdempotencyKey = idempotencyKey
+            });
             changed = true;
         }
 
         return changed
             ? order with { Payments = updatedPayments }
             : order;
+    }
+
+    private static bool IsVoucherRefundPayment(LocalPayment payment)
+    {
+        return payment.Method == PaymentMethodKind.Voucher && payment.Amount < 0m;
+    }
+
+    private static bool IsPendingVoucherRefundPayment(LocalPayment payment)
+    {
+        return IsVoucherRefundPayment(payment) && !HasIssuedVoucherRefundReference(payment.Reference);
+    }
+
+    private static bool HasIssuedVoucherRefundReference(string? reference)
+    {
+        return !string.IsNullOrWhiteSpace(reference) &&
+            !string.Equals(reference.Trim(), "VOUCHER_REFUND_PENDING", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static string EnsureRefundVoucherIdempotencyKey(Guid orderGuid, LocalPayment payment)
+    {
+        return string.IsNullOrWhiteSpace(payment.IdempotencyKey)
+            ? $"{orderGuid:D}:{payment.PaymentGuid:D}"
+            : payment.IdempotencyKey.Trim();
     }
 
     private static bool HasExistingVoucherTender(

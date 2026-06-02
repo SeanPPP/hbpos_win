@@ -10,6 +10,14 @@ public interface ILocalOrderRepository
 {
     Task SavePendingOrderAsync(LocalOrder order, CancellationToken cancellationToken = default);
 
+    Task UpdatePaymentReferenceAsync(
+        Guid paymentGuid,
+        string? reference,
+        CancellationToken cancellationToken = default)
+    {
+        return Task.CompletedTask;
+    }
+
     Task<IReadOnlyList<LocalOrderSummary>> GetRecentOrdersAsync(int take = 50, CancellationToken cancellationToken = default);
 
     Task<IReadOnlyList<LocalOrderSummary>> GetRecentOrdersAsync(
@@ -83,14 +91,15 @@ public sealed class LocalOrderRepository(LocalSqliteStore store) : ILocalOrderRe
             await using var command = connection.CreateCommand();
             command.Transaction = transaction;
             command.CommandText = """
-                INSERT INTO LocalPayments (PaymentGuid, OrderGuid, Method, Amount, Reference)
-                VALUES ($PaymentGuid, $OrderGuid, $Method, $Amount, $Reference);
+                INSERT INTO LocalPayments (PaymentGuid, OrderGuid, Method, Amount, Reference, IdempotencyKey)
+                VALUES ($PaymentGuid, $OrderGuid, $Method, $Amount, $Reference, $IdempotencyKey);
                 """;
             command.Parameters.AddWithValue("$PaymentGuid", payment.PaymentGuid.ToString());
             command.Parameters.AddWithValue("$OrderGuid", order.OrderGuid.ToString());
             command.Parameters.AddWithValue("$Method", (int)payment.Method);
             command.Parameters.AddWithValue("$Amount", payment.Amount);
             command.Parameters.AddWithValue("$Reference", (object?)payment.Reference ?? DBNull.Value);
+            command.Parameters.AddWithValue("$IdempotencyKey", (object?)payment.IdempotencyKey ?? DBNull.Value);
             await command.ExecuteNonQueryAsync(cancellationToken);
 
             foreach (var cardTransaction in payment.CardTransactions ?? [])
@@ -135,6 +144,24 @@ public sealed class LocalOrderRepository(LocalSqliteStore store) : ILocalOrderRe
         }
 
         await transaction.CommitAsync(cancellationToken);
+    }
+
+    public async Task UpdatePaymentReferenceAsync(
+        Guid paymentGuid,
+        string? reference,
+        CancellationToken cancellationToken = default)
+    {
+        await using var connection = await store.OpenConnectionAsync(cancellationToken);
+        await using var command = connection.CreateCommand();
+        command.CommandText = """
+            UPDATE LocalPayments
+            SET Reference = $Reference
+            WHERE PaymentGuid = $PaymentGuid
+              AND COALESCE(Reference, '') <> COALESCE($Reference, '');
+            """;
+        command.Parameters.AddWithValue("$PaymentGuid", paymentGuid.ToString());
+        command.Parameters.AddWithValue("$Reference", (object?)reference ?? DBNull.Value);
+        await command.ExecuteNonQueryAsync(cancellationToken);
     }
 
     public async Task<IReadOnlyList<LocalOrderSummary>> GetRecentOrdersAsync(int take = 50, CancellationToken cancellationToken = default)
@@ -319,14 +346,14 @@ public sealed class LocalOrderRepository(LocalSqliteStore store) : ILocalOrderRe
     {
         await using var command = connection.CreateCommand();
         command.CommandText = """
-            SELECT PaymentGuid, Method, Amount, Reference
+            SELECT PaymentGuid, Method, Amount, Reference, IdempotencyKey
             FROM LocalPayments
             WHERE OrderGuid = $OrderGuid
             ORDER BY rowid;
             """;
         command.Parameters.AddWithValue("$OrderGuid", orderGuid.ToString());
 
-        var paymentRows = new List<(Guid PaymentGuid, PaymentMethodKind Method, decimal Amount, string? Reference)>();
+        var paymentRows = new List<(Guid PaymentGuid, PaymentMethodKind Method, decimal Amount, string? Reference, string? IdempotencyKey)>();
         await using var reader = await command.ExecuteReaderAsync(cancellationToken);
         while (await reader.ReadAsync(cancellationToken))
         {
@@ -335,7 +362,8 @@ public sealed class LocalOrderRepository(LocalSqliteStore store) : ILocalOrderRe
                 paymentGuid,
                 (PaymentMethodKind)reader.GetInt32(reader.GetOrdinal("Method")),
                 ReadDecimal(reader, "Amount"),
-                ReadNullableString(reader, "Reference")));
+                ReadNullableString(reader, "Reference"),
+                ReadNullableString(reader, "IdempotencyKey")));
         }
 
         var payments = new List<LocalPayment>(paymentRows.Count);
@@ -346,7 +374,8 @@ public sealed class LocalOrderRepository(LocalSqliteStore store) : ILocalOrderRe
                 payment.Method,
                 payment.Amount,
                 payment.Reference,
-                await ReadCardTransactionsAsync(connection, orderGuid, payment.PaymentGuid, cancellationToken)));
+                await ReadCardTransactionsAsync(connection, orderGuid, payment.PaymentGuid, cancellationToken),
+                payment.IdempotencyKey));
         }
 
         return payments;

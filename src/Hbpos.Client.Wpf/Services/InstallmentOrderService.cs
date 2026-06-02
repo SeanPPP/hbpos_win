@@ -161,6 +161,23 @@ public sealed class InstallmentOrderService(
             Amount = Math.Min(request.DownPayment.Amount, request.CartSnapshot.ActualAmount),
             IdempotencyKey = EnsureIdempotencyKey(request.DownPayment.IdempotencyKey, installmentGuid)
         };
+        if (payment.Method == PaymentMethodKind.Card)
+        {
+            // 银行卡首付必须先由终端授权，成功后再创建分期单。
+            var authorization = await _cardTerminalClient.AuthorizeAsync(payment.Amount, request.Session, cancellationToken);
+            if (!authorization.Approved)
+            {
+                return new InstallmentOrderCreateResult(false, authorization.Message ?? "银行卡首付未授权，分期单未创建。");
+            }
+
+            payment = payment with
+            {
+                Amount = authorization.AuthorizedAmount ?? payment.Amount,
+                Reference = authorization.Reference ?? payment.Reference,
+                CardTransactions = authorization.CardTransactions ?? payment.CardTransactions
+            };
+        }
+
         var apiRequest = new InstallmentCreateRequest(
             installmentGuid,
             request.Session.StoreCode,

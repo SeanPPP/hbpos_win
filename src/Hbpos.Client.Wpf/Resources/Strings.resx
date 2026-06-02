@@ -361,6 +361,12 @@
   <data name="returns.pending" xml:space="preserve"><value>Items to Return</value></data>
   <data name="returns.totalRefund" xml:space="preserve"><value>Total Refund</value></data>
   <data name="returns.addToCart" xml:space="preserve"><value>Add to Cart</value></data>
+  <data name="returns.addOpenItem" xml:space="preserve"><value>No-barcode Item</value></data>
+  <data name="returns.openItem.title" xml:space="preserve"><value>No-barcode return item</value></data>
+  <data name="returns.openItem.subtitle" xml:space="preserve"><value>Use OPENITEM from the local catalog, then enter the refund retail price.</value></data>
+  <data name="returns.openItem.name" xml:space="preserve"><value>Item name</value></data>
+  <data name="returns.openItem.price" xml:space="preserve"><value>Retail price</value></data>
+  <data name="returns.openItem.defaultName" xml:space="preserve"><value>No-barcode Item</value></data>
   <data name="payment.cash.status.returnCheckoutNotReady" xml:space="preserve"><value>Refund checkout is not implemented yet. Remove return lines or use the refund payment page later.</value></data>
   <data name="payment.currentTender" xml:space="preserve"><value>Current Tender</value></data>
   <data name="payment.changeDue" xml:space="preserve"><value>Change Due</value></data>
@@ -393,6 +399,7 @@
   <data name="payment.status.remainingBalance" xml:space="preserve"><value>The order must be fully paid before completion.</value></data>
   <data name="payment.refund.status.noTendersAdded" xml:space="preserve"><value>Add at least one refund tender before completing the refund.</value></data>
   <data name="payment.refund.status.remainingBalance" xml:space="preserve"><value>The refund must be fully covered before completion.</value></data>
+  <data name="payment.refund.status.voucherOfflineUnavailable" xml:space="preserve"><value>Voucher refunds are unavailable while offline. Reconnect before using refund voucher.</value></data>
   <data name="payment.status.duplicateVoucher" xml:space="preserve"><value>This voucher has already been added.</value></data>
   <data name="payment.status.voucherCodeRequired" xml:space="preserve"><value>Enter a voucher code before adding voucher payment.</value></data>
   <data name="payment.status.duplicatePaymentMethod" xml:space="preserve"><value>This payment method has already been added.</value></data>
@@ -477,6 +484,12 @@
   <data name="returns.status.orderNotFound" xml:space="preserve"><value>Order {0} was not found.</value></data>
   <data name="returns.status.loadedLocalStale" xml:space="preserve"><value>Loaded local order {0}; online order history is not available.</value></data>
   <data name="returns.status.addedReceiptLine" xml:space="preserve"><value>Added {0} to refund cart.</value></data>
+  <data name="returns.status.openItemPrompt" xml:space="preserve"><value>Enter a no-barcode item name and retail price.</value></data>
+  <data name="returns.status.openItemNameRequired" xml:space="preserve"><value>Enter an item name.</value></data>
+  <data name="returns.status.openItemPriceRequired" xml:space="preserve"><value>Enter a retail price greater than zero.</value></data>
+  <data name="returns.status.openItemMissing" xml:space="preserve"><value>OPENITEM was not found in the local catalog.</value></data>
+  <data name="returns.status.openItemDuplicate" xml:space="preserve"><value>Multiple OPENITEM records were found in the local catalog.</value></data>
+  <data name="returns.status.addedNoReceiptOpenItem" xml:space="preserve"><value>Added no-barcode return item: {0}</value></data>
   <data name="returns.orderSummary.none" xml:space="preserve"><value>No order loaded</value></data>
   <data name="returns.orderSummary.format" xml:space="preserve"><value>Order {0}  {1} items  Refund {2:C2}</value></data>
   <data name="returns.priceSource.receipt" xml:space="preserve"><value>Receipt return</value></data>
@@ -559,16 +572,29 @@
   <data name="linkly.cloud.invalidResponse" xml:space="preserve"><value>Linkly Cloud returned an invalid response.</value></data>
   <data name="linkly.cloud.communicationFailed" xml:space="preserve"><value>Linkly Cloud communication failed.</value></data>
   <data name="linkly.cloud.declined" xml:space="preserve"><value>ANZ Linkly Cloud transaction was declined.</value></data>
+  <data name="linkly.cloud.directPendingMessage" xml:space="preserve"><value>Waiting for the card terminal result. Complete the operation on the terminal.</value></data>
+  <data name="linkly.cloud.directStatusHelp" xml:space="preserve"><value>You can cancel on the terminal or send a POS cancel request. The final result is determined by Linkly.</value></data>
+  <data name="linkly.cloud.directCancelRequested" xml:space="preserve"><value>Cancel request sent to the card terminal. Waiting for the final result.</value></data>
+  <data name="linkly.cloud.directCancelFailed" xml:space="preserve"><value>Cancel request could not be sent. Try again or use the terminal.</value></data>
+  <data name="linkly.backend.configValid" xml:space="preserve"><value>ANZ Linkly Cloud backend configuration is valid.</value></data>
+  <data name="linkly.backend.configTestHttpFailed" xml:space="preserve"><value>ANZ Linkly Cloud backend configuration test failed with HTTP {0}.</value></data>
+  <data name="linkly.backend.configIncomplete" xml:space="preserve"><value>ANZ Linkly Cloud backend configuration is incomplete.</value></data>
+  <data name="linkly.backend.refundMissingReference" xml:space="preserve"><value>Linkly Cloud refund requires an original RFN reference.</value></data>
+  <data name="linkly.backend.amountMustBePositive" xml:space="preserve"><value>Card amount must be greater than zero.</value></data>
+  <data name="linkly.backend.timeout" xml:space="preserve"><value>ANZ Linkly Cloud transaction timed out.</value></data>
+  <data name="linkly.backend.communicationFailed" xml:space="preserve"><value>ANZ Linkly Cloud backend communication failed.</value></data>
+  <data name="linkly.backend.invalidResponse" xml:space="preserve"><value>ANZ Linkly Cloud backend returned an invalid response.</value></data>
+  <data name="linkly.backend.activeSessionResume" xml:space="preserve"><value>Current terminal has an unfinished card transaction. Continuing to poll/recover that session.</value></data>
+  <data name="linkly.backend.activeSessionUnavailable" xml:space="preserve"><value>Current terminal has an unfinished card transaction, but no recoverable active session was returned. Try again later.</value></data>
+  <data name="linkly.backend.sendKeyFailed" xml:space="preserve"><value>Card terminal action failed. Try again or recover the transaction.</value></data>
+  <data name="linkly.backend.notSubmitted" xml:space="preserve"><value>Linkly Cloud transaction was not submitted. Retry the payment.</value></data>
+  <data name="linkly.backend.declined" xml:space="preserve"><value>ANZ Linkly Cloud transaction was declined.</value></data>
   <data name="linkly.backend.dialog.title" xml:space="preserve"><value>ANZ Linkly Terminal</value></data>
   <data name="linkly.backend.dialog.status" xml:space="preserve"><value>Status</value></data>
   <data name="linkly.backend.dialog.display" xml:space="preserve"><value>Terminal display</value></data>
   <data name="linkly.backend.dialog.receipt" xml:space="preserve"><value>Receipt</value></data>
   <data name="linkly.backend.dialog.confirm" xml:space="preserve"><value>Confirm</value></data>
   <data name="linkly.backend.dialog.cancel" xml:space="preserve"><value>Cancel</value></data>
-  <data name="linkly.cloud.directPendingMessage" xml:space="preserve"><value>Waiting for the card terminal result. Complete the operation on the terminal.</value></data>
-  <data name="linkly.cloud.directStatusHelp" xml:space="preserve"><value>You can cancel on the terminal or send a POS cancel request. The final result is determined by Linkly.</value></data>
-  <data name="linkly.cloud.directCancelRequested" xml:space="preserve"><value>Cancel request sent to the card terminal. Waiting for the final result.</value></data>
-  <data name="linkly.cloud.directCancelFailed" xml:space="preserve"><value>Cancel request could not be sent. Try again or use the terminal.</value></data>
   <data name="linkly.backend.dialog.close" xml:space="preserve"><value>Close</value></data>
   <data name="linkly.backend.dialog.button.cancelPayment" xml:space="preserve"><value>Cancel payment</value></data>
   <data name="linkly.backend.dialog.button.okCancel" xml:space="preserve"><value>OK / Cancel</value></data>
@@ -577,4 +603,62 @@
   <data name="linkly.backend.dialog.button.noDeclined" xml:space="preserve"><value>No / Declined</value></data>
   <data name="linkly.backend.dialog.button.authoriseSignature" xml:space="preserve"><value>Authorise signature</value></data>
   <data name="linkly.backend.dialog.button.cancel" xml:space="preserve"><value>Cancel</value></data>
+  <data name="installment.common.input.reference" xml:space="preserve"><value>Reference / voucher code</value></data>
+  <data name="installment.common.input.voucherToken" xml:space="preserve"><value>Voucher reservation token</value></data>
+  <data name="installment.center.title" xml:space="preserve"><value>Installment Center</value></data>
+  <data name="installment.center.currentOrder.none" xml:space="preserve"><value>There is no current order available for a new installment.</value></data>
+  <data name="installment.center.currentOrder.amount" xml:space="preserve"><value>Current order amount {0:C2}. A new installment can be created.</value></data>
+  <data name="installment.center.action.backToPayment" xml:space="preserve"><value>Back to Payment</value></data>
+  <data name="installment.center.action.search" xml:space="preserve"><value>Search</value></data>
+  <data name="installment.center.action.create" xml:space="preserve"><value>Create Installment</value></data>
+  <data name="installment.center.action.repay" xml:space="preserve"><value>Add Repayment</value></data>
+  <data name="installment.center.action.cancel" xml:space="preserve"><value>Cancel and Refund</value></data>
+  <data name="installment.center.action.void" xml:space="preserve"><value>Void</value></data>
+  <data name="installment.center.action.confirmPickup" xml:space="preserve"><value>Confirm Pickup</value></data>
+  <data name="installment.center.search" xml:space="preserve"><value>Search order no., name, or phone</value></data>
+  <data name="installment.center.offline" xml:space="preserve"><value>Offline mode only supports local cached installment orders.</value></data>
+  <data name="installment.center.column.orderNumber" xml:space="preserve"><value>Installment No.</value></data>
+  <data name="installment.center.column.customer" xml:space="preserve"><value>Customer</value></data>
+  <data name="installment.center.column.phone" xml:space="preserve"><value>Phone</value></data>
+  <data name="installment.center.column.total" xml:space="preserve"><value>Total</value></data>
+  <data name="installment.center.column.paid" xml:space="preserve"><value>Paid</value></data>
+  <data name="installment.center.column.outstanding" xml:space="preserve"><value>Outstanding</value></data>
+  <data name="installment.center.column.status" xml:space="preserve"><value>Status</value></data>
+  <data name="installment.center.column.terminal" xml:space="preserve"><value>Terminal</value></data>
+  <data name="installment.center.column.updated" xml:space="preserve"><value>Updated</value></data>
+  <data name="installment.center.selected.none" xml:space="preserve"><value>No installment selected</value></data>
+  <data name="installment.center.selected.customer.empty" xml:space="preserve"><value>Select an installment order on the left</value></data>
+  <data name="installment.center.selected.outstanding.empty" xml:space="preserve"><value>Outstanding -</value></data>
+  <data name="installment.center.selected.outstanding" xml:space="preserve"><value>Outstanding {0:C2}</value></data>
+  <data name="installment.center.input.repaymentAmount" xml:space="preserve"><value>Repayment amount</value></data>
+  <data name="installment.center.input.voidReason" xml:space="preserve"><value>Void reason</value></data>
+  <data name="installment.center.status.ready" xml:space="preserve"><value>Select an installment order to create or process.</value></data>
+  <data name="installment.center.status.loaded" xml:space="preserve"><value>Loaded {0} installment orders.</value></data>
+  <data name="installment.center.status.searched" xml:space="preserve"><value>Found {0} installment orders.</value></data>
+  <data name="installment.center.status.empty" xml:space="preserve"><value>There are no installment orders.</value></data>
+  <data name="installment.center.status.refreshFailed" xml:space="preserve"><value>{0} (refresh failed: {1})</value></data>
+  <data name="installment.center.status.cardTerminalRequired" xml:space="preserve"><value>Configure a card terminal before adding a card repayment.</value></data>
+  <data name="installment.center.status.cardNotAuthorized" xml:space="preserve"><value>Card repayment was not authorized.</value></data>
+  <data name="installment.create.title" xml:space="preserve"><value>Create Installment</value></data>
+  <data name="installment.create.action.back" xml:space="preserve"><value>Back to Installment Center</value></data>
+  <data name="installment.create.action.submit" xml:space="preserve"><value>Create Installment Order</value></data>
+  <data name="installment.create.offline" xml:space="preserve"><value>Installment orders cannot be created while offline.</value></data>
+  <data name="installment.create.section.customer" xml:space="preserve"><value>Customer Information</value></data>
+  <data name="installment.create.section.cart" xml:space="preserve"><value>Cart Details</value></data>
+  <data name="installment.create.section.payment" xml:space="preserve"><value>Down Payment</value></data>
+  <data name="installment.create.input.customerName" xml:space="preserve"><value>Customer name</value></data>
+  <data name="installment.create.input.customerPhone" xml:space="preserve"><value>Customer phone</value></data>
+  <data name="installment.create.input.downPaymentAmount" xml:space="preserve"><value>Down payment amount</value></data>
+  <data name="installment.create.input.note" xml:space="preserve"><value>Note</value></data>
+  <data name="installment.create.order.total" xml:space="preserve"><value>Order Total</value></data>
+  <data name="installment.create.order.financed" xml:space="preserve"><value>Financed {0:C2}</value></data>
+  <data name="installment.create.status.ready" xml:space="preserve"><value>Complete the customer, down payment, and installment details.</value></data>
+  <data name="installment.create.status.missingCart" xml:space="preserve"><value>There is no current order available for installment creation.</value></data>
+  <data name="installment.create.payment.status.offline" xml:space="preserve"><value>Offline mode cannot submit a down payment.</value></data>
+  <data name="installment.create.payment.status.cash" xml:space="preserve"><value>Cash down payment does not require an additional reference.</value></data>
+  <data name="installment.create.payment.status.card.empty" xml:space="preserve"><value>Card down payment may include a transaction reference for reconciliation.</value></data>
+  <data name="installment.create.payment.status.card.ready" xml:space="preserve"><value>Card down payment reference is ready.</value></data>
+  <data name="installment.create.payment.status.voucher.missingCode" xml:space="preserve"><value>Enter a voucher code.</value></data>
+  <data name="installment.create.payment.status.voucher.missingToken" xml:space="preserve"><value>Enter the voucher reservation token.</value></data>
+  <data name="installment.create.payment.status.voucher.ready" xml:space="preserve"><value>Voucher code and reservation token are ready.</value></data>
 </root>

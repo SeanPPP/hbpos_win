@@ -289,6 +289,15 @@ public sealed class SqlSugarOrderRepository(
         foreach (var redemption in voucherRedemptions)
         {
             var storeCode = plan.Order.BranchCode ?? string.Empty;
+            await SqlSugarStoreVoucherReservationService.ClaimInsideTransactionAsync(
+                db,
+                redemption.ReservationToken,
+                storeCode,
+                redemption.VoucherCode,
+                redemption.Amount,
+                plan.Order.OrderGuid,
+                DateTimeOffset.UtcNow,
+                cancellationToken);
             await SqlSugarStoreVoucherRepository.RedeemInsideTransactionAsync(
                 db,
                 storeCode,

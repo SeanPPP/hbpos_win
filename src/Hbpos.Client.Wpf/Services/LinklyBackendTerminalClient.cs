@@ -4,6 +4,7 @@ using System.Net.Http;
 using System.Net.Http.Json;
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using Hbpos.Client.Wpf.Localization;
 using Hbpos.Client.Wpf.Models;
 using Hbpos.Contracts.Common;
 using Hbpos.Contracts.Linkly;
@@ -35,7 +36,8 @@ public sealed class LinklyBackendTerminalClient(
     HttpClient httpClient,
     ILinklyTerminalDialogService dialogService,
     TimeSpan? pollInterval = null,
-    Func<TimeSpan, CancellationToken, Task>? delayAsync = null) : ILinklyBackendTerminalClient
+    Func<TimeSpan, CancellationToken, Task>? delayAsync = null,
+    ILocalizationService? localization = null) : ILinklyBackendTerminalClient
 {
     private const string ProcessorName = "ANZ";
     private const string StatusCompleted = "Completed";
@@ -44,8 +46,6 @@ public sealed class LinklyBackendTerminalClient(
     private const string StatusTokenRefreshRequired = "TokenRefreshRequired";
     private const string RecoveryRetry = "Retry";
     private const string RecoveryRefreshToken = "RefreshToken";
-    private const string ActiveSessionMessage = "当前终端有未完成刷卡交易，正在继续轮询/恢复该 session。";
-    private const string ActiveSessionUnavailableMessage = "当前终端有未完成刷卡交易，但没有取得可恢复的 active session，请稍后重试。";
     private static readonly TimeSpan DefaultPollInterval = TimeSpan.FromSeconds(1);
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web)
     {
@@ -70,17 +70,20 @@ public sealed class LinklyBackendTerminalClient(
             {
                 var health = ReadHealthResult(content);
                 return health.IsReady
-                    ? new LinklyConnectionTestResult(true, "ANZ Linkly Cloud backend configuration is valid.")
+                    ? new LinklyConnectionTestResult(true, T("linkly.backend.configValid", "ANZ Linkly Cloud backend configuration is valid."))
                     : new LinklyConnectionTestResult(false, FormatHealthFailure(health));
             }
 
             var message = TryReadApiMessage(content) ??
-                $"ANZ Linkly Cloud backend configuration test failed with HTTP {(int)response.StatusCode}.";
+                string.Format(
+                    CultureInfo.InvariantCulture,
+                    T("linkly.backend.configTestHttpFailed", "ANZ Linkly Cloud backend configuration test failed with HTTP {0}."),
+                    (int)response.StatusCode);
             return new LinklyConnectionTestResult(false, message);
         }
         catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException)
         {
-            return new LinklyConnectionTestResult(false, "ANZ Linkly Cloud backend communication failed.");
+            return new LinklyConnectionTestResult(false, T("linkly.backend.communicationFailed", "ANZ Linkly Cloud backend communication failed."));
         }
     }
 
@@ -102,7 +105,7 @@ public sealed class LinklyBackendTerminalClient(
     {
         var refundReference = TryParseRefundReference(originalReference);
         return string.IsNullOrWhiteSpace(refundReference)
-            ? Task.FromResult(new PaymentAuthorizationResult(false, null, "Linkly Cloud refund requires an original RFN reference."))
+            ? Task.FromResult(new PaymentAuthorizationResult(false, null, T("linkly.backend.refundMissingReference", "Linkly Cloud refund requires an original RFN reference.")))
             : RunAsync("R", amount, session, settings, refundReference, cancellationToken);
     }
 
@@ -116,11 +119,12 @@ public sealed class LinklyBackendTerminalClient(
     {
         if (amount <= 0m)
         {
-            return new PaymentAuthorizationResult(false, null, "Card amount must be greater than zero.");
+            return new PaymentAuthorizationResult(false, null, T("linkly.backend.amountMustBePositive", "Card amount must be greater than zero."));
         }
 
         using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         timeoutCts.CancelAfter(settings.TerminalTimeout <= TimeSpan.Zero ? TimeSpan.FromSeconds(180) : settings.TerminalTimeout);
+        var keepDialogOpen = false;
 
         try
         {
@@ -130,6 +134,7 @@ public sealed class LinklyBackendTerminalClient(
             {
                 var recoveredStatus = await ResumeActiveSessionAsync(settings, activeStatus, timeoutCts.Token);
                 var recoveredResult = ToAuthorizationResult(recoveredStatus, amount, fallbackTxnRef, suppressPrintedReceipt: true);
+                keepDialogOpen = !recoveredResult.Approved;
                 return recoveredResult;
             }
 
@@ -150,33 +155,51 @@ public sealed class LinklyBackendTerminalClient(
                 activeStatus = await GetActiveSessionAsync(settings, timeoutCts.Token);
                 if (activeStatus is null)
                 {
-                    return new PaymentAuthorizationResult(false, null, ActiveSessionUnavailableMessage);
+                    var message = T("linkly.backend.activeSessionUnavailable", "Current terminal has an unfinished card transaction, but no recoverable active session was returned. Try again later.");
+                    await PresentFinalFailureAsync("backend-active-unavailable", message, CancellationToken.None);
+                    keepDialogOpen = true;
+                    return new PaymentAuthorizationResult(false, null, message);
                 }
 
                 var recoveredStatus = await ResumeActiveSessionAsync(settings, activeStatus, timeoutCts.Token);
                 var recoveredResult = ToAuthorizationResult(recoveredStatus, amount, fallbackTxnRef, suppressPrintedReceipt: true);
+                keepDialogOpen = !recoveredResult.Approved;
                 return recoveredResult;
             }
 
             status = await PollUntilFinalAsync(settings, status, timeoutCts.Token);
             var result = ToAuthorizationResult(status, amount, fallbackTxnRef, suppressPrintedReceipt: false);
+            keepDialogOpen = !result.Approved;
             return result;
         }
         catch (OperationCanceledException) when (timeoutCts.IsCancellationRequested && !cancellationToken.IsCancellationRequested)
         {
-            return new PaymentAuthorizationResult(false, null, "ANZ Linkly Cloud transaction timed out.");
+            var message = T("linkly.backend.timeout", "ANZ Linkly Cloud transaction timed out.");
+            await PresentFinalFailureAsync("backend-timeout", message, CancellationToken.None);
+            keepDialogOpen = true;
+            return new PaymentAuthorizationResult(false, null, message);
         }
         catch (HttpRequestException)
         {
-            return new PaymentAuthorizationResult(false, null, "ANZ Linkly Cloud backend communication failed.");
+            var message = T("linkly.backend.communicationFailed", "ANZ Linkly Cloud backend communication failed.");
+            await PresentFinalFailureAsync("backend-http-error", message, CancellationToken.None);
+            keepDialogOpen = true;
+            return new PaymentAuthorizationResult(false, null, message);
         }
         catch (JsonException)
         {
-            return new PaymentAuthorizationResult(false, null, "ANZ Linkly Cloud backend returned an invalid response.");
+            var message = T("linkly.backend.invalidResponse", "ANZ Linkly Cloud backend returned an invalid response.");
+            await PresentFinalFailureAsync("backend-json-error", message, CancellationToken.None);
+            keepDialogOpen = true;
+            return new PaymentAuthorizationResult(false, null, message);
         }
         finally
         {
-            await dialogService.CloseAsync(CancellationToken.None);
+            // 成功交易自动收起页面弹窗；失败最终状态保留给收银员确认。
+            if (!keepDialogOpen)
+            {
+                await dialogService.CloseAsync(CancellationToken.None);
+            }
         }
     }
 
@@ -185,7 +208,11 @@ public sealed class LinklyBackendTerminalClient(
         LinklyCloudBackendSessionResponse activeStatus,
         CancellationToken cancellationToken)
     {
-        var status = await PresentStatusAsync(settings, activeStatus, ActiveSessionMessage, cancellationToken);
+        var status = await PresentStatusAsync(
+            settings,
+            activeStatus,
+            T("linkly.backend.activeSessionResume", "Current terminal has an unfinished card transaction. Continuing to poll/recover that session."),
+            cancellationToken);
         if (!IsFinal(status))
         {
             status = await RecoverAsync(settings, status.SessionId, cancellationToken);
@@ -240,24 +267,108 @@ public sealed class LinklyBackendTerminalClient(
             }
 
             // 刷卡机按键由独立对话服务翻译，支付流程只发送后端 sendkey 契约。
-            status = await SendKeyAsync(settings, status.SessionId, action, cancellationToken);
-            message = null;
+            try
+            {
+                status = await SendKeyAsync(settings, status.SessionId, action, cancellationToken);
+                message = null;
+            }
+            catch (HttpRequestException)
+            {
+                message = T("linkly.backend.sendKeyFailed", "Card terminal action failed. Try again or recover the transaction.");
+                continue;
+            }
         }
+    }
+
+    private Task PresentFinalFailureAsync(
+        string sessionId,
+        string message,
+        CancellationToken cancellationToken)
+    {
+        return dialogService.UpdateAsync(
+            new LinklyTerminalDialogState(
+                sessionId,
+                StatusFailed,
+                message,
+                ReceiptText: null,
+                ResponseText: message,
+                RecoveryCount: 0,
+                LastHttpStatus: null,
+                Message: null,
+                IsInteractive: false,
+                IsFinal: true,
+                DisplayButtons: []),
+            cancellationToken);
     }
 
     private static LinklyTerminalDialogState ToDialogState(
         LinklyCloudBackendSessionResponse status,
         string? message)
     {
+        var isFinal = IsFinal(status);
+        var responseText = NormalizeOptional(status.ResponseText);
+        // 最终态不能继续显示旧的刷卡提示，否则会遮住批准/失败结果。
+        var displayText = isFinal
+            ? responseText ?? NormalizeOptional(status.Status)
+            : NormalizeOptional(status.DisplayText);
+
         return new LinklyTerminalDialogState(
             status.SessionId,
             status.Status,
-            NormalizeOptional(status.DisplayText),
+            displayText,
             ReadReceiptText(status),
-            NormalizeOptional(status.ResponseText),
+            responseText,
             status.RecoveryCount,
             status.LastHttpStatus,
-            NormalizeOptional(message));
+            NormalizeOptional(message),
+            LinklyTerminalDialogMode.CloudBackendInteractive,
+            IsInteractive: !isFinal,
+            IsFinal: isFinal,
+            DisplayButtons: BuildDisplayButtons(status),
+            InputType: NormalizeOptional(status.InputType),
+            GraphicCode: NormalizeOptional(status.GraphicCode));
+    }
+
+    private static IReadOnlyList<LinklyTerminalDialogButton> BuildDisplayButtons(
+        LinklyCloudBackendSessionResponse status)
+    {
+        if (IsFinal(status))
+        {
+            return [];
+        }
+
+        var buttons = new List<LinklyTerminalDialogButton>();
+        if (status.OKKeyFlag && status.CancelKeyFlag)
+        {
+            buttons.Add(new LinklyTerminalDialogButton("linkly.backend.dialog.button.okCancel", LinklyTerminalDialogKeys.OkCancel));
+        }
+        else if (status.OKKeyFlag)
+        {
+            buttons.Add(new LinklyTerminalDialogButton("linkly.backend.dialog.button.ok", LinklyTerminalDialogKeys.OkCancel));
+        }
+
+        if (status.AcceptYesKeyFlag)
+        {
+            buttons.Add(new LinklyTerminalDialogButton("linkly.backend.dialog.button.yesApproved", LinklyTerminalDialogKeys.Yes));
+        }
+
+        if (status.DeclineNoKeyFlag)
+        {
+            buttons.Add(new LinklyTerminalDialogButton("linkly.backend.dialog.button.noDeclined", LinklyTerminalDialogKeys.No, IsDestructive: true));
+        }
+
+        if (status.AuthoriseKeyFlag)
+        {
+            // 签名授权按官方 sendkey AUTH=3 发送，不能退化成普通确认。
+            buttons.Add(new LinklyTerminalDialogButton("linkly.backend.dialog.button.authoriseSignature", LinklyTerminalDialogKeys.Auth));
+        }
+
+        if (!status.OKKeyFlag && status.CancelKeyFlag)
+        {
+            buttons.Add(new LinklyTerminalDialogButton("linkly.backend.dialog.button.cancel", LinklyTerminalDialogKeys.OkCancel, IsDestructive: true));
+        }
+
+        return buttons;
     }
 
     private async Task<LinklyCloudBackendSessionResponse> StartTransactionAsync(
@@ -394,11 +505,11 @@ public sealed class LinklyBackendTerminalClient(
         return result.Data;
     }
 
-    private static string FormatHealthFailure(LinklyCloudBackendHealthResponse health)
+    private string FormatHealthFailure(LinklyCloudBackendHealthResponse health)
     {
         var failedCheck = (health.Checks ?? [])
             .FirstOrDefault(check => !check.IsReady && !string.IsNullOrWhiteSpace(check.Message));
-        return failedCheck?.Message ?? "ANZ Linkly Cloud backend configuration is incomplete.";
+        return failedCheck?.Message ?? T("linkly.backend.configIncomplete", "ANZ Linkly Cloud backend configuration is incomplete.");
     }
 
     private PaymentAuthorizationResult ToAuthorizationResult(
@@ -409,7 +520,7 @@ public sealed class LinklyBackendTerminalClient(
     {
         if (string.Equals(status.Status, StatusNotSubmitted, StringComparison.OrdinalIgnoreCase))
         {
-            return new PaymentAuthorizationResult(false, null, "Linkly Cloud transaction was not submitted. Retry the payment.");
+            return new PaymentAuthorizationResult(false, null, T("linkly.backend.notSubmitted", "Linkly Cloud transaction was not submitted. Retry the payment."));
         }
 
         var transactionResult = ReadTransactionResult(status, requestedAmount, requestedTxnRef);
@@ -456,22 +567,27 @@ public sealed class LinklyBackendTerminalClient(
         decimal requestedAmount,
         string requestedTxnRef)
     {
+        var protectedResponseCode = NormalizeOptional(status.ResponseCode);
+        var protectedResponseText = NormalizeOptional(status.ResponseText);
         var notifications = status.Notifications ?? [];
-        var transactionNotification = notifications
-            .LastOrDefault(notification => string.Equals(notification.Type, "transaction", StringComparison.OrdinalIgnoreCase));
+        var transactionNotification = string.IsNullOrWhiteSpace(protectedResponseCode)
+            ? notifications.LastOrDefault(IsTransactionNotification)
+            : notifications.LastOrDefault(notification =>
+                IsTransactionNotification(notification) &&
+                TransactionNotificationMatchesProtectedResult(notification, protectedResponseCode, protectedResponseText));
         if (transactionNotification is null || string.IsNullOrWhiteSpace(transactionNotification.PayloadJson))
         {
             return new LinklyCloudTransactionResult(
                 status.SessionId,
-                string.Equals(status.ResponseCode?.Trim(), "00", StringComparison.OrdinalIgnoreCase),
+                string.Equals(protectedResponseCode, "00", StringComparison.OrdinalIgnoreCase),
                 NormalizeOptional(status.TxnRef) ?? requestedTxnRef,
                 null,
                 null,
                 null,
                 null,
                 null,
-                NormalizeOptional(status.ResponseCode),
-                NormalizeOptional(status.ResponseText),
+                protectedResponseCode,
+                protectedResponseText,
                 null,
                 requestedAmount,
                 null);
@@ -482,18 +598,48 @@ public sealed class LinklyBackendTerminalClient(
         var purchaseAnalysisData = ReadObject(response, "PurchaseAnalysisData");
         return new LinklyCloudTransactionResult(
             status.SessionId,
-            ReadBool(response, "Success") == true,
+            string.IsNullOrWhiteSpace(protectedResponseCode)
+                ? ReadBool(response, "Success") == true
+                : string.Equals(protectedResponseCode, "00", StringComparison.OrdinalIgnoreCase),
             NormalizeOptional(status.TxnRef) ?? requestedTxnRef,
             ReadString(response, "AuthCode"),
             ReadString(response, "CardType"),
             ReadString(response, "CardName"),
             ReadString(response, "Pan"),
             ReadString(response, "Caid"),
-            ReadString(response, "ResponseCode") ?? NormalizeOptional(status.ResponseCode),
-            ReadString(response, "ResponseText") ?? NormalizeOptional(status.ResponseText),
+            protectedResponseCode ?? ReadString(response, "ResponseCode"),
+            protectedResponseText ?? ReadString(response, "ResponseText"),
             ReadString(response, "Stan"),
             ReadDecimal(response, "AmtPurchase") ?? requestedAmount,
             ReadString(purchaseAnalysisData, "RFN"));
+    }
+
+    private static bool IsTransactionNotification(LinklyCloudBackendNotificationDto notification)
+    {
+        return string.Equals(notification.Type, "transaction", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static bool TransactionNotificationMatchesProtectedResult(
+        LinklyCloudBackendNotificationDto notification,
+        string protectedResponseCode,
+        string? protectedResponseText)
+    {
+        if (string.IsNullOrWhiteSpace(notification.PayloadJson))
+        {
+            return false;
+        }
+
+        using var document = JsonDocument.Parse(notification.PayloadJson);
+        var response = ReadResponse(document.RootElement);
+        if (!string.Equals(ReadString(response, "ResponseCode"), protectedResponseCode, StringComparison.OrdinalIgnoreCase))
+        {
+            return false;
+        }
+
+        var responseText = ReadString(response, "ResponseText");
+        return string.IsNullOrWhiteSpace(protectedResponseText) ||
+            string.IsNullOrWhiteSpace(responseText) ||
+            string.Equals(responseText, protectedResponseText, StringComparison.OrdinalIgnoreCase);
     }
 
     private static string? ReadReceiptText(LinklyCloudBackendSessionResponse status)
@@ -682,10 +828,10 @@ public sealed class LinklyBackendTerminalClient(
         var code = NormalizeOptional(responseCode);
         if (text is null && code is null)
         {
-            return "ANZ Linkly Cloud transaction was declined.";
+            return T("linkly.backend.declined", "ANZ Linkly Cloud transaction was declined.");
         }
 
-        return code is null ? text! : $"{text ?? "ANZ Linkly Cloud transaction was declined."} ({code})";
+        return code is null ? text! : $"{text ?? T("linkly.backend.declined", "ANZ Linkly Cloud transaction was declined.")} ({code})";
     }
 
     private static JsonElement ReadResponse(JsonElement root)
@@ -796,6 +942,14 @@ public sealed class LinklyBackendTerminalClient(
     private static string Limit(string value, int maxLength)
     {
         return value.Length <= maxLength ? value : value[..maxLength];
+    }
+
+    private string T(string key, string fallback)
+    {
+        var value = localization?.T(key) ?? LocalizationResourceProvider.Instance[key];
+        return string.IsNullOrWhiteSpace(value) || value.StartsWith("[[", StringComparison.Ordinal)
+            ? fallback
+            : value;
     }
 
     private sealed class LinklyBackendHttpException(

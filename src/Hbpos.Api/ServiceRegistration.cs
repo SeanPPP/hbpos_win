@@ -60,7 +60,7 @@ public static class ServiceRegistration
         services.AddSingleton<ICatalogIndexCache, CatalogIndexCache>();
         services.AddSingleton<IPriceIndexBuilder, PriceIndexBuilder>();
         services.AddSingleton<IOrderSyncPlanner, OrderSyncPlanner>();
-        services.AddSingleton<IStoreVoucherReservationService>(new InMemoryStoreVoucherReservationService(TimeProvider.System));
+        services.AddScoped<IStoreVoucherReservationService, SqlSugarStoreVoucherReservationService>();
 
         return services;
     }

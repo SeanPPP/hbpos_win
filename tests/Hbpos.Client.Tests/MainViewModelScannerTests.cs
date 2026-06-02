@@ -2714,6 +2714,11 @@ public sealed class MainViewModelScannerTests
             ConfirmExitApplicationCallCount++;
             return ConfirmExitApplicationResult;
         }
+
+        public bool ConfirmResetTestSalesData()
+        {
+            return false;
+        }
     }
 
     private sealed record ReceiptPrintCall(Guid? OrderGuid, ReceiptPrintReason Reason);

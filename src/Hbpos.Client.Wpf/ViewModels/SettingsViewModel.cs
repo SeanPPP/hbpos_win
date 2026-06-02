@@ -30,6 +30,8 @@ public sealed partial class SettingsViewModel : ObservableObject
     private readonly ILocalizationService? _localization;
     private readonly Func<CancellationToken, Task>? _downloadCatalogAsync;
     private readonly Func<CancellationToken, Task>? _resetCatalogAsync;
+    private readonly Func<CancellationToken, Task>? _resetTestSalesDataAsync;
+    private readonly Func<bool>? _confirmResetTestSalesData;
     private readonly Func<Task<DeviceReregistrationStartResult>>? _reregisterDeviceAsync;
     private readonly Action? _returnToPos;
     private readonly IReceiptPrinterSettingsStore? _receiptPrinterSettingsStore;
@@ -142,12 +144,16 @@ public sealed partial class SettingsViewModel : ObservableObject
         Func<Task<DeviceReregistrationStartResult>>? reregisterDeviceAsync = null,
         Action? returnToPos = null,
         IReceiptPrinterSettingsStore? receiptPrinterSettingsStore = null,
-        IReceiptPrintService? receiptPrintService = null)
+        IReceiptPrintService? receiptPrintService = null,
+        Func<CancellationToken, Task>? resetTestSalesDataAsync = null,
+        Func<bool>? confirmResetTestSalesData = null)
     {
         _setupService = setupService;
         _localization = localization;
         _downloadCatalogAsync = downloadCatalogAsync;
         _resetCatalogAsync = resetCatalogAsync;
+        _resetTestSalesDataAsync = resetTestSalesDataAsync;
+        _confirmResetTestSalesData = confirmResetTestSalesData;
         _reregisterDeviceAsync = reregisterDeviceAsync;
         _returnToPos = returnToPos;
         _receiptPrinterSettingsStore = receiptPrinterSettingsStore;
@@ -177,6 +183,7 @@ public sealed partial class SettingsViewModel : ObservableObject
         TestReceiptPrinterCommand = new AsyncRelayCommand(TestReceiptPrinterAsync, CanTestReceiptPrinter);
         DownloadCatalogCommand = new AsyncRelayCommand(DownloadCatalogAsync, CanDownloadCatalog);
         ResetCatalogCommand = new AsyncRelayCommand(ResetCatalogAsync, CanResetCatalog);
+        ResetTestSalesDataCommand = new AsyncRelayCommand(ResetTestSalesDataAsync, CanResetTestSalesData);
         ReregisterDeviceCommand = new AsyncRelayCommand(ReregisterDeviceAsync, CanReregisterDevice);
         BackCommand = new RelayCommand(ReturnToPos, () => _returnToPos is not null);
         RefreshLocalizedMessages();
@@ -228,6 +235,8 @@ public sealed partial class SettingsViewModel : ObservableObject
 
     public IAsyncRelayCommand ResetCatalogCommand { get; }
 
+    public IAsyncRelayCommand ResetTestSalesDataCommand { get; }
+
     public IAsyncRelayCommand ReregisterDeviceCommand { get; }
 
     public IRelayCommand BackCommand { get; }
@@ -262,6 +271,18 @@ public sealed partial class SettingsViewModel : ObservableObject
     public bool IsReceiptPrinterSelected => SelectedCategory == SettingsCategory.ReceiptPrinter;
 
     public bool IsDeviceRegistrationSelected => SelectedCategory == SettingsCategory.DeviceRegistration;
+
+    public bool IsDebugTestSalesDataResetVisible
+    {
+        get
+        {
+#if DEBUG
+            return true;
+#else
+            return false;
+#endif
+        }
+    }
 
     public string SquareTokenStatusText => HasSavedSquareToken
         ? T("settings.square.tokenStatus.cached")
@@ -812,6 +833,32 @@ public sealed partial class SettingsViewModel : ObservableObject
         });
     }
 
+    private async Task ResetTestSalesDataAsync(CancellationToken cancellationToken)
+    {
+#if DEBUG
+        if (_resetTestSalesDataAsync is null)
+        {
+            SetStatus("settings.status.testSalesDataResetNotConfigured");
+            return;
+        }
+
+        if (_confirmResetTestSalesData?.Invoke() != true)
+        {
+            return;
+        }
+
+        await RunBusyAsync(async () =>
+        {
+            SetStatus("settings.status.testSalesDataResetting");
+            await _resetTestSalesDataAsync(cancellationToken);
+            SetStatus("settings.status.testSalesDataResetCompleted");
+        });
+#else
+        await Task.CompletedTask;
+        SetStatus("settings.status.testSalesDataResetNotConfigured");
+#endif
+    }
+
     private async Task ReregisterDeviceAsync()
     {
         if (_reregisterDeviceAsync is null)
@@ -919,6 +966,15 @@ public sealed partial class SettingsViewModel : ObservableObject
     private bool CanResetCatalog()
     {
         return !IsBusy && _resetCatalogAsync is not null;
+    }
+
+    private bool CanResetTestSalesData()
+    {
+#if DEBUG
+        return !IsBusy && _resetTestSalesDataAsync is not null;
+#else
+        return false;
+#endif
     }
 
     private bool CanReregisterDevice()
@@ -1263,6 +1319,7 @@ public sealed partial class SettingsViewModel : ObservableObject
         TestReceiptPrinterCommand.NotifyCanExecuteChanged();
         DownloadCatalogCommand.NotifyCanExecuteChanged();
         ResetCatalogCommand.NotifyCanExecuteChanged();
+        ResetTestSalesDataCommand.NotifyCanExecuteChanged();
         ReregisterDeviceCommand.NotifyCanExecuteChanged();
     }
 

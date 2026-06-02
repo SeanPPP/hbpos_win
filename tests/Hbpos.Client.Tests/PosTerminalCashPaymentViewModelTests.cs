@@ -1774,6 +1774,100 @@ public sealed class PosTerminalCashPaymentViewModelTests
     }
 
     [Fact]
+    public async Task Refund_mode_offline_voucher_button_shows_unavailable_without_adding_tender()
+    {
+        var cart = CreateRefundVoucherCart();
+        var workflow = new FakeCashPaymentWorkflowService
+        {
+            TenderToAdd = new PaymentTender(PaymentMethodKind.Voucher, -8.5m, "VOUCHER_REFUND_PENDING")
+        };
+        var viewModel = new PaymentViewModel(cart, workflow, OfflineSession);
+
+        viewModel.PrepareForEntry(OfflineSession);
+
+        Assert.Equal(PaymentEntryMode.Refund, viewModel.PaymentMode);
+        Assert.True(viewModel.SelectVoucherCommand.CanExecute(null));
+
+        await viewModel.SelectVoucherCommand.ExecuteAsync(null);
+
+        Assert.Empty(viewModel.PaymentTenders);
+        Assert.Equal(0, workflow.AddTenderCallCount);
+        Assert.Equal("payment.refund.status.voucherOfflineUnavailable", viewModel.StatusMessage);
+    }
+
+    [Fact]
+    public async Task Refund_mode_offline_voucher_tender_blocks_back_with_offline_status()
+    {
+        var cart = CreateRefundVoucherCart();
+        var workflow = new FakeCashPaymentWorkflowService
+        {
+            TenderToAdd = new PaymentTender(PaymentMethodKind.Voucher, -8.5m, "VOUCHER_REFUND_PENDING")
+        };
+        var returnedToPos = false;
+        var viewModel = new PaymentViewModel(cart, workflow, Session, onBackToPos: () => returnedToPos = true);
+
+        viewModel.PrepareForEntry(Session);
+        await viewModel.SelectVoucherCommand.ExecuteAsync(null);
+        viewModel.Session = OfflineSession;
+
+        viewModel.BackToPosCommand.Execute(null);
+
+        Assert.False(returnedToPos);
+        Assert.Single(viewModel.PaymentTenders);
+        Assert.Equal("payment.refund.status.voucherOfflineUnavailable", viewModel.StatusMessage);
+    }
+
+    [Fact]
+    public async Task Refund_mode_offline_voucher_tender_blocks_completion_without_calling_workflow()
+    {
+        var cart = CreateRefundVoucherCart();
+        var workflow = new FakeCashPaymentWorkflowService
+        {
+            TenderToAdd = new PaymentTender(PaymentMethodKind.Voucher, -8.5m, "VOUCHER_REFUND_PENDING")
+        };
+        var viewModel = new PaymentViewModel(cart, workflow, Session);
+
+        viewModel.PrepareForEntry(Session);
+        await viewModel.SelectVoucherCommand.ExecuteAsync(null);
+        viewModel.Session = OfflineSession;
+
+        Assert.True(viewModel.ConfirmPaymentCommand.CanExecute(null));
+
+        await viewModel.ConfirmPaymentCommand.ExecuteAsync(null);
+
+        Assert.Equal(0, workflow.CompletePaymentCallCount);
+        Assert.Single(viewModel.PaymentTenders);
+        Assert.Equal("payment.refund.status.voucherOfflineUnavailable", viewModel.StatusMessage);
+    }
+
+    [Fact]
+    public async Task Refund_mode_session_change_to_offline_refreshes_commands_and_uses_voucher_guard()
+    {
+        var cart = CreateRefundVoucherCart();
+        var workflow = new FakeCashPaymentWorkflowService
+        {
+            TenderToAdd = new PaymentTender(PaymentMethodKind.Voucher, -8.5m, "VOUCHER_REFUND_PENDING")
+        };
+        var viewModel = new PaymentViewModel(cart, workflow, Session);
+        var selectVoucherCanExecuteChanged = 0;
+        var confirmCanExecuteChanged = 0;
+        viewModel.SelectVoucherCommand.CanExecuteChanged += (_, _) => selectVoucherCanExecuteChanged++;
+        viewModel.ConfirmPaymentCommand.CanExecuteChanged += (_, _) => confirmCanExecuteChanged++;
+
+        viewModel.PrepareForEntry(Session);
+        viewModel.Session = OfflineSession;
+
+        Assert.True(selectVoucherCanExecuteChanged > 0);
+        Assert.True(confirmCanExecuteChanged > 0);
+
+        await viewModel.SelectVoucherCommand.ExecuteAsync(null);
+
+        Assert.Empty(viewModel.PaymentTenders);
+        Assert.Equal(0, workflow.AddTenderCallCount);
+        Assert.Equal("payment.refund.status.voucherOfflineUnavailable", viewModel.StatusMessage);
+    }
+
+    [Fact]
     public async Task Refund_mode_card_button_uses_each_original_card_capacity()
     {
         var cart = new PosCartService();
@@ -2540,6 +2634,11 @@ public sealed class PosTerminalCashPaymentViewModelTests
         Assert.Empty(viewModel.PaymentTenders);
         Assert.False(viewModel.IsCardPaymentInProgress);
         Assert.False(viewModel.IsPaymentInteractionLocked);
+        Assert.False(viewModel.IsCancelPaymentVisible);
+        Assert.True(viewModel.NumberInputCommand.CanExecute("1"));
+        Assert.True(viewModel.SelectCashCommand.CanExecute(null));
+        Assert.True(viewModel.SelectCardCommand.CanExecute(null));
+        Assert.False(viewModel.ConfirmPaymentCommand.CanExecute(null));
         Assert.Equal("ANZ Linkly cancellation outcome could not be confirmed.", viewModel.StatusMessage);
     }
 
@@ -2562,7 +2661,11 @@ public sealed class PosTerminalCashPaymentViewModelTests
         Assert.Empty(viewModel.PaymentTenders);
         Assert.False(viewModel.IsCardPaymentInProgress);
         Assert.False(viewModel.IsPaymentInteractionLocked);
+        Assert.False(viewModel.IsCancelPaymentVisible);
+        Assert.True(viewModel.NumberInputCommand.CanExecute("1"));
+        Assert.True(viewModel.SelectCashCommand.CanExecute(null));
         Assert.True(viewModel.SelectCardCommand.CanExecute(null));
+        Assert.False(viewModel.ConfirmPaymentCommand.CanExecute(null));
         Assert.Equal("payment.status.cardCancelled", viewModel.StatusMessage);
     }
 
@@ -2585,7 +2688,36 @@ public sealed class PosTerminalCashPaymentViewModelTests
         Assert.Empty(viewModel.PaymentTenders);
         Assert.False(viewModel.IsCardPaymentInProgress);
         Assert.False(viewModel.IsPaymentInteractionLocked);
+        Assert.False(viewModel.IsCancelPaymentVisible);
+        Assert.True(viewModel.SelectCardCommand.CanExecute(null));
         Assert.Equal("payment.status.cardCancelled", viewModel.StatusMessage);
+    }
+
+    [Fact]
+    public async Task Payment_page_card_failure_result_restores_buttons_without_adding_tender()
+    {
+        var cart = new PosCartService();
+        cart.AddItem(CreateItem("SKU-160B", "Declined Card Tea", "930160B", PriceSourceKind.StoreRetailPrice, 10m));
+        var workflow = new FakeCashPaymentWorkflowService
+        {
+            AddTenderResult = new(TaskCreationOptions.RunContinuationsAsynchronously)
+        };
+        workflow.AddTenderResult.SetResult(PaymentTenderAttemptResult.Fail(
+            "payment.status.cardDeclined",
+            "DECLINED (55)"));
+        var viewModel = new PaymentViewModel(cart, workflow, Session);
+
+        await viewModel.SelectCardCommand.ExecuteAsync(null);
+
+        Assert.Empty(viewModel.PaymentTenders);
+        Assert.False(viewModel.IsCardPaymentInProgress);
+        Assert.False(viewModel.IsPaymentInteractionLocked);
+        Assert.False(viewModel.IsCancelPaymentVisible);
+        Assert.True(viewModel.NumberInputCommand.CanExecute("1"));
+        Assert.True(viewModel.SelectCashCommand.CanExecute(null));
+        Assert.True(viewModel.SelectCardCommand.CanExecute(null));
+        Assert.False(viewModel.ConfirmPaymentCommand.CanExecute(null));
+        Assert.Equal("DECLINED (55)", viewModel.StatusMessage);
     }
 
     [Fact]
@@ -2603,7 +2735,12 @@ public sealed class PosTerminalCashPaymentViewModelTests
 
         Assert.Empty(viewModel.PaymentTenders);
         Assert.False(viewModel.IsCardPaymentInProgress);
+        Assert.False(viewModel.IsPaymentInteractionLocked);
+        Assert.False(viewModel.IsCancelPaymentVisible);
+        Assert.True(viewModel.NumberInputCommand.CanExecute("1"));
+        Assert.True(viewModel.SelectCashCommand.CanExecute(null));
         Assert.True(viewModel.SelectCardCommand.CanExecute(null));
+        Assert.False(viewModel.ConfirmPaymentCommand.CanExecute(null));
         Assert.Equal("payment.status.cardTimedOut", viewModel.StatusMessage);
     }
 
@@ -2625,7 +2762,12 @@ public sealed class PosTerminalCashPaymentViewModelTests
 
         Assert.Empty(viewModel.PaymentTenders);
         Assert.False(viewModel.IsCardPaymentInProgress);
+        Assert.False(viewModel.IsPaymentInteractionLocked);
+        Assert.False(viewModel.IsCancelPaymentVisible);
+        Assert.True(viewModel.NumberInputCommand.CanExecute("1"));
+        Assert.True(viewModel.SelectCashCommand.CanExecute(null));
         Assert.True(viewModel.SelectCardCommand.CanExecute(null));
+        Assert.False(viewModel.ConfirmPaymentCommand.CanExecute(null));
         Assert.Equal("payment.status.cardTimedOut", viewModel.StatusMessage);
     }
 
@@ -2685,6 +2827,29 @@ public sealed class PosTerminalCashPaymentViewModelTests
     }
 
     private static PosSessionState Session => new("HB POS", "S001", "Main Store", "POS-01", "C001", "Alice", true, 0);
+
+    private static PosSessionState OfflineSession => Session with { IsOnline = false };
+
+    private static PosCartService CreateRefundVoucherCart(decimal amount = 8.5m)
+    {
+        var cart = new PosCartService();
+        cart.AddReturnLine(new ReturnCartLineRequest(
+            "S001",
+            "SKU-REFUND-VOUCHER",
+            null,
+            "Refund Voucher Tea",
+            "930142V",
+            "ITEM-REFUND-VOUCHER",
+            null,
+            1m,
+            amount,
+            PriceSourceKind.StoreRetailPrice,
+            PriceSourceKind.StoreRetailPrice.ToString(),
+            "RETURN-VM-VOUCHER",
+            Guid.NewGuid(),
+            Guid.NewGuid()));
+        return cart;
+    }
 
     private static SellableItemDto CreateItem(
         string productCode,
@@ -2928,6 +3093,10 @@ public sealed class PosTerminalCashPaymentViewModelTests
 
         public bool IgnoreCancellation { get; set; }
 
+        public int AddTenderCallCount { get; private set; }
+
+        public int CompletePaymentCallCount { get; private set; }
+
         public bool TryParseTenderedAmount(string? amountTenderedText, out decimal tenderedAmount)
         {
             return decimal.TryParse(amountTenderedText, out tenderedAmount);
@@ -2947,6 +3116,11 @@ public sealed class PosTerminalCashPaymentViewModelTests
 
         public decimal CalculateRemainingAmount(decimal actualAmount, IReadOnlyList<PaymentTender> tenders)
         {
+            if (actualAmount < 0m)
+            {
+                return actualAmount - tenders.Sum(tender => tender.Amount);
+            }
+
             return Math.Max(0m, actualAmount - CalculateTenderedAmount(tenders));
         }
 
@@ -2964,6 +3138,7 @@ public sealed class PosTerminalCashPaymentViewModelTests
             string? referenceText = null,
             CancellationToken cancellationToken = default)
         {
+            AddTenderCallCount++;
             AddTenderStarted?.SetResult();
 
             if (AddTenderException is not null)
@@ -3001,6 +3176,7 @@ public sealed class PosTerminalCashPaymentViewModelTests
             decimal cashTenderedAmount,
             CancellationToken cancellationToken = default)
         {
+            CompletePaymentCallCount++;
             if (ThrowOnComplete is not null)
             {
                 throw ThrowOnComplete;

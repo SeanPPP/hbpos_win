@@ -15,6 +15,9 @@ public sealed partial class InstallmentCenterViewModel : ObservableObject
     private readonly Action _backToPayment;
     private readonly ILocalizationService? _localization;
     private readonly ICardTerminalClient? _cardTerminalClient;
+    private string? _statusResourceKey;
+    private string _statusFallback = string.Empty;
+    private object[] _statusResourceArgs = [];
 
     [ObservableProperty] private PosSessionState _session;
     [ObservableProperty] private PosCartServiceSnapshot? _cartSnapshot;
@@ -55,16 +58,13 @@ public sealed partial class InstallmentCenterViewModel : ObservableObject
         VoidCancelCommand = new AsyncRelayCommand(VoidCancelAsync, CanVoidCancel);
         ConfirmPickupCommand = new AsyncRelayCommand(ConfirmPickupAsync, CanConfirmPickup);
         BackToPaymentCommand = new RelayCommand(_backToPayment);
-        StatusMessage = T("installment.center.status.ready", "请选择要创建或处理的分期单。");
+
+        RefreshPaymentMethodOptions();
+        SetStatusResource("installment.center.status.ready", "Select an installment order to create or process.");
     }
 
     public ObservableCollection<InstallmentOrderSummary> Orders { get; } = [];
-    public IReadOnlyList<InstallmentPaymentMethodOption> PaymentMethodOptions { get; } =
-    [
-        new InstallmentPaymentMethodOption(PaymentMethodKind.Cash, "现金"),
-        new InstallmentPaymentMethodOption(PaymentMethodKind.Card, "银行卡"),
-        new InstallmentPaymentMethodOption(PaymentMethodKind.Voucher, "代金券")
-    ];
+    public ObservableCollection<InstallmentPaymentMethodOption> PaymentMethodOptions { get; } = [];
 
     public IAsyncRelayCommand LoadCommand { get; }
     public IAsyncRelayCommand SearchCommand { get; }
@@ -75,17 +75,25 @@ public sealed partial class InstallmentCenterViewModel : ObservableObject
     public IAsyncRelayCommand ConfirmPickupCommand { get; }
     public IRelayCommand BackToPaymentCommand { get; }
 
-    public string PageTitleText => T("installment.center.title", "分期中心");
-    public string CurrentOrderSummaryText => CartSnapshot is null ? "当前没有待创建的订单。" : string.Format(GetCulture(), "当前订单金额 {0:C2}，可发起新的分期单。", CartSnapshot.ActualAmount);
-    public string CreateInstallmentText => T("installment.center.action.create", "创建分期");
-    public string AddRepaymentText => T("installment.center.action.repay", "补款");
-    public string CancelWithRefundText => T("installment.center.action.cancel", "取消退款");
-    public string VoidCancelText => T("installment.center.action.void", "作废");
-    public string ConfirmPickupText => T("installment.center.action.confirmPickup", "确认提货");
-    public string LoadText => T("common.load", "加载");
-    public string SearchTextLabel => T("installment.center.search", "搜索单号、姓名、电话");
-    public string BackToPaymentText => T("installment.center.action.backToPayment", "返回付款");
-    public string OfflineNoticeText => T("installment.center.offline", "离线时仅可查看本机缓存和打印已有凭证。");
+    public string PageTitleText => T("installment.center.title", "Installment Center");
+    public string CurrentOrderSummaryText => CartSnapshot is null
+        ? T("installment.center.currentOrder.none", "There is no current order available for a new installment.")
+        : string.Format(GetCulture(), T("installment.center.currentOrder.amount", "Current order amount {0:C2}. A new installment can be created."), CartSnapshot.ActualAmount);
+    public string CreateInstallmentText => T("installment.center.action.create", "Create Installment");
+    public string AddRepaymentText => T("installment.center.action.repay", "Add Repayment");
+    public string CancelWithRefundText => T("installment.center.action.cancel", "Cancel and Refund");
+    public string VoidCancelText => T("installment.center.action.void", "Void");
+    public string ConfirmPickupText => T("installment.center.action.confirmPickup", "Confirm Pickup");
+    public string LoadText => T("common.load", "Load");
+    public string SearchButtonText => T("installment.center.action.search", "Search");
+    public string SearchTextLabel => T("installment.center.search", "Search order no., name, or phone");
+    public string BackToPaymentText => T("installment.center.action.backToPayment", "Back to Payment");
+    public string OfflineNoticeText => T("installment.center.offline", "Offline mode only supports local cached installment orders.");
+    public string SelectedOrderNumberText => SelectedOrder?.OrderNumber ?? T("installment.center.selected.none", "No installment selected");
+    public string SelectedOrderCustomerText => SelectedOrder?.CustomerName ?? T("installment.center.selected.customer.empty", "Select an installment order on the left");
+    public string SelectedOrderOutstandingText => SelectedOrder is null
+        ? T("installment.center.selected.outstanding.empty", "Outstanding -")
+        : string.Format(GetCulture(), T("installment.center.selected.outstanding", "Outstanding {0:C2}"), SelectedOrder.OutstandingAmount);
     public bool IsOffline => !Session.IsOnline;
     public bool HasOrders => Orders.Count > 0;
     public bool IsCreateEnabled => CanCreateInstallment();
@@ -97,6 +105,9 @@ public sealed partial class InstallmentCenterViewModel : ObservableObject
     partial void OnSelectedOrderChanged(InstallmentOrderSummary? value)
     {
         RepaymentAmount = value?.OutstandingAmount ?? 0m;
+        OnPropertyChanged(nameof(SelectedOrderNumberText));
+        OnPropertyChanged(nameof(SelectedOrderCustomerText));
+        OnPropertyChanged(nameof(SelectedOrderOutstandingText));
         RaiseSelectionStateChanged();
     }
 
@@ -112,8 +123,8 @@ public sealed partial class InstallmentCenterViewModel : ObservableObject
     partial void OnRepaymentReferenceChanged(string value) => RaiseSelectionStateChanged();
     partial void OnRepaymentVoucherTokenChanged(string value) => RaiseSelectionStateChanged();
 
-    public async Task LoadAsync() => await LoadCoreAsync(() => _installmentOrderService.GetOrdersAsync(Session), "已加载 {0} 条分期单。");
-    public async Task SearchAsync() => await LoadCoreAsync(() => _installmentOrderService.SearchAsync(Session, SearchText), "已找到 {0} 条分期单。");
+    public async Task LoadAsync() => await LoadCoreAsync(() => _installmentOrderService.GetOrdersAsync(Session), "installment.center.status.loaded", "Loaded {0} installment orders.");
+    public async Task SearchAsync() => await LoadCoreAsync(() => _installmentOrderService.SearchAsync(Session, SearchText), "installment.center.status.searched", "Found {0} installment orders.");
 
     public void Prepare(PosSessionState session, PosCartServiceSnapshot? cartSnapshot)
     {
@@ -134,13 +145,15 @@ public sealed partial class InstallmentCenterViewModel : ObservableObject
         {
             Orders[Orders.IndexOf(existing)] = order;
         }
+
         SelectedOrder = order;
         OnPropertyChanged(nameof(HasOrders));
     }
 
     private async Task<bool> LoadCoreAsync(
         Func<Task<IReadOnlyList<InstallmentOrderSummary>>> loader,
-        string loadedFormat,
+        string loadedFormatKey,
+        string loadedFormatFallback,
         string? actionMessage = null)
     {
         IsBusy = true;
@@ -149,13 +162,33 @@ public sealed partial class InstallmentCenterViewModel : ObservableObject
             var orders = await loader();
             Orders.ReplaceWith(orders);
             SelectedOrder = Orders.FirstOrDefault();
-            StatusMessage = actionMessage ?? (orders.Count == 0 ? "当前没有分期单。" : string.Format(GetCulture(), loadedFormat, orders.Count));
+            if (actionMessage is not null)
+            {
+                SetLiteralStatus(actionMessage);
+            }
+            else if (orders.Count == 0)
+            {
+                SetStatusResource("installment.center.status.empty", "There are no installment orders.");
+            }
+            else
+            {
+                SetStatusResource(loadedFormatKey, loadedFormatFallback, orders.Count);
+            }
+
             OnPropertyChanged(nameof(HasOrders));
             return true;
         }
         catch (Exception ex)
         {
-            StatusMessage = actionMessage is null ? ex.Message : $"{actionMessage}（刷新失败：{ex.Message}）";
+            if (actionMessage is null)
+            {
+                SetLiteralStatus(ex.Message);
+            }
+            else
+            {
+                SetLiteralStatus(string.Format(GetCulture(), T("installment.center.status.refreshFailed", "{0} (refresh failed: {1})"), actionMessage, ex.Message));
+            }
+
             return false;
         }
         finally
@@ -181,15 +214,15 @@ public sealed partial class InstallmentCenterViewModel : ObservableObject
         {
             if (_cardTerminalClient is null)
             {
-                StatusMessage = "银行卡补款需要先配置刷卡终端。";
+                SetStatusResource("installment.center.status.cardTerminalRequired", "Configure a card terminal before adding a card repayment.");
                 return;
             }
 
-            // 刷卡补款必须先由终端授权，API 只记录已授权结果。
+            // 银行卡补款必须先由终端授权，API 只记录已授权的付款结果。
             var authorization = await _cardTerminalClient.AuthorizeAsync(RepaymentAmount, Session);
             if (!authorization.Approved)
             {
-                StatusMessage = authorization.Message ?? "银行卡补款未授权。";
+                SetLiteralStatus(authorization.Message ?? T("installment.center.status.cardNotAuthorized", "Card repayment was not authorized."));
                 return;
             }
 
@@ -224,15 +257,15 @@ public sealed partial class InstallmentCenterViewModel : ObservableObject
         try
         {
             var result = await action();
-            StatusMessage = result.Message;
+            SetLiteralStatus(result.Message);
             if (result.Succeeded)
             {
-                await LoadCoreAsync(() => _installmentOrderService.SearchAsync(Session, SearchText), "已找到 {0} 条分期单。", result.Message);
+                await LoadCoreAsync(() => _installmentOrderService.SearchAsync(Session, SearchText), "installment.center.status.searched", "Found {0} installment orders.", result.Message);
             }
         }
         catch (Exception ex)
         {
-            StatusMessage = ex.Message;
+            SetLiteralStatus(ex.Message);
         }
         finally
         {
@@ -257,15 +290,73 @@ public sealed partial class InstallmentCenterViewModel : ObservableObject
 
     private void RaiseLocalizedProperties()
     {
+        RefreshPaymentMethodOptions();
+        if (_statusResourceKey is not null)
+        {
+            StatusMessage = FormatResource(_statusResourceKey, _statusFallback, _statusResourceArgs);
+        }
+
         OnPropertyChanged(nameof(PageTitleText));
+        OnPropertyChanged(nameof(CurrentOrderSummaryText));
         OnPropertyChanged(nameof(CreateInstallmentText));
         OnPropertyChanged(nameof(AddRepaymentText));
         OnPropertyChanged(nameof(CancelWithRefundText));
         OnPropertyChanged(nameof(VoidCancelText));
         OnPropertyChanged(nameof(ConfirmPickupText));
+        OnPropertyChanged(nameof(LoadText));
+        OnPropertyChanged(nameof(SearchButtonText));
+        OnPropertyChanged(nameof(SearchTextLabel));
+        OnPropertyChanged(nameof(BackToPaymentText));
+        OnPropertyChanged(nameof(OfflineNoticeText));
+        OnPropertyChanged(nameof(SelectedOrderNumberText));
+        OnPropertyChanged(nameof(SelectedOrderCustomerText));
+        OnPropertyChanged(nameof(SelectedOrderOutstandingText));
     }
 
-    private string T(string key, string fallback) => string.IsNullOrWhiteSpace(_localization?.T(key)) || _localization?.T(key) == key ? fallback : _localization!.T(key);
+    private void RefreshPaymentMethodOptions()
+    {
+        PaymentMethodOptions.Clear();
+        PaymentMethodOptions.Add(new InstallmentPaymentMethodOption(PaymentMethodKind.Cash, T("payment.method.cash", "Cash")));
+        PaymentMethodOptions.Add(new InstallmentPaymentMethodOption(PaymentMethodKind.Card, T("payment.method.card", "Credit/Debit Card")));
+        PaymentMethodOptions.Add(new InstallmentPaymentMethodOption(PaymentMethodKind.Voucher, T("payment.method.voucher", "Voucher")));
+        OnPropertyChanged(nameof(PaymentMethodOptions));
+    }
+
+    private void SetStatusResource(string key, string fallback, params object[] args)
+    {
+        _statusResourceKey = key;
+        _statusFallback = fallback;
+        _statusResourceArgs = args;
+        StatusMessage = FormatResource(key, fallback, args);
+    }
+
+    private void SetLiteralStatus(string value)
+    {
+        _statusResourceKey = null;
+        _statusFallback = string.Empty;
+        _statusResourceArgs = [];
+        StatusMessage = value;
+    }
+
+    private string FormatResource(string key, string fallback, object[] args)
+    {
+        var format = T(key, fallback);
+        return args.Length == 0 ? format : string.Format(GetCulture(), format, args);
+    }
+
+    private string T(string key, string fallback)
+    {
+        var value = _localization?.T(key);
+        return IsMissingLocalizedValue(key, value) ? fallback : value!;
+    }
+
+    private static bool IsMissingLocalizedValue(string key, string? value)
+    {
+        return string.IsNullOrWhiteSpace(value) ||
+            value == key ||
+            (value.StartsWith("[[", StringComparison.Ordinal) && value.EndsWith("]]", StringComparison.Ordinal));
+    }
+
     private IFormatProvider GetCulture() => _localization?.CurrentCulture ?? System.Globalization.CultureInfo.CurrentCulture;
     private static string? Normalize(string value) => string.IsNullOrWhiteSpace(value) ? null : value.Trim();
 }

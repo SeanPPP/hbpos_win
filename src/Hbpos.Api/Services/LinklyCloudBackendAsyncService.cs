@@ -651,7 +651,20 @@ public class LinklyCloudBackendAsyncService(
         LinklyCloudBackendSessionRecord? latest,
         LinklyCloudBackendSessionRecord incoming)
     {
-        return latest is not null && IsCompleted(latest) && !IsCompleted(incoming);
+        if (latest is null || !IsCompleted(latest))
+        {
+            return false;
+        }
+
+        if (!IsCompleted(incoming))
+        {
+            return true;
+        }
+
+        // 已完成后的 receipt/display 辅助字段可更新，但不同最终结果不能覆盖首次完成结果。
+        return !SameOptional(latest.TxnRef, incoming.TxnRef) ||
+            !SameOptional(latest.ResponseCode, incoming.ResponseCode) ||
+            !SameOptional(latest.ResponseText, incoming.ResponseText);
     }
 
     private async Task<LinklyCloudBackendSessionResponse> BuildResponseAsync(
@@ -675,6 +688,14 @@ public class LinklyCloudBackendAsyncService(
             session.ResponseText,
             session.RecoveryAction,
             session.DisplayText,
+            session.CancelKeyFlag,
+            session.OKKeyFlag,
+            session.AcceptYesKeyFlag,
+            session.DeclineNoKeyFlag,
+            session.AuthoriseKeyFlag,
+            session.InputType,
+            session.GraphicCode,
+            SplitDisplayLines(session.DisplayLines),
             session.ReceiptText,
             session.RecoveryCount,
             session.ReceiptPrintedAt,
@@ -773,11 +794,27 @@ public class LinklyCloudBackendAsyncService(
         string payloadJson,
         DateTimeOffset receivedAt)
     {
-        var displayText = ReadPayloadText(payloadJson, "DisplayText");
-        if (!string.IsNullOrWhiteSpace(displayText))
-        {
-            session.DisplayText = displayText;
-        }
+        using var document = JsonDocument.Parse(payloadJson);
+        var root = document.RootElement;
+        var response = ReadResponse(root);
+        var displayLines = ReadTextLines(root, "DisplayLines") ??
+            ReadTextLines(response, "DisplayLines") ??
+            ReadTextLines(root, "DisplayText") ??
+            ReadTextLines(response, "DisplayText");
+        var displayText = ReadText(root, "DisplayText") ??
+            ReadText(response, "DisplayText") ??
+            (displayLines is null ? null : string.Join(Environment.NewLine, displayLines));
+
+        // display 通知代表当前终端提示快照；缺失字段要清空，避免沿用上一屏按键状态。
+        session.DisplayText = displayText;
+        session.DisplayLines = displayLines is null ? null : string.Join(Environment.NewLine, displayLines);
+        session.CancelKeyFlag = ReadBool(root, "CancelKeyFlag") ?? ReadBool(response, "CancelKeyFlag") ?? false;
+        session.OKKeyFlag = ReadBool(root, "OKKeyFlag") ?? ReadBool(response, "OKKeyFlag") ?? false;
+        session.AcceptYesKeyFlag = ReadBool(root, "AcceptYesKeyFlag") ?? ReadBool(response, "AcceptYesKeyFlag") ?? false;
+        session.DeclineNoKeyFlag = ReadBool(root, "DeclineNoKeyFlag") ?? ReadBool(response, "DeclineNoKeyFlag") ?? false;
+        session.AuthoriseKeyFlag = ReadBool(root, "AuthoriseKeyFlag") ?? ReadBool(response, "AuthoriseKeyFlag") ?? false;
+        session.InputType = ReadString(root, "InputType") ?? ReadString(response, "InputType");
+        session.GraphicCode = ReadString(root, "GraphicCode") ?? ReadString(response, "GraphicCode");
 
         // 显示和小票通知只更新辅助字段，不改变已完成交易状态。
         session.UpdatedAt = receivedAt;
@@ -880,6 +917,66 @@ public class LinklyCloudBackendAsyncService(
         return lines.Length == 0 ? null : string.Join(Environment.NewLine, lines);
     }
 
+    private static IReadOnlyList<string>? ReadTextLines(JsonElement element, string propertyName)
+    {
+        if (element.ValueKind == JsonValueKind.Undefined ||
+            !TryGetProperty(element, propertyName, out var value))
+        {
+            return null;
+        }
+
+        if (value.ValueKind == JsonValueKind.String)
+        {
+            var text = NormalizeOptional(value.GetString());
+            return text is null ? null : [text];
+        }
+
+        if (value.ValueKind != JsonValueKind.Array)
+        {
+            return null;
+        }
+
+        var lines = value
+            .EnumerateArray()
+            .Where(item => item.ValueKind == JsonValueKind.String)
+            .Select(item => NormalizeOptional(item.GetString()))
+            .Where(line => line is not null)
+            .Select(line => line!)
+            .ToArray();
+        return lines.Length == 0 ? null : lines;
+    }
+
+    private static bool? ReadBool(JsonElement element, string propertyName)
+    {
+        if (element.ValueKind == JsonValueKind.Undefined ||
+            !TryGetProperty(element, propertyName, out var value))
+        {
+            return null;
+        }
+
+        return value.ValueKind switch
+        {
+            JsonValueKind.True => true,
+            JsonValueKind.False => false,
+            JsonValueKind.String when bool.TryParse(value.GetString(), out var parsed) => parsed,
+            JsonValueKind.String when int.TryParse(value.GetString(), out var parsed) => parsed != 0,
+            JsonValueKind.Number when value.TryGetInt32(out var parsed) => parsed != 0,
+            _ => null
+        };
+    }
+
+    private static IReadOnlyList<string> SplitDisplayLines(string? displayLines)
+    {
+        return string.IsNullOrWhiteSpace(displayLines)
+            ? []
+            : displayLines
+                .Split([Environment.NewLine], StringSplitOptions.RemoveEmptyEntries)
+                .Select(NormalizeOptional)
+                .Where(line => line is not null)
+                .Select(line => line!)
+                .ToArray();
+    }
+
     private static bool TryGetProperty(JsonElement element, string propertyName, out JsonElement value)
     {
         if (element.ValueKind == JsonValueKind.Object)
@@ -928,6 +1025,11 @@ public class LinklyCloudBackendAsyncService(
     private static string? NormalizeOptional(string? value)
     {
         return string.IsNullOrWhiteSpace(value) ? null : value.Trim();
+    }
+
+    private static bool SameOptional(string? left, string? right)
+    {
+        return string.Equals(NormalizeOptional(left), NormalizeOptional(right), StringComparison.OrdinalIgnoreCase);
     }
 
     private static LinklyCloudBackendHealthCheckDto CreateHealthCheck(
@@ -1502,7 +1604,17 @@ public sealed class InMemoryLinklyCloudBackendAsyncRepository : ILinklyCloudBack
     {
         lock (_gate)
         {
-            _notifications.Add(Clone(notification));
+            if (!_notifications.Any(existing =>
+                string.Equals(existing.Environment, notification.Environment, StringComparison.OrdinalIgnoreCase) &&
+                string.Equals(existing.StoreCode, notification.StoreCode, StringComparison.OrdinalIgnoreCase) &&
+                string.Equals(existing.DeviceCode, notification.DeviceCode, StringComparison.OrdinalIgnoreCase) &&
+                string.Equals(existing.SessionId, notification.SessionId, StringComparison.OrdinalIgnoreCase) &&
+                string.Equals(existing.Type, notification.Type, StringComparison.OrdinalIgnoreCase) &&
+                string.Equals(existing.PayloadJson, notification.PayloadJson, StringComparison.Ordinal)))
+            {
+                _notifications.Add(Clone(notification));
+            }
+
             return Task.CompletedTask;
         }
     }
@@ -1572,6 +1684,14 @@ public sealed class InMemoryLinklyCloudBackendAsyncRepository : ILinklyCloudBack
             ResponseText = session.ResponseText,
             RecoveryAction = session.RecoveryAction,
             DisplayText = session.DisplayText,
+            DisplayLines = session.DisplayLines,
+            CancelKeyFlag = session.CancelKeyFlag,
+            OKKeyFlag = session.OKKeyFlag,
+            AcceptYesKeyFlag = session.AcceptYesKeyFlag,
+            DeclineNoKeyFlag = session.DeclineNoKeyFlag,
+            AuthoriseKeyFlag = session.AuthoriseKeyFlag,
+            InputType = session.InputType,
+            GraphicCode = session.GraphicCode,
             ReceiptText = session.ReceiptText,
             RecoveryCount = session.RecoveryCount,
             ReceiptPrintedAt = session.ReceiptPrintedAt,
@@ -1621,11 +1741,15 @@ public sealed class SqlSugarLinklyCloudBackendAsyncRepository(
         BEGIN
             INSERT INTO [dbo].[POSM_LinklyCloudBackendSession] (
                 [Environment], [StoreCode], [DeviceCode], [SessionId], [Status], [TxnRef],
-                [ResponseCode], [ResponseText], [RecoveryAction], [DisplayText], [ReceiptText],
+                [ResponseCode], [ResponseText], [RecoveryAction], [DisplayText], [DisplayLines],
+                [CancelKeyFlag], [OKKeyFlag], [AcceptYesKeyFlag], [DeclineNoKeyFlag], [AuthoriseKeyFlag],
+                [InputType], [GraphicCode], [ReceiptText],
                 [RecoveryCount], [ReceiptPrintedAt], [LastHttpStatus], [IsActive], [UpdatedAt])
             VALUES (
                 @Environment, @StoreCode, @DeviceCode, @SessionId, @Status, @TxnRef,
-                @ResponseCode, @ResponseText, @RecoveryAction, @DisplayText, @ReceiptText,
+                @ResponseCode, @ResponseText, @RecoveryAction, @DisplayText, @DisplayLines,
+                @CancelKeyFlag, @OKKeyFlag, @AcceptYesKeyFlag, @DeclineNoKeyFlag, @AuthoriseKeyFlag,
+                @InputType, @GraphicCode, @ReceiptText,
                 @RecoveryCount, @ReceiptPrintedAt, @LastHttpStatus, @IsActive, @UpdatedAt);
         END;
 
@@ -1640,7 +1764,14 @@ public sealed class SqlSugarLinklyCloudBackendAsyncRepository(
            AND target.[DeviceCode] = source.[DeviceCode]
            AND target.[SessionId] = source.[SessionId]
         WHEN MATCHED
-             AND NOT (target.[Status] = 'Completed' AND @Status <> 'Completed') THEN
+             AND NOT (
+                target.[Status] = 'Completed'
+                AND (
+                    @Status <> 'Completed'
+                    OR ISNULL(target.[TxnRef], N'') <> ISNULL(@TxnRef, N'')
+                    OR ISNULL(target.[ResponseCode], N'') <> ISNULL(@ResponseCode, N'')
+                    OR ISNULL(target.[ResponseText], N'') <> ISNULL(@ResponseText, N'')
+                )) THEN
             UPDATE SET
                 [Status] = @Status,
                 [TxnRef] = @TxnRef,
@@ -1648,6 +1779,14 @@ public sealed class SqlSugarLinklyCloudBackendAsyncRepository(
                 [ResponseText] = @ResponseText,
                 [RecoveryAction] = @RecoveryAction,
                 [DisplayText] = @DisplayText,
+                [DisplayLines] = @DisplayLines,
+                [CancelKeyFlag] = @CancelKeyFlag,
+                [OKKeyFlag] = @OKKeyFlag,
+                [AcceptYesKeyFlag] = @AcceptYesKeyFlag,
+                [DeclineNoKeyFlag] = @DeclineNoKeyFlag,
+                [AuthoriseKeyFlag] = @AuthoriseKeyFlag,
+                [InputType] = @InputType,
+                [GraphicCode] = @GraphicCode,
                 [ReceiptText] = @ReceiptText,
                 [RecoveryCount] = @RecoveryCount,
                 [ReceiptPrintedAt] = @ReceiptPrintedAt,
@@ -1657,11 +1796,15 @@ public sealed class SqlSugarLinklyCloudBackendAsyncRepository(
         WHEN NOT MATCHED THEN
             INSERT (
                 [Environment], [StoreCode], [DeviceCode], [SessionId], [Status], [TxnRef],
-                [ResponseCode], [ResponseText], [RecoveryAction], [DisplayText], [ReceiptText],
+                [ResponseCode], [ResponseText], [RecoveryAction], [DisplayText], [DisplayLines],
+                [CancelKeyFlag], [OKKeyFlag], [AcceptYesKeyFlag], [DeclineNoKeyFlag], [AuthoriseKeyFlag],
+                [InputType], [GraphicCode], [ReceiptText],
                 [RecoveryCount], [ReceiptPrintedAt], [LastHttpStatus], [IsActive], [UpdatedAt])
             VALUES (
                 @Environment, @StoreCode, @DeviceCode, @SessionId, @Status, @TxnRef,
-                @ResponseCode, @ResponseText, @RecoveryAction, @DisplayText, @ReceiptText,
+                @ResponseCode, @ResponseText, @RecoveryAction, @DisplayText, @DisplayLines,
+                @CancelKeyFlag, @OKKeyFlag, @AcceptYesKeyFlag, @DeclineNoKeyFlag, @AuthoriseKeyFlag,
+                @InputType, @GraphicCode, @ReceiptText,
                 @RecoveryCount, @ReceiptPrintedAt, @LastHttpStatus, @IsActive, @UpdatedAt);
         """;
 
@@ -1730,7 +1873,9 @@ public sealed class SqlSugarLinklyCloudBackendAsyncRepository(
         const string sql = """
             SELECT TOP 1
                 [Id], [Environment], [StoreCode], [DeviceCode], [SessionId], [Status], [TxnRef],
-                [ResponseCode], [ResponseText], [RecoveryAction], [DisplayText], [ReceiptText],
+                [ResponseCode], [ResponseText], [RecoveryAction], [DisplayText], [DisplayLines],
+                [CancelKeyFlag], [OKKeyFlag], [AcceptYesKeyFlag], [DeclineNoKeyFlag], [AuthoriseKeyFlag],
+                [InputType], [GraphicCode], [ReceiptText],
                 [RecoveryCount], [ReceiptPrintedAt], [LastHttpStatus], [IsActive], [UpdatedAt]
             FROM [dbo].[POSM_LinklyCloudBackendSession]
             WHERE [Environment] = @Environment
@@ -1755,7 +1900,9 @@ public sealed class SqlSugarLinklyCloudBackendAsyncRepository(
         const string sql = """
             SELECT TOP 1
                 [Id], [Environment], [StoreCode], [DeviceCode], [SessionId], [Status], [TxnRef],
-                [ResponseCode], [ResponseText], [RecoveryAction], [DisplayText], [ReceiptText],
+                [ResponseCode], [ResponseText], [RecoveryAction], [DisplayText], [DisplayLines],
+                [CancelKeyFlag], [OKKeyFlag], [AcceptYesKeyFlag], [DeclineNoKeyFlag], [AuthoriseKeyFlag],
+                [InputType], [GraphicCode], [ReceiptText],
                 [RecoveryCount], [ReceiptPrintedAt], [LastHttpStatus], [IsActive], [UpdatedAt]
             FROM [dbo].[POSM_LinklyCloudBackendSession]
             WHERE [Environment] = @Environment
@@ -1778,7 +1925,9 @@ public sealed class SqlSugarLinklyCloudBackendAsyncRepository(
         const string sql = """
             SELECT TOP 1
                 [Id], [Environment], [StoreCode], [DeviceCode], [SessionId], [Status], [TxnRef],
-                [ResponseCode], [ResponseText], [RecoveryAction], [DisplayText], [ReceiptText],
+                [ResponseCode], [ResponseText], [RecoveryAction], [DisplayText], [DisplayLines],
+                [CancelKeyFlag], [OKKeyFlag], [AcceptYesKeyFlag], [DeclineNoKeyFlag], [AuthoriseKeyFlag],
+                [InputType], [GraphicCode], [ReceiptText],
                 [RecoveryCount], [ReceiptPrintedAt], [LastHttpStatus], [IsActive], [UpdatedAt]
             FROM [dbo].[POSM_LinklyCloudBackendSession]
             WHERE [Environment] = @Environment
@@ -1800,10 +1949,21 @@ public sealed class SqlSugarLinklyCloudBackendAsyncRepository(
         CancellationToken cancellationToken)
     {
         const string sql = """
-            INSERT INTO [dbo].[POSM_LinklyCloudBackendNotification] (
-                [Environment], [StoreCode], [DeviceCode], [SessionId], [Type], [PayloadJson], [ReceivedAt])
-            VALUES (
-                @Environment, @StoreCode, @DeviceCode, @SessionId, @Type, @PayloadJson, @ReceivedAt);
+            IF NOT EXISTS (
+                SELECT 1
+                FROM [dbo].[POSM_LinklyCloudBackendNotification] WITH (UPDLOCK, HOLDLOCK)
+                WHERE [Environment] = @Environment
+                  AND [StoreCode] = @StoreCode
+                  AND [DeviceCode] = @DeviceCode
+                  AND [SessionId] = @SessionId
+                  AND [Type] = @Type
+                  AND [PayloadJson] = @PayloadJson)
+            BEGIN
+                INSERT INTO [dbo].[POSM_LinklyCloudBackendNotification] (
+                    [Environment], [StoreCode], [DeviceCode], [SessionId], [Type], [PayloadJson], [ReceivedAt])
+                VALUES (
+                    @Environment, @StoreCode, @DeviceCode, @SessionId, @Type, @PayloadJson, @ReceivedAt);
+            END;
             """;
 
         return dbContext.PosmDb.Ado.ExecuteCommandAsync(
@@ -1857,6 +2017,14 @@ public sealed class SqlSugarLinklyCloudBackendAsyncRepository(
             new SugarParameter("@ResponseText", session.ResponseText),
             new SugarParameter("@RecoveryAction", session.RecoveryAction),
             new SugarParameter("@DisplayText", session.DisplayText),
+            new SugarParameter("@DisplayLines", session.DisplayLines),
+            new SugarParameter("@CancelKeyFlag", session.CancelKeyFlag),
+            new SugarParameter("@OKKeyFlag", session.OKKeyFlag),
+            new SugarParameter("@AcceptYesKeyFlag", session.AcceptYesKeyFlag),
+            new SugarParameter("@DeclineNoKeyFlag", session.DeclineNoKeyFlag),
+            new SugarParameter("@AuthoriseKeyFlag", session.AuthoriseKeyFlag),
+            new SugarParameter("@InputType", session.InputType),
+            new SugarParameter("@GraphicCode", session.GraphicCode),
             new SugarParameter("@ReceiptText", session.ReceiptText),
             new SugarParameter("@RecoveryCount", session.RecoveryCount),
             new SugarParameter("@ReceiptPrintedAt", session.ReceiptPrintedAt?.UtcDateTime),
@@ -1897,6 +2065,22 @@ public sealed class LinklyCloudBackendSessionRecord
     public string? RecoveryAction { get; set; }
 
     public string? DisplayText { get; set; }
+
+    public string? DisplayLines { get; set; }
+
+    public bool CancelKeyFlag { get; set; }
+
+    public bool OKKeyFlag { get; set; }
+
+    public bool AcceptYesKeyFlag { get; set; }
+
+    public bool DeclineNoKeyFlag { get; set; }
+
+    public bool AuthoriseKeyFlag { get; set; }
+
+    public string? InputType { get; set; }
+
+    public string? GraphicCode { get; set; }
 
     public string? ReceiptText { get; set; }
 

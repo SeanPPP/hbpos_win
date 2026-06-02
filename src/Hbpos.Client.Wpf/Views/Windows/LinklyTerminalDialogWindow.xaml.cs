@@ -1,4 +1,7 @@
 using System.Windows;
+using System.Windows.Controls;
+using System.Windows.Media;
+using Hbpos.Client.Wpf.Localization;
 using Hbpos.Client.Wpf.Services;
 
 namespace Hbpos.Client.Wpf.Views.Windows;
@@ -16,16 +19,12 @@ public partial class LinklyTerminalDialogWindow : Window
         string title,
         string statusLabel,
         string displayLabel,
-        string receiptLabel,
-        string confirmText,
-        string cancelText)
+        string receiptLabel)
     {
         Title = title;
         StatusLabelTextBlock.Text = statusLabel;
         DisplayLabelTextBlock.Text = displayLabel;
         ReceiptLabelTextBlock.Text = receiptLabel;
-        ConfirmButton.Content = confirmText;
-        CancelButton.Content = cancelText;
     }
 
     public void UpdateState(LinklyTerminalDialogState state)
@@ -39,6 +38,7 @@ public partial class LinklyTerminalDialogWindow : Window
             ? state.ResponseText ?? state.Status
             : state.DisplayText;
         ReceiptTextBox.Text = state.ReceiptText ?? string.Empty;
+        UpdateButtons(state);
     }
 
     private static string FormatStatus(LinklyTerminalDialogState state)
@@ -54,16 +54,67 @@ public partial class LinklyTerminalDialogWindow : Window
             details.Add($"Recovery {state.RecoveryCount}");
         }
 
-        return string.Join(" · ", details);
+        return string.Join(" / ", details);
     }
 
-    private void ConfirmButton_Click(object sender, RoutedEventArgs e)
+    private void UpdateButtons(LinklyTerminalDialogState state)
     {
-        ActionRequested?.Invoke(this, new LinklyTerminalDialogAction(LinklyTerminalDialogKeys.OkCancel, null));
+        ActionButtonsPanel.Children.Clear();
+
+        if (state.IsFinal)
+        {
+            var closeButton = new Button
+            {
+                Content = LocalizationResourceProvider.Instance["linkly.backend.dialog.close"],
+                MinWidth = 96,
+                Margin = new Thickness(10, 0, 0, 0)
+            };
+            closeButton.Click += CloseButton_Click;
+            ActionButtonsPanel.Visibility = Visibility.Visible;
+            ActionButtonsPanel.Children.Add(closeButton);
+            return;
+        }
+
+        var buttons = state.IsInteractive && !state.IsFinal
+            ? state.DisplayButtons ?? []
+            : [];
+        if (buttons.Count == 0)
+        {
+            ActionButtonsPanel.Visibility = Visibility.Collapsed;
+            return;
+        }
+
+        ActionButtonsPanel.Visibility = Visibility.Visible;
+        foreach (var actionButton in buttons)
+        {
+            var button = new Button
+            {
+                Content = LocalizationResourceProvider.Instance[actionButton.TextResourceKey],
+                MinWidth = 96,
+                Margin = new Thickness(10, 0, 0, 0),
+                Tag = actionButton
+            };
+            if (actionButton.IsDestructive)
+            {
+                button.Foreground = Brushes.DarkRed;
+            }
+
+            // Linkly 按键由后端 display flags 决定，窗口只把用户点击转换成 sendkey 动作。
+            button.Click += ActionButton_Click;
+            ActionButtonsPanel.Children.Add(button);
+        }
     }
 
-    private void CancelButton_Click(object sender, RoutedEventArgs e)
+    private void ActionButton_Click(object sender, RoutedEventArgs e)
     {
-        ActionRequested?.Invoke(this, new LinklyTerminalDialogAction(LinklyTerminalDialogKeys.OkCancel, null));
+        if (sender is Button { Tag: LinklyTerminalDialogButton button })
+        {
+            ActionRequested?.Invoke(this, new LinklyTerminalDialogAction(button.Key, button.Data));
+        }
+    }
+
+    private void CloseButton_Click(object sender, RoutedEventArgs e)
+    {
+        Close();
     }
 }

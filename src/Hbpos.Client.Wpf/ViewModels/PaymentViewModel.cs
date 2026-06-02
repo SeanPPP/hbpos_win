@@ -259,6 +259,7 @@ public partial class PaymentViewModel : ObservableObject
     partial void OnSessionChanged(PosSessionState value)
     {
         PendingSyncCount = value.PendingSyncCount;
+        NotifyPaymentCommandStates();
     }
 
     partial void OnPaymentModeChanged(PaymentEntryMode value)
@@ -370,6 +371,12 @@ public partial class PaymentViewModel : ObservableObject
         if (_pendingVoucherUploadOrderGuid is not null)
         {
             SetStatus("payment.status.retryVoucherUpload");
+            return;
+        }
+
+        if (IsOfflineVoucherRefundUnavailable(method))
+        {
+            SetOfflineVoucherRefundUnavailableStatus();
             return;
         }
 
@@ -576,6 +583,11 @@ public partial class PaymentViewModel : ObservableObject
             return;
         }
 
+        if (TrySetOfflineVoucherRefundTenderStatus())
+        {
+            return;
+        }
+
         if (!IsZeroSettlementMode && PaymentTenders.Count == 0)
         {
             SetStatus(GetNoTendersStatusKey());
@@ -593,6 +605,11 @@ public partial class PaymentViewModel : ObservableObject
 
     private async Task CompletePaymentFromTendersAsync()
     {
+        if (TrySetOfflineVoucherRefundTenderStatus())
+        {
+            return;
+        }
+
         var cashTenderedAmount = PaymentTenders
             .Where(tender => tender.Method == PaymentMethodKind.Cash)
             .Sum(tender => tender.Amount);
@@ -839,8 +856,50 @@ public partial class PaymentViewModel : ObservableObject
         return PaymentTenders.Any(tender => tender.Method == method);
     }
 
+    private bool IsOfflineVoucherRefundUnavailable(PaymentMethodKind method)
+    {
+        // 退款代金券需要在线发券，离线时提前拦截，避免进入待上传状态后卡住。
+        return IsRefundMode &&
+            method == PaymentMethodKind.Voucher &&
+            !Session.IsOnline;
+    }
+
+    private bool HasOfflineVoucherRefundTender()
+    {
+        return IsRefundMode &&
+            !Session.IsOnline &&
+            PaymentTenders.Any(IsVoucherRefundTender);
+    }
+
+    private static bool IsVoucherRefundTender(PaymentTender tender)
+    {
+        return tender.Method == PaymentMethodKind.Voucher && tender.Amount < 0m;
+    }
+
+    private bool TrySetOfflineVoucherRefundTenderStatus()
+    {
+        if (!HasOfflineVoucherRefundTender())
+        {
+            return false;
+        }
+
+        SetOfflineVoucherRefundUnavailableStatus();
+        return true;
+    }
+
+    private void SetOfflineVoucherRefundUnavailableStatus()
+    {
+        SetStatus("payment.refund.status.voucherOfflineUnavailable");
+        NotifyPaymentCommandStates();
+    }
+
     private void BackToPos()
     {
+        if (TrySetOfflineVoucherRefundTenderStatus())
+        {
+            return;
+        }
+
         if (PaymentTenders.Count > 0)
         {
             SetStatus("payment.status.removeTendersBeforeBack");
@@ -918,9 +977,8 @@ public partial class PaymentViewModel : ObservableObject
             return;
         }
 
-        IsCardPaymentInProgress = false;
-        IsPaymentInteractionLocked = false;
-        _activeCardPaymentCts?.Dispose();
+        // 先清掉活动 CTS，再解锁并刷新命令；按钮可用性会检查 _activeCardPaymentCts 是否为空。
+        var activeCardPaymentCts = _activeCardPaymentCts;
         _activeCardPaymentCts = null;
         if (ReferenceEquals(_manuallyCancelledCardPaymentCts, cardPaymentCts))
         {
@@ -928,6 +986,10 @@ public partial class PaymentViewModel : ObservableObject
         }
 
         _cardPaymentCancellationRequested = false;
+        IsCardPaymentInProgress = false;
+        IsPaymentInteractionLocked = false;
+        activeCardPaymentCts?.Dispose();
+        NotifyPaymentCommandStates();
     }
 
     private void DetachCanceledActiveCardPayment()
