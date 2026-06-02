@@ -565,4 +565,16 @@
   <data name="linkly.backend.dialog.receipt" xml:space="preserve"><value>Receipt</value></data>
   <data name="linkly.backend.dialog.confirm" xml:space="preserve"><value>Confirm</value></data>
   <data name="linkly.backend.dialog.cancel" xml:space="preserve"><value>Cancel</value></data>
+  <data name="linkly.cloud.directPendingMessage" xml:space="preserve"><value>Waiting for the card terminal result. Complete the operation on the terminal.</value></data>
+  <data name="linkly.cloud.directStatusHelp" xml:space="preserve"><value>You can cancel on the terminal or send a POS cancel request. The final result is determined by Linkly.</value></data>
+  <data name="linkly.cloud.directCancelRequested" xml:space="preserve"><value>Cancel request sent to the card terminal. Waiting for the final result.</value></data>
+  <data name="linkly.cloud.directCancelFailed" xml:space="preserve"><value>Cancel request could not be sent. Try again or use the terminal.</value></data>
+  <data name="linkly.backend.dialog.close" xml:space="preserve"><value>Close</value></data>
+  <data name="linkly.backend.dialog.button.cancelPayment" xml:space="preserve"><value>Cancel payment</value></data>
+  <data name="linkly.backend.dialog.button.okCancel" xml:space="preserve"><value>OK / Cancel</value></data>
+  <data name="linkly.backend.dialog.button.ok" xml:space="preserve"><value>OK</value></data>
+  <data name="linkly.backend.dialog.button.yesApproved" xml:space="preserve"><value>Yes / Approved</value></data>
+  <data name="linkly.backend.dialog.button.noDeclined" xml:space="preserve"><value>No / Declined</value></data>
+  <data name="linkly.backend.dialog.button.authoriseSignature" xml:space="preserve"><value>Authorise signature</value></data>
+  <data name="linkly.backend.dialog.button.cancel" xml:space="preserve"><value>Cancel</value></data>
 </root>

@@ -35,12 +35,21 @@ public interface ILinklyCloudApiClient
         CardTerminalSettings settings,
         string token,
         LinklyCloudTransactionRequest request,
+        string sessionId,
         CancellationToken cancellationToken = default);
 
     Task<LinklyCloudTransactionResult> GetTransactionAsync(
         CardTerminalSettings settings,
         string token,
         string sessionId,
+        CancellationToken cancellationToken = default);
+
+    Task SendKeyAsync(
+        CardTerminalSettings settings,
+        string token,
+        string sessionId,
+        string key,
+        string? data,
         CancellationToken cancellationToken = default);
 }
 
@@ -226,9 +235,9 @@ public sealed class LinklyCloudApiClient(HttpClient httpClient) : ILinklyCloudAp
         CardTerminalSettings settings,
         string token,
         LinklyCloudTransactionRequest request,
+        string sessionId,
         CancellationToken cancellationToken = default)
     {
-        var sessionId = Guid.NewGuid().ToString("D");
         HttpResponseMessage response;
         Log($"transaction request start environment={settings.Environment} sessionId={sessionId} txnType={LogValue(request.TxnType)} txnRef={LogValue(request.TxnRef)} amountMinor={request.AmtPurchase}");
         try
@@ -303,6 +312,33 @@ public sealed class LinklyCloudApiClient(HttpClient httpClient) : ILinklyCloudAp
         var result = ParseTransactionResult(sessionId, body);
         Log($"transaction status parsed sessionId={sessionId} outcome={result.Outcome} success={result.Succeeded} responseCode={LogValue(result.ResponseCode)} txnRef={LogValue(result.TxnRef)}");
         return result;
+    }
+
+    public async Task SendKeyAsync(
+        CardTerminalSettings settings,
+        string token,
+        string sessionId,
+        string key,
+        string? data,
+        CancellationToken cancellationToken = default)
+    {
+        var normalizedKey = LinklyTerminalDialogKeys.Normalize(key);
+        Log($"sendkey request start environment={settings.Environment} sessionId={sessionId} key={LogValue(normalizedKey)}");
+        using var response = await SendLinklyRequestAsync(
+            settings,
+            token,
+            "sendkey",
+            HttpMethod.Post,
+            new LinklyCloudApiRequest(new Dictionary<string, object?>
+            {
+                ["Key"] = normalizedKey,
+                ["Data"] = string.IsNullOrWhiteSpace(data) ? null : data.Trim()
+            }),
+            sessionId,
+            cancellationToken);
+        var body = await response.Content.ReadAsStringAsync(cancellationToken);
+        Log($"sendkey response http={(int)response.StatusCode} sessionId={sessionId}");
+        EnsureSuccess(response, body, "Linkly Cloud sendkey request");
     }
 
     private async Task<HttpResponseMessage> SendLinklyRequestAsync(

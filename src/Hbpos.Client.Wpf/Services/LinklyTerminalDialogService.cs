@@ -1,8 +1,54 @@
+using System.Collections.ObjectModel;
 using System.Windows;
+using CommunityToolkit.Mvvm.ComponentModel;
+using CommunityToolkit.Mvvm.Input;
 using Hbpos.Client.Wpf.Localization;
-using Hbpos.Client.Wpf.Views.Windows;
 
 namespace Hbpos.Client.Wpf.Services;
+
+public enum LinklyTerminalDialogMode
+{
+    CloudBackendInteractive,
+    CloudDirectStatus
+}
+
+public sealed record LinklyTerminalDialogButton(
+    string TextResourceKey,
+    string Key,
+    string? Data = null,
+    bool IsDestructive = false);
+
+public sealed class LinklyTerminalDialogButtonViewModel : ObservableObject
+{
+    private string _text;
+
+    public LinklyTerminalDialogButtonViewModel(
+        LinklyTerminalDialogButton source,
+        string text)
+    {
+        Source = source;
+        _text = text;
+    }
+
+    public LinklyTerminalDialogButton Source { get; }
+
+    public string Text
+    {
+        get => _text;
+        private set => SetProperty(ref _text, value);
+    }
+
+    public string Key => Source.Key;
+
+    public string? Data => Source.Data;
+
+    public bool IsDestructive => Source.IsDestructive;
+
+    public void RefreshText(ILocalizationService localization)
+    {
+        Text = localization.T(Source.TextResourceKey);
+    }
+}
 
 public sealed record LinklyTerminalDialogState(
     string SessionId,
@@ -12,7 +58,13 @@ public sealed record LinklyTerminalDialogState(
     string? ResponseText,
     int RecoveryCount,
     int? LastHttpStatus,
-    string? Message);
+    string? Message,
+    LinklyTerminalDialogMode Mode = LinklyTerminalDialogMode.CloudBackendInteractive,
+    bool IsInteractive = true,
+    bool IsFinal = false,
+    IReadOnlyList<LinklyTerminalDialogButton>? DisplayButtons = null,
+    string? InputType = null,
+    string? GraphicCode = null);
 
 public sealed record LinklyTerminalDialogAction(
     string Key,
@@ -27,7 +79,7 @@ public static class LinklyTerminalDialogKeys
 
     public static string Normalize(string key)
     {
-        // Linkly REST sendkey 只接受官方数字枚举，兼容旧弹窗残留的文本动作。
+        // Linkly REST sendkey 只接受官方数字键值；这里兼容旧窗口遗留的文本动作。
         var normalized = key.Trim();
         return normalized.ToUpperInvariant() switch
         {
@@ -49,12 +101,179 @@ public interface ILinklyTerminalDialogService
     Task CloseAsync(CancellationToken cancellationToken);
 }
 
-public sealed class WpfLinklyTerminalDialogService(
-    ILocalizationService localization) : ILinklyTerminalDialogService
+public interface ILinklyTerminalDialogPresenter
 {
-    private LinklyTerminalDialogWindow? _window;
+    bool IsOpen { get; }
+
+    string TitleText { get; }
+
+    string StatusLabelText { get; }
+
+    string DisplayLabelText { get; }
+
+    string ReceiptLabelText { get; }
+
+    string? SessionId { get; }
+
+    string StatusText { get; }
+
+    string? DisplayText { get; }
+
+    string? ReceiptText { get; }
+
+    string? ResponseText { get; }
+
+    string? MessageText { get; }
+
+    bool IsInteractive { get; }
+
+    bool IsFinal { get; }
+
+    bool IsCloseButtonVisible { get; }
+
+    bool IsCancelPaymentVisible { get; }
+
+    string CancelPaymentText { get; }
+
+    ObservableCollection<LinklyTerminalDialogButtonViewModel> DisplayButtons { get; }
+
+    IRelayCommand<LinklyTerminalDialogButtonViewModel> SubmitActionCommand { get; }
+
+    IRelayCommand CancelPaymentCommand { get; }
+
+    IAsyncRelayCommand CloseCommand { get; }
+}
+
+public sealed class WpfLinklyTerminalDialogService :
+    ObservableObject,
+    ILinklyTerminalDialogService,
+    ILinklyTerminalDialogPresenter
+{
+    private readonly ILocalizationService _localization;
     private LinklyTerminalDialogAction? _pendingAction;
-    private bool _isClosingProgrammatically;
+    private bool _isOpen;
+    private string? _sessionId;
+    private string _statusText = string.Empty;
+    private string? _displayText;
+    private string? _receiptText;
+    private string? _responseText;
+    private string? _messageText;
+    private bool _isInteractive;
+    private bool _isFinal;
+    private LinklyTerminalDialogMode _mode = LinklyTerminalDialogMode.CloudBackendInteractive;
+
+    public WpfLinklyTerminalDialogService(ILocalizationService localization)
+    {
+        _localization = localization;
+        SubmitActionCommand = new RelayCommand<LinklyTerminalDialogButtonViewModel>(
+            SubmitAction,
+            button => IsOpen && button is not null);
+        CancelPaymentCommand = new RelayCommand(
+            SubmitCancelPayment,
+            () => IsCancelPaymentVisible);
+        CloseCommand = new AsyncRelayCommand(CloseOrCancelAsync);
+        _localization.CultureChanged += (_, _) => RaiseLocalizedTextChanged();
+        RaiseLocalizedTextChanged();
+    }
+
+    public bool IsOpen
+    {
+        get => _isOpen;
+        private set
+        {
+            if (SetProperty(ref _isOpen, value))
+            {
+                RaiseDialogButtonStateChanged();
+            }
+        }
+    }
+
+    public string TitleText => _localization.T("linkly.backend.dialog.title");
+
+    public string StatusLabelText => _localization.T("linkly.backend.dialog.status");
+
+    public string DisplayLabelText => _localization.T("linkly.backend.dialog.display");
+
+    public string ReceiptLabelText => _localization.T("linkly.backend.dialog.receipt");
+
+    public string? SessionId
+    {
+        get => _sessionId;
+        private set => SetProperty(ref _sessionId, value);
+    }
+
+    public string StatusText
+    {
+        get => _statusText;
+        private set => SetProperty(ref _statusText, value);
+    }
+
+    public string? DisplayText
+    {
+        get => _displayText;
+        private set => SetProperty(ref _displayText, value);
+    }
+
+    public string? ReceiptText
+    {
+        get => _receiptText;
+        private set => SetProperty(ref _receiptText, value);
+    }
+
+    public string? ResponseText
+    {
+        get => _responseText;
+        private set => SetProperty(ref _responseText, value);
+    }
+
+    public string? MessageText
+    {
+        get => _messageText;
+        private set => SetProperty(ref _messageText, value);
+    }
+
+    public bool IsInteractive
+    {
+        get => _isInteractive;
+        private set
+        {
+            if (SetProperty(ref _isInteractive, value))
+            {
+                RaiseDialogButtonStateChanged();
+            }
+        }
+    }
+
+    public bool IsFinal
+    {
+        get => _isFinal;
+        private set
+        {
+            if (SetProperty(ref _isFinal, value))
+            {
+                RaiseDialogButtonStateChanged();
+            }
+        }
+    }
+
+    public bool IsCloseButtonVisible => IsOpen;
+
+    public bool IsCancelPaymentVisible =>
+        IsOpen &&
+        (_mode == LinklyTerminalDialogMode.CloudBackendInteractive ||
+            _mode == LinklyTerminalDialogMode.CloudDirectStatus) &&
+        IsInteractive &&
+        !IsFinal;
+
+    public string CancelPaymentText => _localization.T("linkly.backend.dialog.button.cancelPayment");
+
+    public ObservableCollection<LinklyTerminalDialogButtonViewModel> DisplayButtons { get; } = [];
+
+    public IRelayCommand<LinklyTerminalDialogButtonViewModel> SubmitActionCommand { get; }
+
+    public IRelayCommand CancelPaymentCommand { get; }
+
+    public IAsyncRelayCommand CloseCommand { get; }
 
     public Task<LinklyTerminalDialogAction?> UpdateAsync(
         LinklyTerminalDialogState state,
@@ -62,26 +281,19 @@ public sealed class WpfLinklyTerminalDialogService(
     {
         cancellationToken.ThrowIfCancellationRequested();
         var dispatcher = Application.Current?.Dispatcher;
-        if (dispatcher is null)
+        if (dispatcher is null || dispatcher.CheckAccess())
         {
-            return Task.FromResult<LinklyTerminalDialogAction?>(null);
+            return Task.FromResult(UpdateOnUiThread(state));
         }
 
-        return dispatcher.CheckAccess()
-            ? Task.FromResult(UpdateOnUiThread(state))
-            : dispatcher.InvokeAsync(() => UpdateOnUiThread(state)).Task;
+        return dispatcher.InvokeAsync(() => UpdateOnUiThread(state)).Task;
     }
 
     public Task CloseAsync(CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
         var dispatcher = Application.Current?.Dispatcher;
-        if (dispatcher is null)
-        {
-            return Task.CompletedTask;
-        }
-
-        if (dispatcher.CheckAccess())
+        if (dispatcher is null || dispatcher.CheckAccess())
         {
             CloseOnUiThread();
             return Task.CompletedTask;
@@ -92,72 +304,102 @@ public sealed class WpfLinklyTerminalDialogService(
 
     private LinklyTerminalDialogAction? UpdateOnUiThread(LinklyTerminalDialogState state)
     {
-        EnsureWindow();
-        _window!.ApplyText(
-            localization.T("linkly.backend.dialog.title"),
-            localization.T("linkly.backend.dialog.status"),
-            localization.T("linkly.backend.dialog.display"),
-            localization.T("linkly.backend.dialog.receipt"),
-            localization.T("linkly.backend.dialog.confirm"),
-            localization.T("linkly.backend.dialog.cancel"));
-        _window.UpdateState(state);
+        _mode = state.Mode;
+        IsOpen = true;
+        SessionId = state.SessionId;
+        StatusText = state.Status;
+        DisplayText = state.DisplayText;
+        ReceiptText = state.ReceiptText;
+        ResponseText = state.ResponseText;
+        MessageText = state.Message;
+        IsInteractive = state.IsInteractive;
+        IsFinal = state.IsFinal;
 
-        // 按钮动作只消费一次，避免下一轮状态轮询重复发送 sendkey。
+        DisplayButtons.Clear();
+        foreach (var button in state.DisplayButtons ?? [])
+        {
+            DisplayButtons.Add(new LinklyTerminalDialogButtonViewModel(
+                button,
+                _localization.T(button.TextResourceKey)));
+        }
+
+        RaiseDialogButtonStateChanged();
+
+        // 页面弹窗和轮询线程之间只传递一次待发送按键，避免重复 sendkey。
         var action = _pendingAction;
         _pendingAction = null;
+        SubmitActionCommand.NotifyCanExecuteChanged();
         return action;
     }
 
-    private void EnsureWindow()
+    private void SubmitAction(LinklyTerminalDialogButtonViewModel? button)
     {
-        if (_window is not null)
+        if (button is null || string.IsNullOrWhiteSpace(button.Key))
         {
             return;
         }
 
-        _window = new LinklyTerminalDialogWindow();
-        if (Application.Current?.MainWindow is { } owner &&
-            !ReferenceEquals(owner, _window))
-        {
-            _window.Owner = owner;
-        }
-
-        _window.ActionRequested += OnActionRequested;
-        _window.Closed += OnWindowClosed;
-        _window.Show();
+        _pendingAction = new LinklyTerminalDialogAction(button.Key, button.Data);
     }
 
-    private void OnActionRequested(object? sender, LinklyTerminalDialogAction action)
+    private void SubmitCancelPayment()
     {
-        _pendingAction = action;
+        if (!IsCancelPaymentVisible)
+        {
+            return;
+        }
+
+        // 取消刷卡使用 Linkly 官方 OK/CANCEL sendkey，不走本地关闭，确保后端交易同步取消。
+        _pendingAction = new LinklyTerminalDialogAction(LinklyTerminalDialogKeys.OkCancel, null);
     }
 
-    private void OnWindowClosed(object? sender, EventArgs e)
+    private Task CloseOrCancelAsync()
     {
-        if (!_isClosingProgrammatically)
+        if (IsCancelPaymentVisible)
         {
-            _pendingAction = new LinklyTerminalDialogAction(LinklyTerminalDialogKeys.OkCancel, null);
+            // 进行中的右上角关闭等同“取消刷卡”，避免终端端交易继续等待。
+            SubmitCancelPayment();
+            return Task.CompletedTask;
         }
 
-        if (_window is not null)
-        {
-            _window.ActionRequested -= OnActionRequested;
-            _window.Closed -= OnWindowClosed;
-        }
-
-        _window = null;
-        _isClosingProgrammatically = false;
+        return CloseAsync(CancellationToken.None);
     }
 
     private void CloseOnUiThread()
     {
-        if (_window is null)
-        {
-            return;
-        }
-
-        _isClosingProgrammatically = true;
         _pendingAction = null;
-        _window.Close();
+        _mode = LinklyTerminalDialogMode.CloudBackendInteractive;
+        IsOpen = false;
+        SessionId = null;
+        StatusText = string.Empty;
+        DisplayText = null;
+        ReceiptText = null;
+        ResponseText = null;
+        MessageText = null;
+        IsInteractive = false;
+        IsFinal = false;
+        DisplayButtons.Clear();
+        SubmitActionCommand.NotifyCanExecuteChanged();
+        RaiseDialogButtonStateChanged();
+    }
+
+    private void RaiseLocalizedTextChanged()
+    {
+        OnPropertyChanged(nameof(TitleText));
+        OnPropertyChanged(nameof(StatusLabelText));
+        OnPropertyChanged(nameof(DisplayLabelText));
+        OnPropertyChanged(nameof(ReceiptLabelText));
+        OnPropertyChanged(nameof(CancelPaymentText));
+        foreach (var button in DisplayButtons)
+        {
+            button.RefreshText(_localization);
+        }
+    }
+
+    private void RaiseDialogButtonStateChanged()
+    {
+        OnPropertyChanged(nameof(IsCloseButtonVisible));
+        OnPropertyChanged(nameof(IsCancelPaymentVisible));
+        CancelPaymentCommand.NotifyCanExecuteChanged();
     }
 }

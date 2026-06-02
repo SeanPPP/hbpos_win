@@ -224,7 +224,8 @@ public sealed class LinklyCloudApiClientTests
         var result = await client.SendTransactionAsync(
             CreateCloudSettings(),
             "bearer-token",
-            new LinklyCloudTransactionRequest("P", 1000, "TXN-1"));
+            new LinklyCloudTransactionRequest("P", 1000, "TXN-1"),
+            "session-1");
 
         Assert.True(result.Succeeded);
         Assert.Equal("TXN-1", result.TxnRef);
@@ -266,6 +267,32 @@ public sealed class LinklyCloudApiClientTests
 
         Assert.Equal("session-1", result.SessionId);
         Assert.Equal(LinklyCloudTransactionOutcome.NotSubmitted, result.Outcome);
+    }
+
+    [Fact]
+    public async Task SendKeyAsync_posts_sendkey_request_for_existing_session()
+    {
+        HttpRequestMessage? capturedRequest = null;
+        var client = new LinklyCloudApiClient(new HttpClient(new StubHttpMessageHandler(request =>
+        {
+            capturedRequest = CloneRequestWithBody(request);
+            return JsonResponse("""{ "success": true }""");
+        })));
+
+        await client.SendKeyAsync(
+            CreateCloudSettings(),
+            "bearer-token",
+            "session-1",
+            "OK/CANCEL",
+            null);
+
+        Assert.NotNull(capturedRequest);
+        Assert.Equal(HttpMethod.Post, capturedRequest!.Method);
+        Assert.Equal("https://rest.example/v1/sessions/session-1/sendkey?async=false", capturedRequest.RequestUri!.AbsoluteUri);
+        Assert.Equal("Bearer", capturedRequest.Headers.Authorization?.Scheme);
+        Assert.Equal("bearer-token", capturedRequest.Headers.Authorization?.Parameter);
+        var body = await capturedRequest.Content!.ReadAsStringAsync();
+        Assert.Equal(LinklyTerminalDialogKeys.OkCancel, ReadNestedJsonString(body, "Request", "Key"));
     }
 
     private static CardTerminalSettings CreateCloudSettings()

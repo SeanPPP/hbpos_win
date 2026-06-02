@@ -43,6 +43,67 @@ public sealed class LinklyCloudTerminalClientTests
     }
 
     [Fact]
+    public async Task PurchaseAsync_closes_dialog_after_approved_direct_cloud_transaction()
+    {
+        var apiClient = new FakeLinklyCloudApiClient
+        {
+            TransactionResult = Approved("session-1", "TXN-1")
+        };
+        var dialog = new FakeLinklyTerminalDialogService
+        {
+            ThrowIfFinalStateUsesCancelableToken = true
+        };
+        var client = new LinklyCloudTerminalClient(
+            apiClient,
+            new FakeLinklyCloudSecretStore(),
+            TimeSpan.Zero,
+            localization: null,
+            dialogService: dialog);
+
+        var result = await client.PurchaseAsync(10m, CreateSession(), CreateSettings());
+
+        Assert.True(result.Approved);
+        Assert.Equal(1, dialog.CloseCallCount);
+        Assert.Contains(dialog.States, state => state.IsFinal);
+    }
+
+    [Fact]
+    public async Task PurchaseAsync_keeps_dialog_open_after_declined_direct_cloud_transaction()
+    {
+        var apiClient = new FakeLinklyCloudApiClient
+        {
+            TransactionResult = new LinklyCloudTransactionResult(
+                "session-1",
+                false,
+                "TXN-1",
+                null,
+                null,
+                null,
+                null,
+                null,
+                "05",
+                "DECLINED",
+                null,
+                10m,
+                null)
+        };
+        var dialog = new FakeLinklyTerminalDialogService();
+        var client = new LinklyCloudTerminalClient(
+            apiClient,
+            new FakeLinklyCloudSecretStore(),
+            TimeSpan.Zero,
+            localization: null,
+            dialogService: dialog);
+
+        var result = await client.PurchaseAsync(10m, CreateSession(), CreateSettings());
+
+        Assert.False(result.Approved);
+        Assert.Equal(0, dialog.CloseCallCount);
+        var finalState = Assert.Single(dialog.States.Where(state => state.IsFinal));
+        Assert.Equal("DECLINED (05)", finalState.ResponseText);
+    }
+
+    [Fact]
     public async Task RefundAsync_requires_original_rfn_reference()
     {
         var client = new LinklyCloudTerminalClient(
@@ -195,6 +256,80 @@ public sealed class LinklyCloudTerminalClientTests
         Assert.Equal(2, apiClient.SendTransactionCallCount);
     }
 
+    [Fact]
+    public async Task PurchaseAsync_sends_direct_cancel_sendkey_when_dialog_requests_cancel()
+    {
+        var apiClient = new FakeLinklyCloudApiClient();
+        apiClient.TransactionResultSequence.Enqueue(Pending("session-cancel-1"));
+        apiClient.TransactionStatusSequence.Enqueue(new LinklyCloudTransactionResult(
+            "session-cancel-1",
+            false,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            "CN",
+            "CANCELLED",
+            null,
+            10m,
+            null));
+        var dialog = new FakeLinklyTerminalDialogService();
+        dialog.EnqueueAction(new LinklyTerminalDialogAction(LinklyTerminalDialogKeys.OkCancel, null));
+        var client = new LinklyCloudTerminalClient(
+            apiClient,
+            new FakeLinklyCloudSecretStore(),
+            TimeSpan.Zero,
+            localization: null,
+            dialogService: dialog);
+
+        var result = await client.PurchaseAsync(10m, CreateSession(), CreateSettings());
+
+        Assert.False(result.Approved);
+        Assert.Equal("CANCELLED (CN)", result.Message);
+        Assert.Equal(1, dialog.CloseCallCount);
+        Assert.Equal(1, apiClient.SendKeyCallCount);
+        Assert.Equal(1, apiClient.GetTransactionCallCount);
+        Assert.Equal(apiClient.LastTransactionSessionId, apiClient.LastSendKeySessionId);
+        Assert.Equal(LinklyTerminalDialogKeys.OkCancel, apiClient.LastSendKeyKey);
+        Assert.Contains(dialog.States, state =>
+            state.SessionId == apiClient.LastTransactionSessionId &&
+            state.IsInteractive &&
+            !state.IsFinal);
+    }
+
+    [Fact]
+    public async Task PurchaseAsync_allows_direct_cancel_while_initial_transaction_request_is_pending()
+    {
+        var apiClient = new FakeLinklyCloudApiClient
+        {
+            PendingTransactionCompletion = new TaskCompletionSource<LinklyCloudTransactionResult>(
+                TaskCreationOptions.RunContinuationsAsynchronously)
+        };
+        var dialog = new FakeLinklyTerminalDialogService();
+        dialog.EnqueueAction(new LinklyTerminalDialogAction(LinklyTerminalDialogKeys.OkCancel, null));
+        var client = new LinklyCloudTerminalClient(
+            apiClient,
+            new FakeLinklyCloudSecretStore(),
+            TimeSpan.Zero,
+            localization: null,
+            dialogService: dialog);
+
+        var purchaseTask = client.PurchaseAsync(10m, CreateSession(), CreateSettings());
+        await WaitUntilAsync(() => apiClient.SendKeyCallCount == 1);
+
+        Assert.Equal(apiClient.LastTransactionSessionId, apiClient.LastSendKeySessionId);
+        Assert.Equal(LinklyTerminalDialogKeys.OkCancel, apiClient.LastSendKeyKey);
+        var pendingState = Assert.Single(dialog.States.Where(state => state.IsInteractive && !state.IsFinal));
+        Assert.Equal(apiClient.LastTransactionSessionId, pendingState.SessionId);
+
+        apiClient.PendingTransactionCompletion.SetResult(Approved(apiClient.LastTransactionSessionId!, "TXN-4"));
+        var result = await purchaseTask;
+
+        Assert.True(result.Approved);
+    }
+
     private static PosSessionState CreateSession()
     {
         return new PosSessionState(
@@ -259,6 +394,15 @@ public sealed class LinklyCloudTerminalClientTests
             "RFN-1");
     }
 
+    private static async Task WaitUntilAsync(Func<bool> predicate)
+    {
+        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+        while (!predicate())
+        {
+            await Task.Delay(10, cts.Token);
+        }
+    }
+
     private sealed class FakeLinklyCloudSecretStore : ILinklyCloudSecretStore
     {
         public string? LastStoreCode { get; private set; }
@@ -321,7 +465,17 @@ public sealed class LinklyCloudTerminalClientTests
 
         public int SendTransactionCallCount { get; private set; }
 
+        public string? LastTransactionSessionId { get; private set; }
+
+        public TaskCompletionSource<LinklyCloudTransactionResult>? PendingTransactionCompletion { get; init; }
+
         public int GetTransactionCallCount { get; private set; }
+
+        public int SendKeyCallCount { get; private set; }
+
+        public string? LastSendKeySessionId { get; private set; }
+
+        public string? LastSendKeyKey { get; private set; }
 
         public Queue<LinklyCloudTransactionResult> TransactionResultSequence { get; } = [];
 
@@ -378,9 +532,16 @@ public sealed class LinklyCloudTerminalClientTests
             CardTerminalSettings settings,
             string token,
             LinklyCloudTransactionRequest request,
+            string sessionId,
             CancellationToken cancellationToken = default)
         {
             SendTransactionCallCount++;
+            LastTransactionSessionId = sessionId;
+            if (PendingTransactionCompletion is not null)
+            {
+                return PendingTransactionCompletion.Task;
+            }
+
             return Task.FromResult(TransactionResultSequence.Count > 0
                 ? TransactionResultSequence.Dequeue()
                 : TransactionResult);
@@ -405,6 +566,55 @@ public sealed class LinklyCloudTerminalClientTests
             }
 
             return Task.FromResult((LinklyCloudTransactionResult)next);
+        }
+
+        public Task SendKeyAsync(
+            CardTerminalSettings settings,
+            string token,
+            string sessionId,
+            string key,
+            string? data,
+            CancellationToken cancellationToken = default)
+        {
+            SendKeyCallCount++;
+            LastSendKeySessionId = sessionId;
+            LastSendKeyKey = LinklyTerminalDialogKeys.Normalize(key);
+            return Task.CompletedTask;
+        }
+    }
+
+    private sealed class FakeLinklyTerminalDialogService : ILinklyTerminalDialogService
+    {
+        public List<LinklyTerminalDialogState> States { get; } = [];
+
+        public int CloseCallCount { get; private set; }
+
+        public bool ThrowIfFinalStateUsesCancelableToken { get; init; }
+
+        private readonly Queue<LinklyTerminalDialogAction?> _actions = new();
+
+        public void EnqueueAction(LinklyTerminalDialogAction? action)
+        {
+            _actions.Enqueue(action);
+        }
+
+        public Task<LinklyTerminalDialogAction?> UpdateAsync(
+            LinklyTerminalDialogState state,
+            CancellationToken cancellationToken)
+        {
+            if (ThrowIfFinalStateUsesCancelableToken && state.IsFinal && cancellationToken.CanBeCanceled)
+            {
+                throw new OperationCanceledException(cancellationToken);
+            }
+
+            States.Add(state);
+            return Task.FromResult(state.IsInteractive && _actions.Count > 0 ? _actions.Dequeue() : null);
+        }
+
+        public Task CloseAsync(CancellationToken cancellationToken)
+        {
+            CloseCallCount++;
+            return Task.CompletedTask;
         }
     }
 }

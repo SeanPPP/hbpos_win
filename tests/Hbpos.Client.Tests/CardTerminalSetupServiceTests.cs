@@ -673,6 +673,7 @@ public sealed class CardTerminalSetupServiceTests
             CardTerminalSettings settings,
             string token,
             LinklyCloudTransactionRequest request,
+            string sessionId,
             CancellationToken cancellationToken = default)
         {
             throw new NotSupportedException();
@@ -682,6 +683,17 @@ public sealed class CardTerminalSetupServiceTests
             CardTerminalSettings settings,
             string token,
             string sessionId,
+            CancellationToken cancellationToken = default)
+        {
+            throw new NotSupportedException();
+        }
+
+        public Task SendKeyAsync(
+            CardTerminalSettings settings,
+            string token,
+            string sessionId,
+            string key,
+            string? data,
             CancellationToken cancellationToken = default)
         {
             throw new NotSupportedException();

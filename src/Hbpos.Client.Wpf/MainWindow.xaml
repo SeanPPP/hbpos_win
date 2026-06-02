@@ -1,6 +1,7 @@
 ﻿<Window x:Class="Hbpos.Client.Wpf.MainWindow"
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:converters="clr-namespace:Hbpos.Client.Wpf.Converters"
         xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
         xmlns:loc="clr-namespace:Hbpos.Client.Wpf.Localization"
         xmlns:materialDesign="http://materialdesigninxaml.net/winfx/xaml/themes"
@@ -21,6 +22,7 @@
         Background="{StaticResource PosScreenBackgroundBrush}">
     <Window.Resources>
         <BooleanToVisibilityConverter x:Key="BoolToVis" />
+        <converters:StringNullOrWhiteSpaceToVisibilityConverter x:Key="StringHasValueToVis" />
 
         <Style x:Key="CustomerDisplayModeIconButtonStyle" TargetType="Button">
             <Setter Property="Width" Value="36" />
@@ -661,6 +663,173 @@
                 </StackPanel>
             </Border>
         </Grid>
+
+        <Border Grid.RowSpan="3"
+                Panel.ZIndex="80"
+                Background="#66000000"
+                Visibility="{Binding LinklyTerminalDialog.IsOpen, Converter={StaticResource BoolToVis}}">
+            <Border Width="520"
+                    Padding="24"
+                    Background="{StaticResource PosSurfaceBrush}"
+                    CornerRadius="12"
+                    HorizontalAlignment="Center"
+                    VerticalAlignment="Center"
+                    DataContext="{Binding LinklyTerminalDialog}">
+                <Border.Effect>
+                    <DropShadowEffect BlurRadius="24" ShadowDepth="6" Opacity="0.22" />
+                </Border.Effect>
+                <Grid>
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="Auto" />
+                    </Grid.RowDefinitions>
+
+                    <DockPanel Grid.Row="0" Margin="0,0,0,18">
+                        <Button DockPanel.Dock="Right"
+                                Command="{Binding CloseCommand}"
+                                Style="{StaticResource TitleBarButtonStyle}"
+                                Visibility="{Binding IsCloseButtonVisible, Converter={StaticResource BoolToVis}}"
+                                ToolTip="{loc:Loc shell.window.close}">
+                            <materialDesign:PackIcon Kind="Close" Width="18" Height="18" />
+                        </Button>
+                        <StackPanel>
+                            <TextBlock Text="{Binding TitleText}"
+                                       FontSize="20"
+                                       FontWeight="Black"
+                                       Foreground="{StaticResource PosTextBrush}" />
+                            <TextBlock Text="{Binding SessionId}"
+                                       Margin="0,4,0,0"
+                                       FontSize="11"
+                                       Foreground="{StaticResource PosMutedForegroundBrush}"
+                                       TextTrimming="CharacterEllipsis" />
+                        </StackPanel>
+                    </DockPanel>
+
+                    <Border Grid.Row="1"
+                            Padding="12"
+                            Margin="0,0,0,12"
+                            Background="#FFF7F8FB"
+                            BorderBrush="#FFE7E8EB"
+                            BorderThickness="1"
+                            CornerRadius="10">
+                        <Grid>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="110" />
+                                <ColumnDefinition Width="*" />
+                            </Grid.ColumnDefinitions>
+                            <TextBlock Text="{Binding StatusLabelText}"
+                                       FontSize="11"
+                                       FontWeight="Black"
+                                       Foreground="{StaticResource PosMutedForegroundBrush}" />
+                            <TextBlock Grid.Column="1"
+                                       Text="{Binding StatusText}"
+                                       FontSize="15"
+                                       FontWeight="Black"
+                                       Foreground="{StaticResource PosPrimaryBrush}"
+                                       TextWrapping="Wrap" />
+                        </Grid>
+                    </Border>
+
+                    <StackPanel Grid.Row="2" Margin="0,0,0,12">
+                        <TextBlock Text="{Binding DisplayLabelText}"
+                                   FontSize="11"
+                                   FontWeight="Black"
+                                   Foreground="{StaticResource PosMutedForegroundBrush}" />
+                        <Border Margin="0,6,0,0"
+                                Padding="14"
+                                MinHeight="70"
+                                Background="#FF191C1E"
+                                CornerRadius="10">
+                            <TextBlock Text="{Binding DisplayText}"
+                                       Foreground="White"
+                                       FontSize="20"
+                                       FontWeight="Black"
+                                       TextWrapping="Wrap" />
+                        </Border>
+                        <TextBlock Text="{Binding MessageText}"
+                                   Margin="0,8,0,0"
+                                   Foreground="#FF8F4E00"
+                                   FontWeight="SemiBold"
+                                   TextWrapping="Wrap"
+                                   Visibility="{Binding MessageText, Converter={StaticResource StringHasValueToVis}}" />
+                        <TextBlock Text="{Binding ResponseText}"
+                                   Margin="0,8,0,0"
+                                   Foreground="{StaticResource PosAccentBrush}"
+                                   FontWeight="Black"
+                                   TextWrapping="Wrap"
+                                   Visibility="{Binding ResponseText, Converter={StaticResource StringHasValueToVis}}" />
+                    </StackPanel>
+
+                    <StackPanel Grid.Row="3"
+                                Margin="0,0,0,16"
+                                Visibility="{Binding ReceiptText, Converter={StaticResource StringHasValueToVis}}">
+                        <TextBlock Text="{Binding ReceiptLabelText}"
+                                   FontSize="11"
+                                   FontWeight="Black"
+                                   Foreground="{StaticResource PosMutedForegroundBrush}" />
+                        <TextBox Text="{Binding ReceiptText, Mode=OneWay}"
+                                 Margin="0,6,0,0"
+                                 MinHeight="96"
+                                 MaxHeight="150"
+                                 Padding="10"
+                                 FontFamily="Consolas"
+                                 FontSize="12"
+                                 IsReadOnly="True"
+                                 TextWrapping="Wrap"
+                                 VerticalScrollBarVisibility="Auto" />
+                    </StackPanel>
+
+                    <StackPanel Grid.Row="4"
+                                Orientation="Horizontal"
+                                HorizontalAlignment="Right">
+                        <Button Command="{Binding CancelPaymentCommand}"
+                                MinWidth="112"
+                                Height="44"
+                                Margin="8,0,0,0"
+                                Visibility="{Binding IsCancelPaymentVisible, Converter={StaticResource BoolToVis}}">
+                            <Button.Style>
+                                <Style TargetType="Button" BasedOn="{StaticResource PosPrimaryButtonStyle}">
+                                    <Setter Property="Background" Value="{StaticResource PosDangerBrush}" />
+                                    <Setter Property="BorderBrush" Value="{StaticResource PosDangerBrush}" />
+                                </Style>
+                            </Button.Style>
+                            <TextBlock Text="{Binding CancelPaymentText}" Foreground="White" FontWeight="Bold" />
+                        </Button>
+                        <ItemsControl ItemsSource="{Binding DisplayButtons}">
+                            <ItemsControl.ItemsPanel>
+                                <ItemsPanelTemplate>
+                                    <StackPanel Orientation="Horizontal" />
+                                </ItemsPanelTemplate>
+                            </ItemsControl.ItemsPanel>
+                            <ItemsControl.ItemTemplate>
+                                <DataTemplate DataType="{x:Type services:LinklyTerminalDialogButtonViewModel}">
+                                    <Button Command="{Binding DataContext.LinklyTerminalDialog.SubmitActionCommand, RelativeSource={RelativeSource AncestorType=Window}}"
+                                            CommandParameter="{Binding}"
+                                            MinWidth="112"
+                                            Height="44"
+                                            Margin="8,0,0,0">
+                                        <Button.Style>
+                                            <Style TargetType="Button" BasedOn="{StaticResource PosPrimaryButtonStyle}">
+                                                <Style.Triggers>
+                                                    <DataTrigger Binding="{Binding IsDestructive}" Value="True">
+                                                        <Setter Property="Background" Value="{StaticResource PosDangerBrush}" />
+                                                        <Setter Property="BorderBrush" Value="{StaticResource PosDangerBrush}" />
+                                                    </DataTrigger>
+                                                </Style.Triggers>
+                                            </Style>
+                                        </Button.Style>
+                                        <TextBlock Text="{Binding Text}" Foreground="White" FontWeight="Bold" />
+                                    </Button>
+                                </DataTemplate>
+                            </ItemsControl.ItemTemplate>
+                        </ItemsControl>
+                    </StackPanel>
+                </Grid>
+            </Border>
+        </Border>
     </Grid>
 </Window>
 

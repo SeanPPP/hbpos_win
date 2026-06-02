@@ -1653,4 +1653,40 @@
   <data name="linkly.backend.dialog.cancel" xml:space="preserve">
     <value>取消</value>
   </data>
+  <data name="linkly.cloud.directPendingMessage" xml:space="preserve">
+    <value>正在等待刷卡机返回结果，请在刷卡机上完成操作。</value>
+  </data>
+  <data name="linkly.cloud.directStatusHelp" xml:space="preserve">
+    <value>可在刷卡机上取消，也可由 POS 发送取消请求；最终结果以 Linkly 返回为准。</value>
+  </data>
+  <data name="linkly.cloud.directCancelRequested" xml:space="preserve">
+    <value>已向刷卡机发送取消请求，正在等待最终结果。</value>
+  </data>
+  <data name="linkly.cloud.directCancelFailed" xml:space="preserve">
+    <value>取消请求发送失败，请重试或在刷卡机上操作。</value>
+  </data>
+  <data name="linkly.backend.dialog.close" xml:space="preserve">
+    <value>关闭</value>
+  </data>
+  <data name="linkly.backend.dialog.button.cancelPayment" xml:space="preserve">
+    <value>取消刷卡</value>
+  </data>
+  <data name="linkly.backend.dialog.button.okCancel" xml:space="preserve">
+    <value>确认/取消</value>
+  </data>
+  <data name="linkly.backend.dialog.button.ok" xml:space="preserve">
+    <value>确认</value>
+  </data>
+  <data name="linkly.backend.dialog.button.yesApproved" xml:space="preserve">
+    <value>是/通过</value>
+  </data>
+  <data name="linkly.backend.dialog.button.noDeclined" xml:space="preserve">
+    <value>否/拒绝</value>
+  </data>
+  <data name="linkly.backend.dialog.button.authoriseSignature" xml:space="preserve">
+    <value>授权/签名通过</value>
+  </data>
+  <data name="linkly.backend.dialog.button.cancel" xml:space="preserve">
+    <value>取消</value>
+  </data>
 </root>
