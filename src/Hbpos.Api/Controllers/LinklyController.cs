@@ -379,6 +379,13 @@ public sealed class LinklyController(
                 sessionId,
                 request,
                 cancellationToken);
+            if (response.LastHttpStatus == StatusCodes.Status400BadRequest)
+            {
+                return BadRequest(ApiResult<LinklyCloudBackendSessionResponse>.Fail(
+                    CloudBackendInvalidCode,
+                    "Linkly Cloud rejected the terminal action. Continue waiting for the transaction result."));
+            }
+
             return Ok(ApiResult<LinklyCloudBackendSessionResponse>.Ok(response));
         }
         catch (LinklyCloudBackendSessionNotFoundException)

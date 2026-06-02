@@ -181,7 +181,14 @@ public sealed class LinklyBackendTerminalClientTests
                         "recoveryCount": 0,
                         "receiptPrintedAt": null,
                         "lastHttpStatus": 200,
-                        "notifications": []
+                        "okKeyFlag": true,
+                        "notifications": [
+                          {
+                            "type": "display",
+                            "payloadJson": "{ \"Response\": { \"DisplayText\": [\"PRESS OK\"], \"OKKeyFlag\": \"1\" } }",
+                            "receivedAt": "2026-06-01T02:00:03Z"
+                          }
+                        ]
                       }
                     }
                     """),
@@ -365,7 +372,14 @@ public sealed class LinklyBackendTerminalClientTests
                         "recoveryCount": 0,
                         "receiptPrintedAt": null,
                         "lastHttpStatus": 200,
-                        "notifications": []
+                        "okKeyFlag": true,
+                        "notifications": [
+                          {
+                            "type": "display",
+                            "payloadJson": "{ \"Response\": { \"DisplayText\": [\"PRESS OK\"], \"OKKeyFlag\": \"1\" } }",
+                            "receivedAt": "2026-06-01T02:00:03Z"
+                          }
+                        ]
                       }
                     }
                     """),
@@ -748,6 +762,69 @@ public sealed class LinklyBackendTerminalClientTests
     }
 
     [Fact]
+    public async Task PurchaseAsync_initial_pending_without_display_notification_shows_only_cancel()
+    {
+        var handler = new StubHttpMessageHandler(request => request.RequestUri!.AbsolutePath switch
+        {
+            "/api/v1/linkly/cloud-backend/transactions/active" => new HttpResponseMessage(HttpStatusCode.NotFound),
+            "/api/v1/linkly/cloud-backend/transactions" => JsonResponse(
+                """
+                {
+                  "success": true,
+                  "data": {
+                    "environment": "Sandbox",
+                    "storeCode": "S01",
+                    "deviceCode": "TERM-1",
+                    "sessionId": "initial-pending-session",
+                    "status": "Pending",
+                    "txnRef": "260601120030",
+                    "displayText": "TAP OK TO CONTINUE",
+                    "receiptText": null,
+                    "recoveryCount": 0,
+                    "receiptPrintedAt": null,
+                    "lastHttpStatus": 202,
+                    "okKeyFlag": true,
+                    "notifications": []
+                  }
+                }
+                """),
+            _ => JsonResponse(
+                """
+                {
+                  "success": true,
+                  "data": {
+                    "environment": "Sandbox",
+                    "storeCode": "S01",
+                    "deviceCode": "TERM-1",
+                    "sessionId": "initial-pending-session",
+                    "status": "Completed",
+                    "txnRef": "260601120030",
+                    "responseCode": "00",
+                    "responseText": "APPROVED",
+                    "displayText": "APPROVED",
+                    "receiptText": "INITIAL PENDING RECEIPT",
+                    "recoveryCount": 0,
+                    "receiptPrintedAt": null,
+                    "lastHttpStatus": 200,
+                    "notifications": []
+                  }
+                }
+                """)
+        });
+        var dialog = new FakeLinklyTerminalDialogService();
+        var client = CreateClient(handler, dialog);
+
+        var result = await client.PurchaseAsync(10m, CreateSession(), CreateSettings());
+
+        Assert.True(result.Approved);
+        var pending = Assert.Single(dialog.States.Where(state => state.SessionId == "initial-pending-session" && state.Status == "Pending"));
+        var button = Assert.Single(pending.DisplayButtons!);
+        Assert.Equal("linkly.backend.dialog.button.cancel", button.TextResourceKey);
+        Assert.Equal(LinklyTerminalDialogKeys.OkCancel, button.Key);
+        Assert.True(button.IsDestructive);
+    }
+
+    [Fact]
     public async Task PurchaseAsync_keeps_polling_current_session_when_sendkey_request_fails()
     {
         var requests = new List<HttpRequestMessage>();
@@ -774,7 +851,13 @@ public sealed class LinklyBackendTerminalClientTests
                         "receiptPrintedAt": null,
                         "lastHttpStatus": 200,
                         "okKeyFlag": true,
-                        "notifications": []
+                        "notifications": [
+                          {
+                            "type": "display",
+                            "payloadJson": "{ \"Response\": { \"DisplayText\": [\"PRESS OK\"], \"OKKeyFlag\": \"1\" } }",
+                            "receivedAt": "2026-06-01T02:00:04Z"
+                          }
+                        ]
                       }
                     }
                     """),
@@ -884,7 +967,13 @@ public sealed class LinklyBackendTerminalClientTests
                         "lastHttpStatus": 200,
                         "okKeyFlag": true,
                         "cancelKeyFlag": true,
-                        "notifications": []
+                        "notifications": [
+                          {
+                            "type": "display",
+                            "payloadJson": "{ \"Response\": { \"DisplayText\": [\"CHOOSE ACTION\"], \"OKKeyFlag\": \"1\", \"CancelKeyFlag\": \"1\" } }",
+                            "receivedAt": "2026-06-01T02:00:05Z"
+                          }
+                        ]
                       }
                     }
                     """),

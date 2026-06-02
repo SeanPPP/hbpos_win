@@ -263,7 +263,7 @@ public class LinklyCloudBackendAsyncService(
 
         var response = await SendWithRecoverableFailureAsync(
             () => transport.SendKeyAsync(transportRequest, cancellationToken));
-        ApplyTransportResponse(session, response);
+        ApplySendKeyTransportResponse(session, response);
         if (IsTransportRecoveryFailure(response.StatusCode))
         {
             session.RecoveryCount++;
@@ -815,6 +815,67 @@ public class LinklyCloudBackendAsyncService(
         session.IsActive = false;
     }
 
+    private static void ApplySendKeyTransportResponse(
+        LinklyCloudBackendSessionRecord session,
+        LinklyCloudBackendTransportResponse response)
+    {
+        session.UpdatedAt = DateTimeOffset.UtcNow;
+        session.LastHttpStatus = (int)response.StatusCode;
+        session.RecoveryAction = null;
+        Log(
+            $"sendkey response applied sessionId={LogValue(session.SessionId)} " +
+            $"http={(int)response.StatusCode}");
+        if (response.StatusCode == HttpStatusCode.OK)
+        {
+            ApplyCompletedPayload(session, response.Body);
+            return;
+        }
+
+        if (response.StatusCode == HttpStatusCode.Accepted)
+        {
+            session.Status = StatusPending;
+            session.IsActive = true;
+            return;
+        }
+
+        if (IsTransportRecoveryFailure(response.StatusCode))
+        {
+            session.Status = StatusPending;
+            session.RecoveryAction = RecoveryRetry;
+            session.IsActive = true;
+            return;
+        }
+
+        if (response.StatusCode is HttpStatusCode.Unauthorized or HttpStatusCode.Forbidden)
+        {
+            session.Status = StatusTokenRefreshRequired;
+            session.RecoveryAction = RecoveryRefreshToken;
+            session.IsActive = true;
+            return;
+        }
+
+        if (response.StatusCode == HttpStatusCode.NotFound)
+        {
+            session.Status = StatusNotSubmitted;
+            session.RecoveryAction = RecoveryRetryNewSession;
+            session.IsActive = false;
+            return;
+        }
+
+        if (response.StatusCode == HttpStatusCode.BadRequest)
+        {
+            // sendkey 400 只代表本次按键请求无效；交易结果仍以 async notification / recovery 为准。
+            session.Status = StatusPending;
+            session.IsActive = true;
+            return;
+        }
+
+        var code = (int)response.StatusCode;
+        session.Status = StatusFailed;
+        session.ResponseText = $"Linkly Cloud returned HTTP {code}.";
+        session.IsActive = false;
+    }
+
     private static void ApplyCompletedPayload(LinklyCloudBackendSessionRecord session, string? payloadJson)
     {
         session.Status = StatusCompleted;
@@ -857,6 +918,11 @@ public class LinklyCloudBackendAsyncService(
         session.AuthoriseKeyFlag = ReadBool(root, "AuthoriseKeyFlag") ?? ReadBool(response, "AuthoriseKeyFlag") ?? false;
         session.InputType = ReadString(root, "InputType") ?? ReadString(response, "InputType");
         session.GraphicCode = ReadString(root, "GraphicCode") ?? ReadString(response, "GraphicCode");
+        Log(
+            $"display notification applied sessionId={LogValue(session.SessionId)} " +
+            $"display=\"{LogValue(TruncateForLog(displayText, 80))}\" " +
+            $"cancel={session.CancelKeyFlag} ok={session.OKKeyFlag} " +
+            $"yes={session.AcceptYesKeyFlag} no={session.DeclineNoKeyFlag} auth={session.AuthoriseKeyFlag}");
 
         // 显示和小票通知只更新辅助字段，不改变已完成交易状态。
         session.UpdatedAt = receivedAt;
@@ -1067,6 +1133,24 @@ public class LinklyCloudBackendAsyncService(
     private static string? NormalizeOptional(string? value)
     {
         return string.IsNullOrWhiteSpace(value) ? null : value.Trim();
+    }
+
+    private static string LogValue(string? value)
+    {
+        return string.IsNullOrWhiteSpace(value) ? "<none>" : value.Trim();
+    }
+
+    private static string? TruncateForLog(string? value, int maxLength)
+    {
+        var normalized = NormalizeOptional(value);
+        return normalized is null || normalized.Length <= maxLength
+            ? normalized
+            : normalized[..maxLength];
+    }
+
+    private static void Log(string message)
+    {
+        Console.WriteLine($"[HBPOS][Api][LinklyCloudBackend] {DateTimeOffset.Now:O} {message}");
     }
 
     private static string NormalizeUuidV4(string? value)

@@ -425,6 +425,29 @@ public sealed class LinklyControllerTests
     }
 
     [Fact]
+    public async Task SendCloudBackendKey_ReturnsBadRequestWhenLinklyRejectsActionButKeepsSessionPending()
+    {
+        var sendKeyResponse = CreateBackendResponse("session-key-400", "Pending") with
+        {
+            LastHttpStatus = 400
+        };
+        var backendService = new CapturingLinklyCloudBackendAsyncService(sendKeyResponse: sendKeyResponse);
+        await using var factory = new LinklyApiFactory(linklyCloudBackendAsyncService: backendService);
+        using var client = factory.CreateClient();
+        client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Test");
+
+        using var response = await client.PostAsJsonAsync(
+            "/api/v1/linkly/cloud-backend/transactions/session-key-400/sendkey",
+            new LinklyCloudBackendSendKeyRequest("Sandbox", "0", null));
+
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+        Assert.Equal("S01", backendService.LastSendKeyStoreCode);
+        Assert.Equal("POS-01", backendService.LastSendKeyDeviceCode);
+        Assert.Equal("session-key-400", backendService.LastSendKeySessionId);
+        Assert.Equal("0", backendService.LastSendKeyRequest?.Key);
+    }
+
+    [Fact]
     public async Task MarkCloudBackendReceiptPrinted_UsesAuthenticatedDeviceClaimsOnly()
     {
         var backendService = new CapturingLinklyCloudBackendAsyncService();
@@ -642,7 +665,8 @@ public sealed class LinklyControllerTests
     private sealed class CapturingLinklyCloudBackendAsyncService(
         Exception? startException = null,
         LinklyCloudBackendSessionResponse? activeResponse = null,
-        LinklyCloudBackendHealthResponse? healthResponse = null) : ILinklyCloudBackendAsyncService
+        LinklyCloudBackendHealthResponse? healthResponse = null,
+        LinklyCloudBackendSessionResponse? sendKeyResponse = null) : ILinklyCloudBackendAsyncService
     {
         public string? LastStoreCode { get; private set; }
 
@@ -677,6 +701,14 @@ public sealed class LinklyControllerTests
         public string? LastNotificationAuthorization { get; private set; }
 
         public LinklyCloudBackendTransactionRequest? LastStartRequest { get; private set; }
+
+        public string? LastSendKeyStoreCode { get; private set; }
+
+        public string? LastSendKeyDeviceCode { get; private set; }
+
+        public string? LastSendKeySessionId { get; private set; }
+
+        public LinklyCloudBackendSendKeyRequest? LastSendKeyRequest { get; private set; }
 
         public string? LastMarkReceiptPrintedStoreCode { get; private set; }
 
@@ -780,7 +812,11 @@ public sealed class LinklyControllerTests
             LinklyCloudBackendSendKeyRequest request,
             CancellationToken cancellationToken)
         {
-            throw new NotImplementedException();
+            LastSendKeyStoreCode = storeCode;
+            LastSendKeyDeviceCode = deviceCode;
+            LastSendKeySessionId = sessionId;
+            LastSendKeyRequest = request;
+            return Task.FromResult(sendKeyResponse ?? CreateBackendResponse(sessionId, "Pending"));
         }
 
         public Task<LinklyCloudBackendSessionResponse> MarkReceiptPrintedAsync(

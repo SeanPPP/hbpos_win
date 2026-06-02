@@ -346,6 +346,11 @@ public sealed class LinklyBackendTerminalClient(
             return [];
         }
 
+        if (!HasDisplayNotification(status))
+        {
+            return [CreateCancelButton()];
+        }
+
         var buttons = new List<LinklyTerminalDialogButton>();
         if (status.OKKeyFlag && status.CancelKeyFlag)
         {
@@ -374,10 +379,24 @@ public sealed class LinklyBackendTerminalClient(
 
         if (!status.OKKeyFlag && status.CancelKeyFlag)
         {
-            buttons.Add(new LinklyTerminalDialogButton("linkly.backend.dialog.button.cancel", LinklyTerminalDialogKeys.OkCancel, IsDestructive: true));
+            buttons.Add(CreateCancelButton());
         }
 
-        return buttons;
+        return buttons.Count == 0 ? [CreateCancelButton()] : buttons;
+    }
+
+    private static LinklyTerminalDialogButton CreateCancelButton()
+    {
+        return new LinklyTerminalDialogButton(
+            "linkly.backend.dialog.button.cancel",
+            LinklyTerminalDialogKeys.OkCancel,
+            IsDestructive: true);
+    }
+
+    private static bool HasDisplayNotification(LinklyCloudBackendSessionResponse status)
+    {
+        return (status.Notifications ?? [])
+            .Any(notification => string.Equals(notification.Type, "display", StringComparison.OrdinalIgnoreCase));
     }
 
     private async Task<LinklyCloudBackendSessionResponse> StartTransactionAsync(

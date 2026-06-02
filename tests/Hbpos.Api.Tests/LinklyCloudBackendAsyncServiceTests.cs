@@ -382,6 +382,31 @@ namespace Hbpos.Api.Tests;
         Assert.Equal((int)statusCode, response.LastHttpStatus);
     }
 
+    [Fact]
+    public async Task SendKeyAsync_keeps_pending_active_when_linkly_returns_400()
+    {
+        var sessionId = Guid.NewGuid().ToString("D");
+        var transport = new CapturingLinklyCloudBackendAsyncTransport(HttpStatusCode.BadRequest);
+        var service = CreateService(transport);
+        await SeedPendingSessionAsync(service.Repository, sessionId);
+
+        var response = await service.SendKeyAsync(
+            "S01",
+            "POS-01",
+            sessionId,
+            new LinklyCloudBackendSendKeyRequest("Sandbox", "OK", null),
+            CancellationToken.None);
+        var active = await service.GetActiveSessionAsync("S01", "POS-01", "Sandbox", CancellationToken.None);
+
+        Assert.Equal("Pending", response.Status);
+        Assert.Null(response.ResponseText);
+        Assert.Null(response.RecoveryAction);
+        Assert.Equal(0, response.RecoveryCount);
+        Assert.Equal(400, response.LastHttpStatus);
+        Assert.NotNull(active);
+        Assert.Equal(sessionId, active!.SessionId);
+    }
+
     [Theory]
     [InlineData("start", HttpStatusCode.Accepted)]
     [InlineData("recover", HttpStatusCode.RequestTimeout)]
