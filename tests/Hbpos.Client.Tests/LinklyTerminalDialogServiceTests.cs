@@ -36,7 +36,7 @@ public sealed class LinklyTerminalDialogServiceTests
         Assert.Equal(button, displayButton.Source);
         Assert.Equal("OK", displayButton.Text);
         Assert.True(service.IsCloseButtonVisible);
-        Assert.True(service.IsCancelPaymentVisible);
+        Assert.False(service.IsCancelPaymentVisible);
         Assert.Equal("Cancel payment", service.CancelPaymentText);
     }
 
@@ -144,7 +144,7 @@ public sealed class LinklyTerminalDialogServiceTests
     }
 
     [Fact]
-    public async Task UpdateAsync_consumes_cancel_payment_action_once()
+    public async Task UpdateAsync_hides_fixed_cancel_payment_for_backend_async()
     {
         var service = new WpfLinklyTerminalDialogService(new LocalizationService());
         var state = new LinklyTerminalDialogState(
@@ -164,14 +164,13 @@ public sealed class LinklyTerminalDialogServiceTests
         service.CancelPaymentCommand.Execute(null);
 
         var action = await service.UpdateAsync(state, CancellationToken.None);
-        var nextAction = await service.UpdateAsync(state, CancellationToken.None);
 
-        Assert.Equal(LinklyTerminalDialogKeys.OkCancel, action?.Key);
-        Assert.Null(nextAction);
+        Assert.False(service.IsCancelPaymentVisible);
+        Assert.Null(action);
     }
 
     [Fact]
-    public async Task CloseCommand_sends_cancel_action_while_dialog_is_interactive()
+    public async Task CloseCommand_hides_backend_async_dialog_without_sending_cancel_key()
     {
         var service = new WpfLinklyTerminalDialogService(new LocalizationService());
         var state = new LinklyTerminalDialogState(
@@ -190,12 +189,11 @@ public sealed class LinklyTerminalDialogServiceTests
         await service.UpdateAsync(state, CancellationToken.None);
         await service.CloseCommand.ExecuteAsync(null);
 
-        var action = await service.UpdateAsync(state, CancellationToken.None);
-        var nextAction = await service.UpdateAsync(state, CancellationToken.None);
+        Assert.False(service.IsOpen);
+        Assert.Null(service.SessionId);
 
-        Assert.True(service.IsOpen);
-        Assert.Equal(LinklyTerminalDialogKeys.OkCancel, action?.Key);
-        Assert.Null(nextAction);
+        var action = await service.UpdateAsync(state, CancellationToken.None);
+        Assert.Null(action);
     }
 
     [Fact]

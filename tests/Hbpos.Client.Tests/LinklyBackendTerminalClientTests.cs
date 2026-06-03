@@ -762,7 +762,7 @@ public sealed class LinklyBackendTerminalClientTests
     }
 
     [Fact]
-    public async Task PurchaseAsync_initial_pending_without_display_notification_shows_only_cancel()
+    public async Task PurchaseAsync_initial_pending_without_display_notification_shows_no_terminal_actions()
     {
         var handler = new StubHttpMessageHandler(request => request.RequestUri!.AbsolutePath switch
         {
@@ -818,10 +818,73 @@ public sealed class LinklyBackendTerminalClientTests
 
         Assert.True(result.Approved);
         var pending = Assert.Single(dialog.States.Where(state => state.SessionId == "initial-pending-session" && state.Status == "Pending"));
-        var button = Assert.Single(pending.DisplayButtons!);
-        Assert.Equal("linkly.backend.dialog.button.cancel", button.TextResourceKey);
-        Assert.Equal(LinklyTerminalDialogKeys.OkCancel, button.Key);
-        Assert.True(button.IsDestructive);
+        Assert.Empty(pending.DisplayButtons!);
+    }
+
+    [Fact]
+    public async Task PurchaseAsync_display_notification_without_key_flags_shows_no_terminal_actions()
+    {
+        var handler = new StubHttpMessageHandler(request => request.RequestUri!.AbsolutePath switch
+        {
+            "/api/v1/linkly/cloud-backend/transactions/active" => new HttpResponseMessage(HttpStatusCode.NotFound),
+            "/api/v1/linkly/cloud-backend/transactions" => JsonResponse(
+                """
+                {
+                  "success": true,
+                  "data": {
+                    "environment": "Sandbox",
+                    "storeCode": "S01",
+                    "deviceCode": "TERM-1",
+                    "sessionId": "display-no-key-session",
+                    "status": "Pending",
+                    "txnRef": "260601120033",
+                    "displayText": "TAP OK TO CONTINUE",
+                    "receiptText": null,
+                    "recoveryCount": 0,
+                    "receiptPrintedAt": null,
+                    "lastHttpStatus": 202,
+                    "notifications": [
+                      {
+                        "type": "display",
+                        "payloadJson": "{ \"Response\": { \"DisplayText\": [\"TAP OK TO CONTINUE\"] } }",
+                        "receivedAt": "2026-06-01T02:00:05Z"
+                      }
+                    ]
+                  }
+                }
+                """),
+            _ => JsonResponse(
+                """
+                {
+                  "success": true,
+                  "data": {
+                    "environment": "Sandbox",
+                    "storeCode": "S01",
+                    "deviceCode": "TERM-1",
+                    "sessionId": "display-no-key-session",
+                    "status": "Completed",
+                    "txnRef": "260601120033",
+                    "responseCode": "00",
+                    "responseText": "APPROVED",
+                    "displayText": "APPROVED",
+                    "receiptText": "NO KEY RECEIPT",
+                    "recoveryCount": 0,
+                    "receiptPrintedAt": null,
+                    "lastHttpStatus": 200,
+                    "notifications": []
+                  }
+                }
+                """)
+        });
+        var dialog = new FakeLinklyTerminalDialogService();
+        var client = CreateClient(handler, dialog);
+
+        var result = await client.PurchaseAsync(10m, CreateSession(), CreateSettings());
+
+        Assert.True(result.Approved);
+        var pending = Assert.Single(dialog.States.Where(state => state.SessionId == "display-no-key-session" && state.Status == "Pending"));
+        Assert.Equal("TAP OK TO CONTINUE", pending.DisplayText);
+        Assert.Empty(pending.DisplayButtons!);
     }
 
     [Fact]
@@ -932,7 +995,8 @@ public sealed class LinklyBackendTerminalClientTests
         Assert.Contains(dialog.States, state =>
             state.SessionId == "key-failure-session-1" &&
             state.Message == "Card terminal action failed. Try again or recover the transaction." &&
-            state.DisplayText == "PRESS OK");
+            state.DisplayText == "WAITING FOR CARD" &&
+            state.DisplayButtons is { Count: 0 });
         Assert.Contains(dialog.States, state =>
             state.SessionId == "key-failure-session-1" &&
             state.DisplayText == "WAITING FOR CARD");
@@ -1011,6 +1075,75 @@ public sealed class LinklyBackendTerminalClientTests
         var button = Assert.Single(dialogState.DisplayButtons!);
         Assert.Equal("linkly.backend.dialog.button.okCancel", button.TextResourceKey);
         Assert.Equal(LinklyTerminalDialogKeys.OkCancel, button.Key);
+    }
+
+    [Fact]
+    public async Task PurchaseAsync_builds_cancel_button_only_when_cancel_flag_is_true()
+    {
+        var handler = new StubHttpMessageHandler(request => request.RequestUri!.AbsolutePath switch
+        {
+            "/api/v1/linkly/cloud-backend/transactions/active" => new HttpResponseMessage(HttpStatusCode.NotFound),
+            "/api/v1/linkly/cloud-backend/transactions" => JsonResponse(
+                """
+                {
+                  "success": true,
+                  "data": {
+                    "environment": "Sandbox",
+                    "storeCode": "S01",
+                    "deviceCode": "TERM-1",
+                    "sessionId": "cancel-only-session-1",
+                    "status": "Pending",
+                    "txnRef": "260601120034",
+                    "displayText": "CANCEL AVAILABLE",
+                    "receiptText": null,
+                    "recoveryCount": 0,
+                    "receiptPrintedAt": null,
+                    "lastHttpStatus": 200,
+                    "cancelKeyFlag": true,
+                    "notifications": [
+                      {
+                        "type": "display",
+                        "payloadJson": "{ \"Response\": { \"DisplayText\": [\"CANCEL AVAILABLE\"], \"CancelKeyFlag\": \"1\" } }",
+                        "receivedAt": "2026-06-01T02:00:06Z"
+                      }
+                    ]
+                  }
+                }
+                """),
+            _ => JsonResponse(
+                """
+                {
+                  "success": true,
+                  "data": {
+                    "environment": "Sandbox",
+                    "storeCode": "S01",
+                    "deviceCode": "TERM-1",
+                    "sessionId": "cancel-only-session-1",
+                    "status": "Completed",
+                    "txnRef": "260601120034",
+                    "responseCode": "00",
+                    "responseText": "APPROVED",
+                    "displayText": "APPROVED",
+                    "receiptText": "CANCEL ONLY RECEIPT",
+                    "recoveryCount": 0,
+                    "receiptPrintedAt": "2026-06-01T02:00:06Z",
+                    "lastHttpStatus": 200,
+                    "notifications": []
+                  }
+                }
+                """)
+        });
+        var dialog = new FakeLinklyTerminalDialogService();
+        var client = CreateClient(handler, dialog);
+
+        var result = await client.PurchaseAsync(10m, CreateSession(), CreateSettings());
+
+        Assert.True(result.Approved);
+        var dialogState = Assert.Single(dialog.States.Where(state => state.SessionId == "cancel-only-session-1" && state.Status == "Pending"));
+        var button = Assert.Single(dialogState.DisplayButtons!);
+        Assert.Equal("linkly.backend.dialog.button.cancel", button.TextResourceKey);
+        Assert.Equal(LinklyTerminalDialogKeys.OkCancel, button.Key);
+        Assert.True(button.IsDestructive);
     }
 
     [Fact]

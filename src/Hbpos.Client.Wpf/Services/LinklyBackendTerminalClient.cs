@@ -2,6 +2,7 @@ using System.Globalization;
 using System.Net;
 using System.Net.Http;
 using System.Net.Http.Json;
+using System.Reflection;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using Hbpos.Client.Wpf.Localization;
@@ -62,7 +63,7 @@ public sealed class LinklyBackendTerminalClient(
     {
         try
         {
-            Log($"health request start environment={environment}");
+            Log($"health request start environment={environment} componentVersion={GetComponentVersion()}");
             using var response = await httpClient.GetAsync(
                 $"api/v1/linkly/cloud-backend/health?environment={Uri.EscapeDataString(environment.ToString())}",
                 cancellationToken);
@@ -134,6 +135,7 @@ public sealed class LinklyBackendTerminalClient(
         using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         timeoutCts.CancelAfter(settings.TerminalTimeout <= TimeSpan.Zero ? TimeSpan.FromSeconds(180) : settings.TerminalTimeout);
         var keepDialogOpen = false;
+        Log($"transaction request start txnType={txnType} environment={settings.Environment} componentVersion={GetComponentVersion()}");
 
         try
         {
@@ -284,6 +286,15 @@ public sealed class LinklyBackendTerminalClient(
             catch (HttpRequestException)
             {
                 message = T("linkly.backend.sendKeyFailed", "Card terminal action failed. Try again or recover the transaction.");
+                try
+                {
+                    status = await GetStatusAsync(settings, status.SessionId, cancellationToken);
+                }
+                catch (HttpRequestException)
+                {
+                    // 状态刷新失败时继续保留当前会话轮询，不能把一次无效按键升级成最终失败。
+                }
+
                 continue;
             }
         }
@@ -316,7 +327,7 @@ public sealed class LinklyBackendTerminalClient(
     {
         var isFinal = IsFinal(status);
         var responseText = NormalizeOptional(status.ResponseText);
-        // 最终态不能继续显示旧的刷卡提示，否则会遮住批准/失败结果。
+        // 最终态不继续显示旧刷卡提示，避免盖住批准/失败结果。
         var displayText = isFinal
             ? responseText ?? NormalizeOptional(status.Status)
             : NormalizeOptional(status.DisplayText);
@@ -346,12 +357,13 @@ public sealed class LinklyBackendTerminalClient(
             return [];
         }
 
+        var buttons = new List<LinklyTerminalDialogButton>();
         if (!HasDisplayNotification(status))
         {
-            return [CreateCancelButton()];
+            return buttons;
         }
 
-        var buttons = new List<LinklyTerminalDialogButton>();
+        // Linkly 官方 REST sendkey 将 OK 与 CANCEL 都映射为 Key=0，且一次只能显示一个。
         if (status.OKKeyFlag && status.CancelKeyFlag)
         {
             buttons.Add(new LinklyTerminalDialogButton("linkly.backend.dialog.button.okCancel", LinklyTerminalDialogKeys.OkCancel));
@@ -382,7 +394,7 @@ public sealed class LinklyBackendTerminalClient(
             buttons.Add(CreateCancelButton());
         }
 
-        return buttons.Count == 0 ? [CreateCancelButton()] : buttons;
+        return buttons;
     }
 
     private static LinklyTerminalDialogButton CreateCancelButton()
@@ -988,6 +1000,14 @@ public sealed class LinklyBackendTerminalClient(
     private static void Log(string message)
     {
         ConsoleLog.Write("LinklyBackend", message);
+    }
+
+    private static string GetComponentVersion()
+    {
+        var assembly = typeof(LinklyBackendTerminalClient).Assembly;
+        return assembly.GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion ??
+            assembly.GetName().Version?.ToString() ??
+            "unknown";
     }
 
     private string T(string key, string fallback)

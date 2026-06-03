@@ -447,6 +447,10 @@ public sealed class LinklyController(
         [FromBody] JsonElement payload,
         CancellationToken cancellationToken)
     {
+        Log(
+            $"cloud backend notification request environment={LogValue(environment)} " +
+            $"sessionId={LogValue(sessionId)} type={LogValue(type)} " +
+            $"authorizationPresent={!string.IsNullOrWhiteSpace(Request.Headers.Authorization.ToString())}");
         try
         {
             await linklyCloudBackendAsyncService.ReceiveNotificationAsync(
@@ -456,16 +460,25 @@ public sealed class LinklyController(
                 Request.Headers.Authorization.ToString(),
                 payload,
                 cancellationToken);
+            Log(
+                $"cloud backend notification response environment={LogValue(environment)} " +
+                $"sessionId={LogValue(sessionId)} type={LogValue(type)} status=200");
             return Ok(ApiResult<string>.Ok("accepted"));
         }
         catch (LinklyCloudBackendNotificationUnauthorizedException)
         {
+            Log(
+                $"cloud backend notification response environment={LogValue(environment)} " +
+                $"sessionId={LogValue(sessionId)} type={LogValue(type)} status=401");
             return Unauthorized(ApiResult<string>.Fail(
                 "LINKLY_CLOUD_BACKEND_NOTIFICATION_UNAUTHORIZED",
                 "Linkly Cloud notification authorization is invalid."));
         }
         catch (LinklyCloudBackendValidationException ex)
         {
+            Log(
+                $"cloud backend notification response environment={LogValue(environment)} " +
+                $"sessionId={LogValue(sessionId)} type={LogValue(type)} status=400");
             return BadRequest(ApiResult<string>.Fail(
                 CloudBackendInvalidCode,
                 ex.Message));

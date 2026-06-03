@@ -260,8 +260,7 @@ public sealed class WpfLinklyTerminalDialogService :
 
     public bool IsCancelPaymentVisible =>
         IsOpen &&
-        (_mode == LinklyTerminalDialogMode.CloudBackendInteractive ||
-            _mode == LinklyTerminalDialogMode.CloudDirectStatus) &&
+        _mode == LinklyTerminalDialogMode.CloudDirectStatus &&
         IsInteractive &&
         !IsFinal;
 
@@ -349,7 +348,7 @@ public sealed class WpfLinklyTerminalDialogService :
             return;
         }
 
-        // 取消刷卡使用 Linkly 官方 OK/CANCEL sendkey，不走本地关闭，确保后端交易同步取消。
+        // 只有 direct 模式保留独立取消；backend async 取消按钮必须来自 Linkly display flag。
         _pendingAction = new LinklyTerminalDialogAction(LinklyTerminalDialogKeys.OkCancel, null);
     }
 
@@ -357,7 +356,7 @@ public sealed class WpfLinklyTerminalDialogService :
     {
         if (IsCancelPaymentVisible)
         {
-            // 进行中的右上角关闭等同“取消刷卡”，避免终端端交易继续等待。
+            // direct 模式沿用 OK/CANCEL sendkey；backend async 关闭只收起本地弹窗，不误发 Key=0。
             SubmitCancelPayment();
             return Task.CompletedTask;
         }

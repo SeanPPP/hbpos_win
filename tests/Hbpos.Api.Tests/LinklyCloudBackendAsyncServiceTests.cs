@@ -893,6 +893,31 @@ namespace Hbpos.Api.Tests;
         Assert.Equal("1", status.InputType);
         Assert.Null(status.GraphicCode);
 
+        using var cancelDisplay = JsonDocument.Parse("""
+            {
+              "Response": {
+                "DisplayText": ["CANCEL AVAILABLE"],
+                "CancelKeyFlag": "1"
+              }
+            }
+            """);
+        await service.ReceiveNotificationAsync(
+            "Sandbox",
+            session.SessionId,
+            "display",
+            "Bearer sandbox-notify",
+            cancelDisplay.RootElement,
+            CancellationToken.None);
+
+        status = await service.GetStatusAsync("S01", "POS-01", "Sandbox", session.SessionId, CancellationToken.None);
+        Assert.NotNull(status);
+        Assert.Equal("CANCEL AVAILABLE", status!.DisplayText);
+        Assert.True(status.CancelKeyFlag);
+        Assert.False(status.OKKeyFlag);
+        Assert.False(status.AcceptYesKeyFlag);
+        Assert.False(status.DeclineNoKeyFlag);
+        Assert.False(status.AuthoriseKeyFlag);
+
         using var approved = JsonDocument.Parse("""{ "Response": { "TxnRef": "TXN-APPROVED", "ResponseCode": "00", "ResponseText": "APPROVED" } }""");
         using var staleDisplay = JsonDocument.Parse("""{ "Response": { "DisplayText": ["OLD PROMPT"], "OKKeyFlag": "1" } }""");
         await service.ReceiveNotificationAsync(

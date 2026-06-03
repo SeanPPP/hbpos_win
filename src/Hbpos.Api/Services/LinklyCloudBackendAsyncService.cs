@@ -2,6 +2,7 @@ using System.Net;
 using System.Net.Http.Headers;
 using System.Net.Http.Json;
 using System.Net.Sockets;
+using System.Reflection;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using Hbpos.Api.Data;
@@ -127,6 +128,10 @@ public class LinklyCloudBackendAsyncService(
         var environment = NormalizeEnvironment(request.Environment);
         var normalizedStoreCode = NormalizeRequired(storeCode, "storeCode");
         var normalizedDeviceCode = NormalizeRequired(deviceCode, "deviceCode");
+        Log(
+            $"transaction start environment={LogValue(environment)} " +
+            $"store={LogValue(normalizedStoreCode)} device={LogValue(normalizedDeviceCode)} " +
+            $"componentVersion={GetComponentVersion()}");
         var notificationBaseUri = GetPublicNotificationBaseUri();
         var activeSession = await repository.GetActiveSessionAsync(
             environment,
@@ -300,9 +305,18 @@ public class LinklyCloudBackendAsyncService(
     {
         var normalizedEnvironment = NormalizeEnvironment(environment);
         var expectedBearer = GetNotificationBearer(normalizedEnvironment);
+        var authorizationMatches = !string.IsNullOrWhiteSpace(expectedBearer) &&
+            string.Equals(authorizationHeader?.Trim(), $"Bearer {expectedBearer}", StringComparison.Ordinal);
+        Log(
+            $"notification received environment={LogValue(normalizedEnvironment)} " +
+            $"sessionId={LogValue(sessionId)} type={LogValue(type)} " +
+            $"authorizationPresent={!string.IsNullOrWhiteSpace(authorizationHeader)} authorizationMatches={authorizationMatches}");
         if (string.IsNullOrWhiteSpace(expectedBearer) ||
-            !string.Equals(authorizationHeader?.Trim(), $"Bearer {expectedBearer}", StringComparison.Ordinal))
+            !authorizationMatches)
         {
+            Log(
+                $"notification rejected environment={LogValue(normalizedEnvironment)} " +
+                $"sessionId={LogValue(sessionId)} type={LogValue(type)} reason=invalid-authorization");
             throw new LinklyCloudBackendNotificationUnauthorizedException();
         }
 
@@ -317,6 +331,9 @@ public class LinklyCloudBackendAsyncService(
             cancellationToken);
         if (session is null)
         {
+            Log(
+                $"notification ignored environment={LogValue(normalizedEnvironment)} " +
+                $"sessionId={LogValue(normalizedSessionId)} type={LogValue(normalizedType)} reason=session-not-found");
             return;
         }
 
@@ -1151,6 +1168,14 @@ public class LinklyCloudBackendAsyncService(
     private static void Log(string message)
     {
         Console.WriteLine($"[HBPOS][Api][LinklyCloudBackend] {DateTimeOffset.Now:O} {message}");
+    }
+
+    private static string GetComponentVersion()
+    {
+        var assembly = typeof(LinklyCloudBackendAsyncService).Assembly;
+        return assembly.GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion ??
+            assembly.GetName().Version?.ToString() ??
+            "unknown";
     }
 
     private static string NormalizeUuidV4(string? value)
