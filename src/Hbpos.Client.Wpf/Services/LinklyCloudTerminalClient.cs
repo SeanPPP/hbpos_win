@@ -96,6 +96,9 @@ public sealed class LinklyCloudTerminalClient(
         CancellationToken cancellationToken = default)
     {
         var refundReference = TryParseRefundReference(originalReference);
+        Log(
+            $"refund reference resolved originalReference={LogValue(originalReference)} refundReference={LogValue(refundReference)} " +
+            $"hasRefundReference={!string.IsNullOrWhiteSpace(refundReference)}");
         return string.IsNullOrWhiteSpace(refundReference)
             ? Task.FromResult(new PaymentAuthorizationResult(false, null, T("linkly.cloud.refundMissingReference", "Linkly Cloud refund requires an original RFN reference.")))
             : RunTransactionAsync(
@@ -493,7 +496,8 @@ public sealed class LinklyCloudTerminalClient(
             NormalizeOptional(response.Stan),
             null,
             decimal.Round(amount, 2, MidpointRounding.AwayFromZero),
-            null);
+            null,
+            NormalizeOptional(response.RefundReference));
         var approved = response.Succeeded &&
             string.Equals(response.ResponseCode?.Trim(), "00", StringComparison.OrdinalIgnoreCase);
         var reference = string.IsNullOrWhiteSpace(response.RefundReference)

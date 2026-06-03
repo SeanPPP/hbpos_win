@@ -3,6 +3,7 @@ using System.Net;
 using System.Net.Http;
 using System.Net.Http.Json;
 using System.Reflection;
+using System.Diagnostics;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using Hbpos.Client.Wpf.Localization;
@@ -106,7 +107,7 @@ public sealed class LinklyBackendTerminalClient(
         return RunAsync("P", amount, session, settings, refundReference: null, cancellationToken);
     }
 
-    public Task<PaymentAuthorizationResult> RefundAsync(
+    public async Task<PaymentAuthorizationResult> RefundAsync(
         decimal amount,
         PosSessionState session,
         CardTerminalSettings settings,
@@ -114,9 +115,17 @@ public sealed class LinklyBackendTerminalClient(
         CancellationToken cancellationToken = default)
     {
         var refundReference = TryParseRefundReference(originalReference);
+        Log(
+            $"refund reference resolved originalReference={LogValue(originalReference)} refundReference={LogValue(refundReference)} " +
+            $"hasRefundReference={!string.IsNullOrWhiteSpace(refundReference)}");
+        if (string.IsNullOrWhiteSpace(refundReference))
+        {
+            refundReference = await TryResolveOriginalBackendRefundReferenceAsync(settings, originalReference, cancellationToken);
+        }
+
         return string.IsNullOrWhiteSpace(refundReference)
-            ? Task.FromResult(new PaymentAuthorizationResult(false, null, T("linkly.backend.refundMissingReference", "Linkly Cloud refund requires an original RFN reference.")))
-            : RunAsync("R", amount, session, settings, refundReference, cancellationToken);
+            ? new PaymentAuthorizationResult(false, null, T("linkly.backend.refundMissingReference", "Linkly Cloud refund requires an original RFN reference."))
+            : await RunAsync("R", amount, session, settings, refundReference, cancellationToken);
     }
 
     private async Task<PaymentAuthorizationResult> RunAsync(
@@ -238,9 +247,19 @@ public sealed class LinklyBackendTerminalClient(
         CancellationToken cancellationToken)
     {
         status = await PresentStatusAsync(settings, status, message: null, cancellationToken);
+        var shouldRefreshImmediately = !IsFinal(status) && !RequiresRecovery(status);
         while (!IsFinal(status))
         {
-            await DelayBeforeNextPollAsync(status, cancellationToken);
+            if (shouldRefreshImmediately)
+            {
+                LogStatusSnapshot("poll loop immediate refresh", status);
+                shouldRefreshImmediately = false;
+            }
+            else
+            {
+                LogStatusSnapshot("poll loop before delay", status);
+                await DelayBeforeNextPollAsync(status, cancellationToken);
+            }
 
             status = RequiresRecovery(status)
                 ? await RecoverAsync(settings, status.SessionId, cancellationToken)
@@ -271,7 +290,14 @@ public sealed class LinklyBackendTerminalClient(
     {
         while (true)
         {
-            var action = await dialogService.UpdateAsync(ToDialogState(status, message), cancellationToken);
+            var dialogState = ToDialogState(status, message);
+            var updateStopwatch = Stopwatch.StartNew();
+            var action = await dialogService.UpdateAsync(dialogState, cancellationToken);
+            updateStopwatch.Stop();
+            Log(
+                $"dialog update completed sessionId={status.SessionId} elapsedMs={updateStopwatch.ElapsedMilliseconds} " +
+                $"status={status.Status} display=\"{LogValue(TruncateForLog(dialogState.DisplayText, 80))}\" " +
+                $"buttons={(dialogState.DisplayButtons?.Count ?? 0)} message=\"{LogValue(TruncateForLog(message, 80))}\"");
             if (IsFinal(status) || action is null || string.IsNullOrWhiteSpace(action.Key))
             {
                 return status;
@@ -281,6 +307,7 @@ public sealed class LinklyBackendTerminalClient(
             try
             {
                 status = await SendKeyAsync(settings, status.SessionId, action, cancellationToken);
+                LogStatusSnapshot("manual sendkey completed", status);
                 message = null;
             }
             catch (HttpRequestException)
@@ -330,6 +357,8 @@ public sealed class LinklyBackendTerminalClient(
         // 最终态不继续显示旧刷卡提示，避免盖住批准/失败结果。
         var displayText = isFinal
             ? responseText ?? NormalizeOptional(status.Status)
+            : IsAutoContinueDisplay(status)
+                ? "Waiting for card terminal result..."
             : NormalizeOptional(status.DisplayText);
 
         return new LinklyTerminalDialogState(
@@ -359,6 +388,11 @@ public sealed class LinklyBackendTerminalClient(
 
         var buttons = new List<LinklyTerminalDialogButton>();
         if (!HasDisplayNotification(status))
+        {
+            return buttons;
+        }
+
+        if (IsCardTerminalWaitDisplay(status))
         {
             return buttons;
         }
@@ -411,28 +445,101 @@ public sealed class LinklyBackendTerminalClient(
             .Any(notification => string.Equals(notification.Type, "display", StringComparison.OrdinalIgnoreCase));
     }
 
+    private static bool IsCardTerminalWaitDisplay(LinklyCloudBackendSessionResponse status)
+    {
+        var display = NormalizeDisplayPrompt(status.DisplayText);
+        if (IsCardTerminalWaitPrompt(display))
+        {
+            return true;
+        }
+
+        return (status.DisplayLines ?? [])
+            .Select(NormalizeDisplayPrompt)
+            .Any(IsCardTerminalWaitPrompt);
+    }
+
+    private static bool IsAutoContinueDisplay(LinklyCloudBackendSessionResponse status)
+    {
+        var display = NormalizeDisplayPrompt(status.DisplayText);
+        if (IsAutoContinuePrompt(display))
+        {
+            return true;
+        }
+
+        return (status.DisplayLines ?? [])
+            .Select(NormalizeDisplayPrompt)
+            .Any(IsAutoContinuePrompt);
+    }
+
+    private static bool IsAutoContinuePrompt(string? value)
+    {
+        return string.Equals(value, "TAP OK TO CONTINUE", StringComparison.Ordinal);
+    }
+
+    private static bool IsCardTerminalWaitPrompt(string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return false;
+        }
+
+        return value.Contains("SWIPE CARD", StringComparison.Ordinal) ||
+            value.Contains("PRESENT CARD", StringComparison.Ordinal) ||
+            value.Contains("INSERT CARD", StringComparison.Ordinal) ||
+            value.Contains("TAP CARD", StringComparison.Ordinal) ||
+            value.Contains("TAP OK TO CONTINUE", StringComparison.Ordinal) ||
+            value.Contains("WAITING FOR CARD", StringComparison.Ordinal);
+    }
+
+    private static string? NormalizeDisplayPrompt(string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return null;
+        }
+
+        return string.Join(' ', value.Trim().ToUpperInvariant().Split(
+            [' ', '\r', '\n', '\t'],
+            StringSplitOptions.RemoveEmptyEntries));
+    }
+
     private async Task<LinklyCloudBackendSessionResponse> StartTransactionAsync(
         LinklyCloudBackendTransactionRequest request,
         CancellationToken cancellationToken)
     {
+        var stopwatch = Stopwatch.StartNew();
+        Log($"start transaction http request start environment={request.Environment} txnType={request.TxnType}");
         using var response = await httpClient.PostAsJsonAsync(
             "api/v1/linkly/cloud-backend/transactions",
             request,
             JsonOptions,
             cancellationToken);
-        return await ReadApiResultAsync(response, cancellationToken);
+        var status = await ReadApiResultAsync(response, cancellationToken);
+        stopwatch.Stop();
+        LogStatusSnapshot($"start transaction http response elapsedMs={stopwatch.ElapsedMilliseconds} http={(int)response.StatusCode}", status);
+        return status;
     }
 
     private async Task<LinklyCloudBackendSessionResponse?> GetActiveSessionAsync(
         CardTerminalSettings settings,
         CancellationToken cancellationToken)
     {
+        var stopwatch = Stopwatch.StartNew();
+        Log($"active session http request start environment={settings.Environment}");
         using var response = await httpClient.GetAsync(
             $"api/v1/linkly/cloud-backend/transactions/active?environment={Uri.EscapeDataString(settings.Environment.ToString())}",
             cancellationToken);
-        return response.StatusCode == HttpStatusCode.NotFound
-            ? null
-            : await ReadApiResultAsync(response, cancellationToken);
+        if (response.StatusCode == HttpStatusCode.NotFound)
+        {
+            stopwatch.Stop();
+            Log($"active session http response elapsedMs={stopwatch.ElapsedMilliseconds} http=404");
+            return null;
+        }
+
+        var status = await ReadApiResultAsync(response, cancellationToken);
+        stopwatch.Stop();
+        LogStatusSnapshot($"active session http response elapsedMs={stopwatch.ElapsedMilliseconds} http={(int)response.StatusCode}", status);
+        return status;
     }
 
     private async Task<LinklyCloudBackendSessionResponse> GetStatusAsync(
@@ -440,10 +547,15 @@ public sealed class LinklyBackendTerminalClient(
         string sessionId,
         CancellationToken cancellationToken)
     {
+        var stopwatch = Stopwatch.StartNew();
+        Log($"status http request start sessionId={sessionId} environment={settings.Environment}");
         using var response = await httpClient.GetAsync(
             $"api/v1/linkly/cloud-backend/transactions/{Uri.EscapeDataString(sessionId)}/status?environment={Uri.EscapeDataString(settings.Environment.ToString())}",
             cancellationToken);
-        return await ReadApiResultAsync(response, cancellationToken);
+        var status = await ReadApiResultAsync(response, cancellationToken);
+        stopwatch.Stop();
+        LogStatusSnapshot($"status http response elapsedMs={stopwatch.ElapsedMilliseconds} http={(int)response.StatusCode}", status);
+        return status;
     }
 
     private async Task<LinklyCloudBackendSessionResponse> RecoverAsync(
@@ -451,12 +563,17 @@ public sealed class LinklyBackendTerminalClient(
         string sessionId,
         CancellationToken cancellationToken)
     {
+        var stopwatch = Stopwatch.StartNew();
+        Log($"recover http request start sessionId={sessionId} environment={settings.Environment}");
         using var response = await httpClient.PostAsJsonAsync(
             $"api/v1/linkly/cloud-backend/transactions/{Uri.EscapeDataString(sessionId)}/recover",
             new LinklyCloudBackendRecoverRequest(settings.Environment.ToString()),
             JsonOptions,
             cancellationToken);
-        return await ReadApiResultAsync(response, cancellationToken);
+        var status = await ReadApiResultAsync(response, cancellationToken);
+        stopwatch.Stop();
+        LogStatusSnapshot($"recover http response elapsedMs={stopwatch.ElapsedMilliseconds} http={(int)response.StatusCode}", status);
+        return status;
     }
 
     private async Task<LinklyCloudBackendSessionResponse> SendKeyAsync(
@@ -465,15 +582,59 @@ public sealed class LinklyBackendTerminalClient(
         LinklyTerminalDialogAction action,
         CancellationToken cancellationToken)
     {
+        var normalizedKey = LinklyTerminalDialogKeys.Normalize(action.Key);
+        var stopwatch = Stopwatch.StartNew();
+        Log($"sendkey http request start sessionId={sessionId} environment={settings.Environment} key={normalizedKey}");
         using var response = await httpClient.PostAsJsonAsync(
             $"api/v1/linkly/cloud-backend/transactions/{Uri.EscapeDataString(sessionId)}/sendkey",
             new LinklyCloudBackendSendKeyRequest(
                 settings.Environment.ToString(),
-                LinklyTerminalDialogKeys.Normalize(action.Key),
+                normalizedKey,
                 NormalizeOptional(action.Data)),
             JsonOptions,
             cancellationToken);
-        return await ReadApiResultAsync(response, cancellationToken);
+        var status = await ReadApiResultAsync(response, cancellationToken);
+        stopwatch.Stop();
+        LogStatusSnapshot($"sendkey http response elapsedMs={stopwatch.ElapsedMilliseconds} http={(int)response.StatusCode}", status);
+        return status;
+    }
+
+    private async Task<string?> TryResolveOriginalBackendRefundReferenceAsync(
+        CardTerminalSettings settings,
+        string? originalReference,
+        CancellationToken cancellationToken)
+    {
+        if (!LinklyBackendPaymentReference.TryGetPrintMarker(originalReference, out var environment, out var sessionId) ||
+            string.IsNullOrWhiteSpace(sessionId))
+        {
+            Log($"refund reference recovery skipped reason=no-backend-session originalReference={LogValue(originalReference)}");
+            return null;
+        }
+
+        if (!string.Equals(environment, settings.Environment.ToString(), StringComparison.OrdinalIgnoreCase))
+        {
+            Log(
+                $"refund reference recovery skipped reason=environment-mismatch referenceEnvironment={LogValue(environment)} " +
+                $"settingsEnvironment={settings.Environment}");
+            return null;
+        }
+
+        try
+        {
+            var status = await GetStatusAsync(settings, sessionId, cancellationToken);
+            var refundReference = TryReadRefundReference(status, originalReference) ??
+                TryReadOriginalTxnRef(originalReference);
+            Log(
+                $"refund reference recovery completed sessionId={sessionId} status={status.Status} " +
+                $"notifications={status.Notifications?.Count ?? 0} refundReference={LogValue(refundReference)} " +
+                $"transactionPayloads={BuildRefundReferenceRecoverySnapshot(status)}");
+            return refundReference;
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            Log($"refund reference recovery failed sessionId={sessionId} error={ex.GetType().Name}");
+            return null;
+        }
     }
 
     private static async Task<LinklyCloudBackendSessionResponse> ReadApiResultAsync(
@@ -612,7 +773,8 @@ public sealed class LinklyBackendTerminalClient(
             NormalizeOptional(response.Stan),
             null,
             decimal.Round(amount, 2, MidpointRounding.AwayFromZero),
-            NormalizeOptional(receiptText));
+            NormalizeOptional(receiptText),
+            NormalizeOptional(response.RefundReference));
     }
 
     private static LinklyCloudTransactionResult ReadTransactionResult(
@@ -623,6 +785,7 @@ public sealed class LinklyBackendTerminalClient(
         var protectedResponseCode = NormalizeOptional(status.ResponseCode);
         var protectedResponseText = NormalizeOptional(status.ResponseText);
         var notifications = status.Notifications ?? [];
+        var fallbackRefundReference = TryReadRefundReference(status, null);
         var transactionNotification = string.IsNullOrWhiteSpace(protectedResponseCode)
             ? notifications.LastOrDefault(IsTransactionNotification)
             : notifications.LastOrDefault(notification =>
@@ -643,12 +806,13 @@ public sealed class LinklyBackendTerminalClient(
                 protectedResponseText,
                 null,
                 requestedAmount,
-                null);
+                fallbackRefundReference);
         }
 
         using var document = JsonDocument.Parse(transactionNotification.PayloadJson);
         var response = ReadResponse(document.RootElement);
         var purchaseAnalysisData = ReadObject(response, "PurchaseAnalysisData");
+        var notificationRefundReference = TryReadRefundReference(document.RootElement, out _);
         return new LinklyCloudTransactionResult(
             status.SessionId,
             string.IsNullOrWhiteSpace(protectedResponseCode)
@@ -664,7 +828,245 @@ public sealed class LinklyBackendTerminalClient(
             protectedResponseText ?? ReadString(response, "ResponseText"),
             ReadString(response, "Stan"),
             ReadDecimal(response, "AmtPurchase") ?? requestedAmount,
-            ReadString(purchaseAnalysisData, "RFN"));
+            ReadString(purchaseAnalysisData, "RFN") ?? notificationRefundReference ?? fallbackRefundReference);
+    }
+
+    private static string? TryReadRefundReference(
+        LinklyCloudBackendSessionResponse status,
+        string? fallbackReference)
+    {
+        var backendReference = LinklyBackendPaymentReference.TryGetRefundReference(fallbackReference);
+        if (!string.IsNullOrWhiteSpace(backendReference))
+        {
+            return backendReference;
+        }
+
+        foreach (var notification in (status.Notifications ?? []).Where(IsTransactionNotification).Reverse())
+        {
+            if (string.IsNullOrWhiteSpace(notification.PayloadJson))
+            {
+                continue;
+            }
+
+            using var document = JsonDocument.Parse(notification.PayloadJson);
+            var refundReference = TryReadRefundReference(document.RootElement, out _);
+            if (!string.IsNullOrWhiteSpace(refundReference))
+            {
+                return refundReference;
+            }
+        }
+
+        return null;
+    }
+
+    private static string BuildRefundReferenceRecoverySnapshot(LinklyCloudBackendSessionResponse status)
+    {
+        var transactionNotifications = (status.Notifications ?? [])
+            .Where(IsTransactionNotification)
+            .TakeLast(5)
+            .ToArray();
+        if (transactionNotifications.Length == 0)
+        {
+            return "<none>";
+        }
+
+        var parts = transactionNotifications.Select((notification, index) =>
+        {
+            if (string.IsNullOrWhiteSpace(notification.PayloadJson))
+            {
+                return $"#{index + 1}:empty";
+            }
+
+            try
+            {
+                using var document = JsonDocument.Parse(notification.PayloadJson);
+                var root = document.RootElement;
+                var response = ReadResponse(root);
+                var purchaseAnalysisData = ReadValue(response, "PurchaseAnalysisData");
+                var refundReference = TryReadRefundReference(root, out var source);
+                return $"#{index + 1}:bytes={notification.PayloadJson.Length},rootKeys={DescribeKeys(root)},responseKeys={DescribeKeys(response)}," +
+                    $"padKind={DescribeKind(purchaseAnalysisData)},padKeys={DescribeKeys(purchaseAnalysisData)},rfnSource={LogValue(source)},rfn={LogValue(refundReference)}";
+            }
+            catch (JsonException ex)
+            {
+                return $"#{index + 1}:invalid-json:{ex.GetType().Name}";
+            }
+        });
+
+        return string.Join(" | ", parts);
+    }
+
+    private static string? TryReadRefundReference(JsonElement root, out string? source)
+    {
+        var response = ReadResponse(root);
+        var purchaseAnalysisData = ReadValue(response, "PurchaseAnalysisData");
+        // Linkly backend 的 PAD 在不同通知里可能是对象、键值数组或字符串，退款恢复必须宽解析 RFN。
+        var refundReference = TryReadRefundReferenceValue(purchaseAnalysisData, "Response.PurchaseAnalysisData", out source);
+        if (!string.IsNullOrWhiteSpace(refundReference))
+        {
+            return refundReference;
+        }
+
+        refundReference = TryReadRefundReferenceValue(response, "Response", out source);
+        if (!string.IsNullOrWhiteSpace(refundReference))
+        {
+            return refundReference;
+        }
+
+        refundReference = TryReadRefundReferenceValue(root, "Root", out source);
+        if (!string.IsNullOrWhiteSpace(refundReference))
+        {
+            return refundReference;
+        }
+
+        source = null;
+        return null;
+    }
+
+    private static string? TryReadRefundReferenceValue(JsonElement element, string path, out string? source)
+    {
+        source = null;
+        return element.ValueKind switch
+        {
+            JsonValueKind.Object => TryReadRefundReferenceObject(element, path, out source),
+            JsonValueKind.Array => TryReadRefundReferenceArray(element, path, out source),
+            JsonValueKind.String => TryReadRefundReferenceFromText(element.GetString(), path, out source),
+            JsonValueKind.Number => null,
+            JsonValueKind.True => null,
+            JsonValueKind.False => null,
+            _ => null
+        };
+    }
+
+    private static string? TryReadRefundReferenceObject(JsonElement element, string path, out string? source)
+    {
+        foreach (var property in element.EnumerateObject())
+        {
+            if (string.Equals(property.Name, "RFN", StringComparison.OrdinalIgnoreCase))
+            {
+                var value = ReadScalar(property.Value);
+                if (!string.IsNullOrWhiteSpace(value))
+                {
+                    source = $"{path}.{property.Name}";
+                    return value;
+                }
+            }
+        }
+
+        var key = ReadString(element, "Key") ??
+            ReadString(element, "Name") ??
+            ReadString(element, "Tag") ??
+            ReadString(element, "Code");
+        if (string.Equals(key, "RFN", StringComparison.OrdinalIgnoreCase))
+        {
+            var value = ReadString(element, "Value") ??
+                ReadString(element, "Data") ??
+                ReadString(element, "Text");
+            if (!string.IsNullOrWhiteSpace(value))
+            {
+                source = $"{path}[{key}]";
+                return value;
+            }
+        }
+
+        foreach (var property in element.EnumerateObject())
+        {
+            var value = TryReadRefundReferenceValue(property.Value, $"{path}.{property.Name}", out source);
+            if (!string.IsNullOrWhiteSpace(value))
+            {
+                return value;
+            }
+        }
+
+        source = null;
+        return null;
+    }
+
+    private static string? TryReadRefundReferenceArray(JsonElement element, string path, out string? source)
+    {
+        var index = 0;
+        foreach (var item in element.EnumerateArray())
+        {
+            var value = TryReadRefundReferenceValue(item, $"{path}[{index}]", out source);
+            if (!string.IsNullOrWhiteSpace(value))
+            {
+                return value;
+            }
+
+            index++;
+        }
+
+        source = null;
+        return null;
+    }
+
+    private static string? TryReadRefundReferenceFromText(string? text, string path, out string? source)
+    {
+        var value = NormalizeOptional(text);
+        if (value is null)
+        {
+            source = null;
+            return null;
+        }
+
+        var marker = value.IndexOf("RFN", StringComparison.OrdinalIgnoreCase);
+        if (marker < 0)
+        {
+            source = null;
+            return null;
+        }
+
+        var start = marker + 3;
+        while (start < value.Length && (char.IsWhiteSpace(value[start]) || value[start] is ':' or '=' or '-'))
+        {
+            start++;
+        }
+
+        var end = start;
+        while (end < value.Length && !char.IsWhiteSpace(value[end]) && value[end] is not ',' and not ';' and not '|')
+        {
+            end++;
+        }
+
+        var refundReference = NormalizeOptional(value[start..end]);
+        source = refundReference is null ? null : path;
+        return refundReference;
+    }
+
+    private static JsonElement ReadValue(JsonElement root, string propertyName)
+    {
+        return TryGetProperty(root, propertyName, out var value) ? value : default;
+    }
+
+    private static string? ReadScalar(JsonElement value)
+    {
+        return value.ValueKind switch
+        {
+            JsonValueKind.String => NormalizeOptional(value.GetString()),
+            JsonValueKind.Number => value.GetRawText(),
+            JsonValueKind.True => "true",
+            JsonValueKind.False => "false",
+            _ => null
+        };
+    }
+
+    private static string DescribeKind(JsonElement element)
+    {
+        return element.ValueKind == JsonValueKind.Undefined ? "<missing>" : element.ValueKind.ToString();
+    }
+
+    private static string DescribeKeys(JsonElement element)
+    {
+        if (element.ValueKind != JsonValueKind.Object)
+        {
+            return DescribeKind(element);
+        }
+
+        var keys = element.EnumerateObject()
+            .Select(property => property.Name)
+            .Take(12)
+            .ToArray();
+        return keys.Length == 0 ? "<empty>" : string.Join(",", keys);
     }
 
     private static bool IsTransactionNotification(LinklyCloudBackendNotificationDto notification)
@@ -788,7 +1190,12 @@ public sealed class LinklyBackendTerminalClient(
         LinklyCloudBackendSessionResponse status,
         CancellationToken cancellationToken)
     {
-        await DelayAsync(GetNextPollDelay(status), cancellationToken);
+        var delay = GetNextPollDelay(status);
+        Log($"poll delay start sessionId={status.SessionId} delayMs={delay.TotalMilliseconds:0} lastHttp={status.LastHttpStatus?.ToString(CultureInfo.InvariantCulture) ?? "<null>"}");
+        var stopwatch = Stopwatch.StartNew();
+        await DelayAsync(delay, cancellationToken);
+        stopwatch.Stop();
+        Log($"poll delay completed sessionId={status.SessionId} elapsedMs={stopwatch.ElapsedMilliseconds}");
     }
 
     private async Task DelayAsync(TimeSpan delay, CancellationToken cancellationToken)
@@ -872,6 +1279,20 @@ public sealed class LinklyBackendTerminalClient(
         return parts.Length >= 3 &&
             string.Equals(parts[0], "ANZCLOUD", StringComparison.OrdinalIgnoreCase)
                 ? parts[2]
+                : null;
+    }
+
+    private static string? TryReadOriginalTxnRef(string? reference)
+    {
+        if (string.IsNullOrWhiteSpace(reference))
+        {
+            return null;
+        }
+
+        var parts = reference.Trim().Split(':', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries);
+        return parts.Length >= 2 &&
+            string.Equals(parts[0], LinklyBackendPaymentReference.Prefix, StringComparison.OrdinalIgnoreCase)
+                ? Uri.UnescapeDataString(parts[1])
                 : null;
     }
 
@@ -1000,6 +1421,31 @@ public sealed class LinklyBackendTerminalClient(
     private static void Log(string message)
     {
         ConsoleLog.Write("LinklyBackend", message);
+    }
+
+    private static void LogStatusSnapshot(string prefix, LinklyCloudBackendSessionResponse status)
+    {
+        Log(
+            $"{prefix} sessionId={status.SessionId} status={status.Status} lastHttp={status.LastHttpStatus?.ToString(CultureInfo.InvariantCulture) ?? "<null>"} " +
+            $"display=\"{LogValue(TruncateForLog(status.DisplayText, 80))}\" " +
+            $"flags=cancel:{status.CancelKeyFlag},ok:{status.OKKeyFlag},yes:{status.AcceptYesKeyFlag},no:{status.DeclineNoKeyFlag},auth:{status.AuthoriseKeyFlag} " +
+            $"notifications={status.Notifications?.Count ?? 0}");
+    }
+
+    private static string LogValue(string? value)
+    {
+        return string.IsNullOrWhiteSpace(value) ? "<null>" : value.Trim();
+    }
+
+    private static string? TruncateForLog(string? value, int maxLength)
+    {
+        var normalized = NormalizeOptional(value);
+        if (normalized is null || normalized.Length <= maxLength)
+        {
+            return normalized;
+        }
+
+        return normalized[..maxLength];
     }
 
     private static string GetComponentVersion()

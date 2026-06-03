@@ -110,6 +110,8 @@ public partial class MainWindow : Window
     private void MainWindowSourceInitialized(object? sender, EventArgs e)
     {
         _displayTopologyService.AttachWorkAreaConstraint(this);
+        WindowsShellIdentityService.ApplyWindowIdentity(this);
+        WindowsShellIdentityService.ApplyWindowIcon(this);
         _hwndSource = (HwndSource?)PresentationSource.FromVisual(this);
         _hwndSource?.AddHook(_rawScannerService.ProcessWindowMessage);
     }

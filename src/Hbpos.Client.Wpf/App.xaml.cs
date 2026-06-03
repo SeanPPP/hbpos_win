@@ -24,6 +24,8 @@ public partial class App : Application
 
     protected override async void OnStartup(StartupEventArgs e)
     {
+        WindowsShellIdentityService.ApplyProcessIdentity();
+
         var startupOptions = AppStartupOptions.FromArgs(e.Args);
         var startupGuard = new SingleInstanceStartupGuard();
         var startupResult = startupGuard.TryAcquire(startupOptions.PreviewMode);

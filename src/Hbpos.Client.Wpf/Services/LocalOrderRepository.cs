@@ -108,8 +108,8 @@ public sealed class LocalOrderRepository(LocalSqliteStore store) : ILocalOrderRe
                 cardCommand.Transaction = transaction;
                 cardCommand.CommandText = """
                     INSERT INTO LocalCardTransactions
-                    (Id, PaymentGuid, OrderGuid, Processor, TxnRef, AuthCode, CardType, CardBin, MaskedCardNumber, MerchantId, ResponseCode, ResponseText, Stan, BankDateTime, Amount, ReceiptText)
-                    VALUES ($Id, $PaymentGuid, $OrderGuid, $Processor, $TxnRef, $AuthCode, $CardType, $CardBin, $MaskedCardNumber, $MerchantId, $ResponseCode, $ResponseText, $Stan, $BankDateTime, $Amount, $ReceiptText);
+                    (Id, PaymentGuid, OrderGuid, Processor, TxnRef, AuthCode, CardType, CardBin, MaskedCardNumber, MerchantId, ResponseCode, ResponseText, Stan, BankDateTime, Amount, ReceiptText, RefundReference)
+                    VALUES ($Id, $PaymentGuid, $OrderGuid, $Processor, $TxnRef, $AuthCode, $CardType, $CardBin, $MaskedCardNumber, $MerchantId, $ResponseCode, $ResponseText, $Stan, $BankDateTime, $Amount, $ReceiptText, $RefundReference);
                     """;
                 cardCommand.Parameters.AddWithValue("$Id", Guid.NewGuid().ToString());
                 cardCommand.Parameters.AddWithValue("$PaymentGuid", payment.PaymentGuid.ToString());
@@ -127,6 +127,7 @@ public sealed class LocalOrderRepository(LocalSqliteStore store) : ILocalOrderRe
                 cardCommand.Parameters.AddWithValue("$BankDateTime", cardTransaction.BankDateTime?.ToString("O") ?? (object)DBNull.Value);
                 cardCommand.Parameters.AddWithValue("$Amount", cardTransaction.Amount);
                 cardCommand.Parameters.AddWithValue("$ReceiptText", (object?)cardTransaction.ReceiptText ?? DBNull.Value);
+                cardCommand.Parameters.AddWithValue("$RefundReference", (object?)cardTransaction.RefundReference ?? DBNull.Value);
                 await cardCommand.ExecuteNonQueryAsync(cancellationToken);
             }
         }
@@ -389,7 +390,7 @@ public sealed class LocalOrderRepository(LocalSqliteStore store) : ILocalOrderRe
     {
         await using var command = connection.CreateCommand();
         command.CommandText = """
-            SELECT Processor, TxnRef, AuthCode, CardType, CardBin, MaskedCardNumber, MerchantId, ResponseCode, ResponseText, Stan, BankDateTime, Amount, ReceiptText
+            SELECT Processor, TxnRef, AuthCode, CardType, CardBin, MaskedCardNumber, MerchantId, ResponseCode, ResponseText, Stan, BankDateTime, Amount, ReceiptText, RefundReference
             FROM LocalCardTransactions
             WHERE OrderGuid = $OrderGuid AND PaymentGuid = $PaymentGuid
             ORDER BY rowid;
@@ -414,7 +415,8 @@ public sealed class LocalOrderRepository(LocalSqliteStore store) : ILocalOrderRe
                 ReadNullableString(reader, "Stan"),
                 ReadNullableDateTimeOffset(reader, "BankDateTime"),
                 ReadDecimal(reader, "Amount"),
-                ReadNullableString(reader, "ReceiptText")));
+                ReadNullableString(reader, "ReceiptText"),
+                ReadNullableString(reader, "RefundReference")));
         }
 
         return transactions;

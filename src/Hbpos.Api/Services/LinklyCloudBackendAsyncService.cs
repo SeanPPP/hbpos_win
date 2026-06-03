@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Net;
 using System.Net.Http.Headers;
 using System.Net.Http.Json;
@@ -156,15 +157,21 @@ public class LinklyCloudBackendAsyncService(
             cancellationToken);
 
         var notification = BuildNotificationRequest(environment, session.SessionId, notificationBaseUri);
+        var txnType = NormalizeRequired(request.TxnType, "txnType");
+        var purchaseAnalysisData = EnsurePurchaseAnalysisData(
+            txnType,
+            request.AmtPurchase,
+            session.TxnRef!,
+            request.PurchaseAnalysisData);
         var transportRequest = new LinklyCloudBackendTransportTransactionRequest(
             environment,
             token.RestBaseUrl,
             token.AccessToken,
             session.SessionId,
-            NormalizeRequired(request.TxnType, "txnType"),
+            txnType,
             request.AmtPurchase,
             session.TxnRef!,
-            request.PurchaseAnalysisData,
+            purchaseAnalysisData,
             notification);
 
         var response = await SendWithRecoverableFailureAsync(
@@ -357,6 +364,11 @@ public class LinklyCloudBackendAsyncService(
                 PayloadJson = payloadJson,
                 ReceivedAt = now
             }, cancellationToken);
+        }
+
+        if (string.Equals(normalizedType, "transaction", StringComparison.OrdinalIgnoreCase))
+        {
+            LogTransactionNotificationSnapshot(normalizedSessionId, payloadJson);
         }
 
         if (string.Equals(normalizedType, "transaction", StringComparison.OrdinalIgnoreCase))
@@ -909,6 +921,28 @@ public class LinklyCloudBackendAsyncService(
         session.ResponseText = ReadString(response, "ResponseText");
     }
 
+    private void LogTransactionNotificationSnapshot(string sessionId, string payloadJson)
+    {
+        try
+        {
+            using var document = JsonDocument.Parse(payloadJson);
+            var root = document.RootElement;
+            var response = ReadResponse(root);
+            var purchaseAnalysisData = ReadValue(response, "PurchaseAnalysisData");
+            var refundReference = TryReadRefundReference(root, out var source);
+            Log(
+                $"transaction notification snapshot sessionId={LogValue(sessionId)} bytes={payloadJson.Length} " +
+                $"rootKeys={DescribeKeys(root)} responseKeys={DescribeKeys(response)} " +
+                $"responseCode={LogValue(ReadString(response, "ResponseCode"))} responseText={LogValue(ReadString(response, "ResponseText"))} " +
+                $"padKind={DescribeKind(purchaseAnalysisData)} padKeys={DescribeKeys(purchaseAnalysisData)} " +
+                $"rfnSource={LogValue(source)} rfn={LogValue(MaskReference(refundReference))}");
+        }
+        catch (JsonException ex)
+        {
+            Log($"transaction notification snapshot failed sessionId={LogValue(sessionId)} error={ex.GetType().Name}");
+        }
+    }
+
     private static void ApplyDisplayPayload(
         LinklyCloudBackendSessionRecord session,
         string payloadJson,
@@ -987,6 +1021,33 @@ public class LinklyCloudBackendAsyncService(
     private static bool IsCompleted(LinklyCloudBackendSessionRecord session)
     {
         return string.Equals(session.Status, StatusCompleted, StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static IReadOnlyDictionary<string, string>? EnsurePurchaseAnalysisData(
+        string txnType,
+        long amount,
+        string txnRef,
+        IReadOnlyDictionary<string, string>? purchaseAnalysisData)
+    {
+        var fields = purchaseAnalysisData is null
+            ? new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+            : new Dictionary<string, string>(purchaseAnalysisData, StringComparer.OrdinalIgnoreCase);
+
+        if (string.Equals(txnType, "P", StringComparison.OrdinalIgnoreCase) &&
+            !fields.ContainsKey("RFN"))
+        {
+            // 后端异步链路的 TxnRef 由 API 生成；把它写入原交易 RFN，后续退卡才能引用同一个原始 RFN。
+            fields["RFN"] = txnRef;
+        }
+
+        if (fields.Count == 0)
+        {
+            return null;
+        }
+
+        fields.TryAdd("AMT", amount.ToString("D9", CultureInfo.InvariantCulture));
+        fields.TryAdd("PCM", "0000");
+        return fields;
     }
 
     private static JsonElement ReadResponse(JsonElement root)
@@ -1118,6 +1179,187 @@ public class LinklyCloudBackendAsyncService(
 
         value = default;
         return false;
+    }
+
+    private static JsonElement ReadValue(JsonElement root, string propertyName)
+    {
+        return TryGetProperty(root, propertyName, out var value) ? value : default;
+    }
+
+    private static string? TryReadRefundReference(JsonElement root, out string? source)
+    {
+        var response = ReadResponse(root);
+        var purchaseAnalysisData = ReadValue(response, "PurchaseAnalysisData");
+        // 只记录结构化摘要，不打印完整 payload；RFN 可能藏在对象、键值数组或字符串 PAD 里。
+        var refundReference = TryReadRefundReferenceValue(purchaseAnalysisData, "Response.PurchaseAnalysisData", out source);
+        if (!string.IsNullOrWhiteSpace(refundReference))
+        {
+            return refundReference;
+        }
+
+        refundReference = TryReadRefundReferenceValue(response, "Response", out source);
+        if (!string.IsNullOrWhiteSpace(refundReference))
+        {
+            return refundReference;
+        }
+
+        refundReference = TryReadRefundReferenceValue(root, "Root", out source);
+        if (!string.IsNullOrWhiteSpace(refundReference))
+        {
+            return refundReference;
+        }
+
+        source = null;
+        return null;
+    }
+
+    private static string? TryReadRefundReferenceValue(JsonElement element, string path, out string? source)
+    {
+        source = null;
+        return element.ValueKind switch
+        {
+            JsonValueKind.Object => TryReadRefundReferenceObject(element, path, out source),
+            JsonValueKind.Array => TryReadRefundReferenceArray(element, path, out source),
+            JsonValueKind.String => TryReadRefundReferenceFromText(element.GetString(), path, out source),
+            _ => null
+        };
+    }
+
+    private static string? TryReadRefundReferenceObject(JsonElement element, string path, out string? source)
+    {
+        foreach (var property in element.EnumerateObject())
+        {
+            if (string.Equals(property.Name, "RFN", StringComparison.OrdinalIgnoreCase))
+            {
+                var value = ReadScalar(property.Value);
+                if (!string.IsNullOrWhiteSpace(value))
+                {
+                    source = $"{path}.{property.Name}";
+                    return value;
+                }
+            }
+        }
+
+        var key = ReadString(element, "Key") ??
+            ReadString(element, "Name") ??
+            ReadString(element, "Tag") ??
+            ReadString(element, "Code");
+        if (string.Equals(key, "RFN", StringComparison.OrdinalIgnoreCase))
+        {
+            var value = ReadString(element, "Value") ??
+                ReadString(element, "Data") ??
+                ReadString(element, "Text");
+            if (!string.IsNullOrWhiteSpace(value))
+            {
+                source = $"{path}[{key}]";
+                return value;
+            }
+        }
+
+        foreach (var property in element.EnumerateObject())
+        {
+            var value = TryReadRefundReferenceValue(property.Value, $"{path}.{property.Name}", out source);
+            if (!string.IsNullOrWhiteSpace(value))
+            {
+                return value;
+            }
+        }
+
+        source = null;
+        return null;
+    }
+
+    private static string? TryReadRefundReferenceArray(JsonElement element, string path, out string? source)
+    {
+        var index = 0;
+        foreach (var item in element.EnumerateArray())
+        {
+            var value = TryReadRefundReferenceValue(item, $"{path}[{index}]", out source);
+            if (!string.IsNullOrWhiteSpace(value))
+            {
+                return value;
+            }
+
+            index++;
+        }
+
+        source = null;
+        return null;
+    }
+
+    private static string? TryReadRefundReferenceFromText(string? text, string path, out string? source)
+    {
+        var value = NormalizeOptional(text);
+        if (value is null)
+        {
+            source = null;
+            return null;
+        }
+
+        var marker = value.IndexOf("RFN", StringComparison.OrdinalIgnoreCase);
+        if (marker < 0)
+        {
+            source = null;
+            return null;
+        }
+
+        var start = marker + 3;
+        while (start < value.Length && (char.IsWhiteSpace(value[start]) || value[start] is ':' or '=' or '-'))
+        {
+            start++;
+        }
+
+        var end = start;
+        while (end < value.Length && !char.IsWhiteSpace(value[end]) && value[end] is not ',' and not ';' and not '|')
+        {
+            end++;
+        }
+
+        var refundReference = NormalizeOptional(value[start..end]);
+        source = refundReference is null ? null : path;
+        return refundReference;
+    }
+
+    private static string? ReadScalar(JsonElement value)
+    {
+        return value.ValueKind switch
+        {
+            JsonValueKind.String => NormalizeOptional(value.GetString()),
+            JsonValueKind.Number => value.GetRawText(),
+            JsonValueKind.True => "true",
+            JsonValueKind.False => "false",
+            _ => null
+        };
+    }
+
+    private static string DescribeKind(JsonElement element)
+    {
+        return element.ValueKind == JsonValueKind.Undefined ? "<missing>" : element.ValueKind.ToString();
+    }
+
+    private static string DescribeKeys(JsonElement element)
+    {
+        if (element.ValueKind != JsonValueKind.Object)
+        {
+            return DescribeKind(element);
+        }
+
+        var keys = element.EnumerateObject()
+            .Select(property => property.Name)
+            .Take(12)
+            .ToArray();
+        return keys.Length == 0 ? "<empty>" : string.Join(",", keys);
+    }
+
+    private static string? MaskReference(string? value)
+    {
+        var normalized = NormalizeOptional(value);
+        if (normalized is null || normalized.Length <= 8)
+        {
+            return normalized;
+        }
+
+        return $"{normalized[..4]}...{normalized[^4..]}";
     }
 
     private static string NormalizeEnvironment(string? environment)

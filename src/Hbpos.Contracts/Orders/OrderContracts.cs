@@ -67,7 +67,8 @@ public sealed record CardTransactionDto(
     string? Stan,
     DateTimeOffset? BankDateTime,
     decimal Amount,
-    string? ReceiptText);
+    string? ReceiptText,
+    string? RefundReference = null);
 
 public static class CardRefundReference
 {

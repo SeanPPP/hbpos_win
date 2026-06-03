@@ -202,6 +202,39 @@ public sealed class MainViewModelScannerTests
     }
 
     [Fact]
+    public async Task Card_refund_completion_auto_prints_receipt_after_success_screen()
+    {
+        var printService = new RecordingReceiptPrintService();
+        var cashDrawerService = new RecordingCashDrawerService();
+        var viewModel = CreateAuthorizedMainViewModel(
+            new FakeCustomerDisplayWindowService(),
+            printService,
+            cashDrawerService: cashDrawerService);
+        await viewModel.InitializeAsync(new AppStartupOptions([], false, null, null));
+        var order = CreateReceiptPrintOrder(PaymentMethodKind.Card) with
+        {
+            TotalAmount = -10m,
+            ActualAmount = -10m,
+            Payments =
+            [
+                new LocalPayment(
+                    Guid.NewGuid(),
+                    PaymentMethodKind.Card,
+                    -10m,
+                    "CARD-REFUND-123")
+            ]
+        };
+
+        InvokePaymentCompleted(viewModel, order);
+
+        await WaitUntilAsync(() => ReferenceEquals(viewModel.PaymentSuccess, viewModel.CurrentScreen) && printService.Calls.Count == 1);
+        var call = Assert.Single(printService.Calls);
+        Assert.Equal(order.OrderGuid, call.OrderGuid);
+        Assert.Equal(ReceiptPrintReason.CardAuto, call.Reason);
+        Assert.Equal(0, cashDrawerService.OpenCallCount);
+    }
+
+    [Fact]
     public async Task Cash_payment_completion_does_not_auto_print_receipt()
     {
         var printService = new RecordingReceiptPrintService();

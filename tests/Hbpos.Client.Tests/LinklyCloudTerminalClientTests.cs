@@ -40,6 +40,7 @@ public sealed class LinklyCloudTerminalClientTests
         var transaction = Assert.Single(result.CardTransactions!);
         Assert.Equal("ANZ", transaction.Processor);
         Assert.Equal("****1234", transaction.MaskedCardNumber);
+        Assert.Equal("RFN-1", transaction.RefundReference);
     }
 
     [Fact]

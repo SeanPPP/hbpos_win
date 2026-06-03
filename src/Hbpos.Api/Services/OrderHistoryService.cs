@@ -1,5 +1,6 @@
 using BlazorApp.Shared.Models.POSM;
 using Hbpos.Api.Data;
+using Hbpos.Contracts.Linkly;
 using Hbpos.Contracts.Orders;
 
 namespace Hbpos.Api.Services;
@@ -199,7 +200,23 @@ public sealed class SqlSugarOrderHistoryRepository(HbposSqlSugarContext dbContex
                 ? null
                 : new DateTimeOffset(DateTime.SpecifyKind(transaction.BankDateTime.Value, DateTimeKind.Utc)),
             Amount(transaction.Amount),
-            transaction.ReceiptText);
+            transaction.ReceiptText,
+            TryGetLinklyRefundReference(paymentReference));
+    }
+
+    private static string? TryGetLinklyRefundReference(string? paymentReference)
+    {
+        var backendRefundReference = LinklyBackendPaymentReference.TryGetRefundReference(paymentReference);
+        if (!string.IsNullOrWhiteSpace(backendRefundReference))
+        {
+            return backendRefundReference;
+        }
+
+        var parts = paymentReference?.Trim().Split(':', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries) ?? [];
+        return parts.Length >= 3 &&
+            string.Equals(parts[0], "ANZCLOUD", StringComparison.OrdinalIgnoreCase)
+                ? parts[2]
+                : null;
     }
 
     private static string InferCardProcessor(string? paymentReference)

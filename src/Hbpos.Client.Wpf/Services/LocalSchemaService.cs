@@ -24,6 +24,7 @@ public sealed class LocalSchemaService(LocalSqliteStore store) : ILocalSchemaSer
         await EnsureLocalOrderColumnsAsync(connection, cancellationToken);
         await EnsureLocalOrderLineColumnsAsync(connection, cancellationToken);
         await EnsureLocalPaymentColumnsAsync(connection, cancellationToken);
+        await EnsureLocalCardTransactionColumnsAsync(connection, cancellationToken);
         await EnsureLocalInstallmentColumnsAsync(connection, cancellationToken);
         await EnsureSuspendedOrderLineColumnsAsync(connection, cancellationToken);
         await EnsureSuspendedOrderReturnPaymentCapacityColumnsAsync(connection, cancellationToken);
@@ -247,6 +248,17 @@ public sealed class LocalSchemaService(LocalSqliteStore store) : ILocalSchemaSer
         }
     }
 
+    private static async Task EnsureLocalCardTransactionColumnsAsync(
+        SqliteConnection connection,
+        CancellationToken cancellationToken)
+    {
+        var columns = await ReadColumnNamesAsync(connection, "LocalCardTransactions", cancellationToken);
+        if (!columns.Contains("RefundReference"))
+        {
+            await ExecuteAsync(connection, "ALTER TABLE LocalCardTransactions ADD COLUMN RefundReference TEXT NULL;", cancellationToken);
+        }
+    }
+
     private static async Task EnsureSuspendedOrderReturnPaymentCapacityColumnsAsync(
         SqliteConnection connection,
         CancellationToken cancellationToken)
@@ -396,7 +408,8 @@ public sealed class LocalSchemaService(LocalSqliteStore store) : ILocalSchemaSer
             Stan TEXT NULL,
             BankDateTime TEXT NULL,
             Amount TEXT NOT NULL,
-            ReceiptText TEXT NULL
+            ReceiptText TEXT NULL,
+            RefundReference TEXT NULL
         );
         """,
         """

@@ -173,6 +173,7 @@ public sealed class CashPaymentWorkflowService(
         {
             if (method == PaymentMethodKind.Card && string.IsNullOrWhiteSpace(referenceText))
             {
+                ConsoleLog.Write("CardRefund", "workflow blocked card refund reason=missing-original-reference");
                 return PaymentTenderAttemptResult.Fail("payment.status.cardDeclined", "Original card payment reference is required.");
             }
 
@@ -400,10 +401,35 @@ public sealed class CashPaymentWorkflowService(
     {
         if (amount > remainingAmount)
         {
+            if (method == PaymentMethodKind.Card)
+            {
+                ConsoleLog.Write(
+                    "CardRefund",
+                    $"workflow blocked card refund reason=amount-exceeds-remaining amount={amount:0.00} remaining={remainingAmount:0.00} originalReference={LogValue(referenceText)}");
+            }
+
             return PaymentTenderAttemptResult.Fail(exceedsRemainingStatusKey);
         }
 
+        if (method == PaymentMethodKind.Card)
+        {
+            var operation = string.IsNullOrWhiteSpace(referenceText) ? "payment" : "refund";
+            ConsoleLog.Write(
+                "CardRefund",
+                $"workflow terminal {operation} start amount={amount:0.00} remaining={remainingAmount:0.00} originalReference={LogValue(referenceText)}");
+        }
+
         var authorization = await authorizeAsync(amount, session, referenceText, cancellationToken);
+        if (method == PaymentMethodKind.Card)
+        {
+            var operation = string.IsNullOrWhiteSpace(referenceText) ? "payment" : "refund";
+            ConsoleLog.Write(
+                "CardRefund",
+                $"workflow terminal {operation} completed approved={authorization.Approved} reference={LogValue(authorization.Reference)} " +
+                $"message={LogValue(authorization.Message)} authorizedAmount={authorization.AuthorizedAmount?.ToString("0.00") ?? "<null>"} " +
+                $"cardTxCount={authorization.CardTransactions?.Count ?? 0}");
+        }
+
         if (!authorization.Approved)
         {
             return PaymentTenderAttemptResult.Fail(
@@ -489,6 +515,11 @@ public sealed class CashPaymentWorkflowService(
         return PaymentTenderAttemptResult.Success(
             new PaymentTender(method, -authorizedAmount, reference, CardTransactions: authorization.CardTransactions),
             approvedStatusKey);
+    }
+
+    private static string LogValue(string? value)
+    {
+        return string.IsNullOrWhiteSpace(value) ? "<null>" : value.Trim();
     }
 
     private static PaymentTenderAttemptResult AuthorizeRefundTenderAsync(

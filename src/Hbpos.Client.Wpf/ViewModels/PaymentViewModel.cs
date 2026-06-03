@@ -4,6 +4,7 @@ using CommunityToolkit.Mvvm.Input;
 using Hbpos.Client.Wpf.Localization;
 using Hbpos.Client.Wpf.Models;
 using Hbpos.Client.Wpf.Services;
+using Hbpos.Contracts.Linkly;
 using Hbpos.Contracts.Orders;
 
 namespace Hbpos.Client.Wpf.ViewModels;
@@ -434,6 +435,14 @@ public partial class PaymentViewModel : ObservableObject
                 : IsRefundMode && method == PaymentMethodKind.Card
                     ? GetRefundReference(method)
                     : null;
+            if (IsRefundMode && method == PaymentMethodKind.Card)
+            {
+                ConsoleLog.Write(
+                    "CardRefund",
+                    $"payment view add card refund amountText={LogValue(amountText)} originalReference={LogValue(referenceText)} " +
+                    $"tenders={PaymentTenders.Count} capacities={_cart.ReturnPaymentCapacities.Count}");
+            }
+
             result = await _workflowService.AddTenderAsync(
                 method,
                 Session,
@@ -503,6 +512,13 @@ public partial class PaymentViewModel : ObservableObject
 
         if (!result.Succeeded || result.Tender is null)
         {
+            if (IsRefundMode && method == PaymentMethodKind.Card)
+            {
+                ConsoleLog.Write(
+                    "CardRefund",
+                    $"payment view card refund tender failed statusKey={result.StatusKey} message={LogValue(result.StatusMessage)}");
+            }
+
             if (method == PaymentMethodKind.Card && TrySetCardTerminalFailureStatus(result))
             {
                 ResetManualCardCancellationState();
@@ -528,10 +544,11 @@ public partial class PaymentViewModel : ObservableObject
         SetStatus(result.StatusKey);
         NotifyPaymentCommandStates();
         if (method == PaymentMethodKind.Card &&
-            IsPaymentMode &&
             !cardPaymentWasManuallyCancelled &&
-            IsSettlementComplete())
+            IsSettlementComplete() &&
+            (IsPaymentMode || IsRefundMode))
         {
+            // 全额卡支付或全额退卡已由终端批准，立即落单，后续主窗口沿用 CardAuto 小票打印。
             await CompletePaymentFromTendersAsync();
         }
     }
@@ -1117,7 +1134,13 @@ public partial class PaymentViewModel : ObservableObject
     {
         foreach (var capacity in _cart.ReturnPaymentCapacities.Where(capacity => capacity.Method == PaymentMethodKind.Card))
         {
-            var reference = NormalizeReference(capacity.Reference);
+            var reference = ResolveOriginalCardRefundReference(capacity);
+            ConsoleLog.Write(
+                "CardRefund",
+                $"capacity candidate originalOrder={capacity.OriginalOrderGuid?.ToString() ?? "<null>"} " +
+                $"remaining={capacity.RemainingAmount:0.00} rawReference={LogValue(capacity.Reference)} " +
+                $"resolvedReference={LogValue(reference)} cardTxCount={capacity.CardTransactions?.Count ?? 0} " +
+                $"refundReferences={LogValue(FormatRefundReferences(capacity.CardTransactions))}");
             if (reference is null)
             {
                 continue;
@@ -1132,12 +1155,21 @@ public partial class PaymentViewModel : ObservableObject
             var remainingAmount = remainingReturnAmount is decimal orderLimitedAmount
                 ? Math.Min(remainingCapacity, orderLimitedAmount)
                 : remainingCapacity;
+            ConsoleLog.Write(
+                "CardRefund",
+                $"capacity evaluated originalReference={LogValue(reference)} existingTendered={existingTendered:0.00} " +
+                $"remainingCapacity={remainingCapacity:0.00} orderLimited={remainingReturnAmount?.ToString("0.00") ?? "<null>"} " +
+                $"selectedRemaining={remainingAmount:0.00}");
             if (remainingAmount > 0m)
             {
+                ConsoleLog.Write(
+                    "CardRefund",
+                    $"capacity selected originalReference={LogValue(reference)} remaining={remainingAmount:0.00}");
                 return (reference, remainingAmount);
             }
         }
 
+        ConsoleLog.Write("CardRefund", "no eligible card refund capacity selected");
         return null;
     }
 
@@ -1190,9 +1222,73 @@ public partial class PaymentViewModel : ObservableObject
             : NormalizeReference(reference);
     }
 
+    private static string? ResolveOriginalCardRefundReference(OrderReturnPaymentCapacityDto capacity)
+    {
+        var reference = NormalizeReference(capacity.Reference);
+        if (reference is null || RequiresLinklyRefundReference(reference))
+        {
+            return BuildLinklyRefundReference(capacity.CardTransactions, reference) ?? reference;
+        }
+
+        return reference;
+    }
+
+    private static bool RequiresLinklyRefundReference(string reference)
+    {
+        return reference.StartsWith("ANZCLOUD:", StringComparison.OrdinalIgnoreCase) ||
+            reference.StartsWith($"{LinklyBackendPaymentReference.Prefix}:", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static string? BuildLinklyRefundReference(
+        IReadOnlyList<CardTransactionDto>? cardTransactions,
+        string? fallbackReference)
+    {
+        foreach (var transaction in cardTransactions ?? [])
+        {
+            var refundReference = NormalizeReference(transaction.RefundReference);
+            if (refundReference is null)
+            {
+                continue;
+            }
+
+            var txnRef = NormalizeReference(transaction.TxnRef) ??
+                TryGetLinklyTxnRef(fallbackReference) ??
+                "RFN";
+            return $"ANZCLOUD:{txnRef}:{refundReference}";
+        }
+
+        return null;
+    }
+
+    private static string FormatRefundReferences(IReadOnlyList<CardTransactionDto>? cardTransactions)
+    {
+        var values = (cardTransactions ?? [])
+            .Select(transaction => transaction.RefundReference)
+            .Where(reference => !string.IsNullOrWhiteSpace(reference))
+            .Select(reference => reference!.Trim())
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+        return values.Length == 0 ? string.Empty : string.Join(',', values);
+    }
+
+    private static string? TryGetLinklyTxnRef(string? reference)
+    {
+        var parts = reference?.Trim().Split(':', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries) ?? [];
+        return parts.Length >= 2 &&
+            (string.Equals(parts[0], "ANZCLOUD", StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(parts[0], LinklyBackendPaymentReference.Prefix, StringComparison.OrdinalIgnoreCase))
+                ? parts[1]
+                : null;
+    }
+
     private static string? NormalizeReference(string? reference)
     {
         return string.IsNullOrWhiteSpace(reference) ? null : reference.Trim();
+    }
+
+    private static string LogValue(string? value)
+    {
+        return string.IsNullOrWhiteSpace(value) ? "<null>" : value.Trim();
     }
 
     private bool IsSettlementComplete()

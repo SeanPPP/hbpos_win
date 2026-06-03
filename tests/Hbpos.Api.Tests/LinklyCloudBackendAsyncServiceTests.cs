@@ -86,6 +86,25 @@ namespace Hbpos.Api.Tests;
         Assert.NotNull(transport.LastTransaction);
     }
 
+    [Fact]
+    public async Task StartTransactionAsync_adds_purchase_rfn_from_backend_txn_ref()
+    {
+        var transport = new CapturingLinklyCloudBackendAsyncTransport(HttpStatusCode.Accepted);
+        var service = CreateService(transport);
+
+        var response = await service.StartTransactionAsync(
+            "S01",
+            "POS-01",
+            CreateTransactionRequest(),
+            CancellationToken.None);
+
+        var purchaseAnalysisData = Assert.IsAssignableFrom<IReadOnlyDictionary<string, string>>(
+            transport.LastTransaction?.PurchaseAnalysisData);
+        Assert.Equal(response.TxnRef, purchaseAnalysisData["RFN"]);
+        Assert.Equal("000001000", purchaseAnalysisData["AMT"]);
+        Assert.Equal("0000", purchaseAnalysisData["PCM"]);
+    }
+
     [Theory]
     [InlineData(null)]
     [InlineData("")]

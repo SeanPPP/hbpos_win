@@ -234,6 +234,7 @@ public sealed class ReceiptReturnsWorkflowService(
         }
 
         cart.AddReturnPaymentCapacities(paymentCapacities ?? []);
+        LogReturnPaymentCapacities("return cart capacities added", paymentCapacities ?? []);
         return added;
     }
 
@@ -381,8 +382,37 @@ public sealed class ReceiptReturnsWorkflowService(
                 0m,
                 group.Sum(payment => payment.Amount),
                 group.Key.Reference,
+                group.Key.Method == PaymentMethodKind.Card
+                    ? group.SelectMany(payment => payment.CardTransactions ?? []).ToList()
+                    : null,
                 OriginalOrderGuid: order.OrderGuid))
             .ToList();
+    }
+
+    private static void LogReturnPaymentCapacities(
+        string prefix,
+        IReadOnlyList<OrderReturnPaymentCapacityDto> capacities)
+    {
+        foreach (var capacity in capacities.Where(capacity => capacity.Method == PaymentMethodKind.Card))
+        {
+            var refundReferences = string.Join(
+                ',',
+                (capacity.CardTransactions ?? [])
+                    .Select(transaction => transaction.RefundReference)
+                    .Where(reference => !string.IsNullOrWhiteSpace(reference))
+                    .Select(reference => reference!.Trim())
+                    .Distinct(StringComparer.OrdinalIgnoreCase));
+            ConsoleLog.Write(
+                "CardRefund",
+                $"{prefix} method={capacity.Method} originalOrder={capacity.OriginalOrderGuid?.ToString() ?? "<null>"} " +
+                $"remaining={capacity.RemainingAmount:0.00} reference={LogValue(capacity.Reference)} " +
+                $"cardTxCount={capacity.CardTransactions?.Count ?? 0} refundReferences={LogValue(refundReferences)}");
+        }
+    }
+
+    private static string LogValue(string? value)
+    {
+        return string.IsNullOrWhiteSpace(value) ? "<null>" : value.Trim();
     }
 
     private static string NormalizeQuery(string? query)

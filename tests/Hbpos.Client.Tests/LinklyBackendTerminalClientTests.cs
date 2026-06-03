@@ -303,6 +303,234 @@ public sealed class LinklyBackendTerminalClientTests
     }
 
     [Fact]
+    public async Task RefundAsync_recovers_missing_backend_rfn_from_original_session_notification()
+    {
+        var requests = new List<HttpRequestMessage>();
+        var handler = new StubHttpMessageHandler(request =>
+        {
+            requests.Add(CloneRequestWithBody(request));
+            return request.RequestUri!.AbsolutePath switch
+            {
+                "/api/v1/linkly/cloud-backend/transactions/original-session/status" => JsonResponse(
+                    """
+                    {
+                      "success": true,
+                      "data": {
+                        "environment": "Sandbox",
+                        "storeCode": "S01",
+                        "deviceCode": "TERM-1",
+                        "sessionId": "original-session",
+                        "status": "Completed",
+                        "txnRef": "260601120001",
+                        "responseCode": "00",
+                        "responseText": "APPROVED",
+                        "displayText": "APPROVED",
+                        "receiptText": "MERCHANT RECEIPT\nAPPROVED",
+                        "recoveryCount": 0,
+                        "receiptPrintedAt": null,
+                        "lastHttpStatus": 200,
+                        "notifications": [
+                          {
+                            "type": "transaction",
+                            "payloadJson": "{\"Response\":{\"Success\":true,\"ResponseCode\":\"00\",\"ResponseText\":\"APPROVED\",\"PurchaseAnalysisData\":{\"RFN\":\"RFN-ORIGINAL\"}}}",
+                            "receivedAt": "2026-06-01T02:00:01Z"
+                          }
+                        ]
+                      }
+                    }
+                    """),
+                "/api/v1/linkly/cloud-backend/transactions/active" => new HttpResponseMessage(HttpStatusCode.NotFound),
+                "/api/v1/linkly/cloud-backend/transactions" => JsonResponse(
+                    """
+                    {
+                      "success": true,
+                      "data": {
+                        "environment": "Sandbox",
+                        "storeCode": "S01",
+                        "deviceCode": "TERM-1",
+                        "sessionId": "refund-session",
+                        "status": "Completed",
+                        "txnRef": "260601120099",
+                        "responseCode": "00",
+                        "responseText": "APPROVED",
+                        "displayText": "APPROVED",
+                        "receiptText": "REFUND RECEIPT",
+                        "recoveryCount": 0,
+                        "receiptPrintedAt": null,
+                        "lastHttpStatus": 200,
+                        "notifications": []
+                      }
+                    }
+                    """),
+                _ => throw new InvalidOperationException($"Unexpected request: {request.RequestUri}")
+            };
+        });
+        var client = CreateClient(handler, new FakeLinklyTerminalDialogService());
+
+        var result = await client.RefundAsync(
+            2m,
+            CreateSession(),
+            CreateSettings(),
+            "ANZBACKEND:260601120001:session=original-session:environment=Sandbox");
+
+        Assert.True(result.Approved);
+        var createBody = await requests.Single(request => request.Method == HttpMethod.Post).Content!.ReadAsStringAsync();
+        Assert.Contains("RFN-ORIGINAL", createBody, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task RefundAsync_recovers_missing_backend_rfn_from_array_purchase_analysis_data()
+    {
+        var requests = new List<HttpRequestMessage>();
+        var handler = new StubHttpMessageHandler(request =>
+        {
+            requests.Add(CloneRequestWithBody(request));
+            return request.RequestUri!.AbsolutePath switch
+            {
+                "/api/v1/linkly/cloud-backend/transactions/original-session/status" => JsonResponse(
+                    """
+                    {
+                      "success": true,
+                      "data": {
+                        "environment": "Sandbox",
+                        "storeCode": "S01",
+                        "deviceCode": "TERM-1",
+                        "sessionId": "original-session",
+                        "status": "Completed",
+                        "txnRef": "260601120001",
+                        "responseCode": "00",
+                        "responseText": "APPROVED",
+                        "displayText": "APPROVED",
+                        "receiptText": "MERCHANT RECEIPT\nAPPROVED",
+                        "recoveryCount": 0,
+                        "receiptPrintedAt": null,
+                        "lastHttpStatus": 200,
+                        "notifications": [
+                          {
+                            "type": "transaction",
+                            "payloadJson": "{\"Response\":{\"Success\":true,\"ResponseCode\":\"00\",\"ResponseText\":\"APPROVED\",\"PurchaseAnalysisData\":[{\"Key\":\"AMT\",\"Value\":\"200\"},{\"Key\":\"RFN\",\"Value\":\"RFN-ARRAY\"}]}}",
+                            "receivedAt": "2026-06-01T02:00:01Z"
+                          }
+                        ]
+                      }
+                    }
+                    """),
+                "/api/v1/linkly/cloud-backend/transactions/active" => new HttpResponseMessage(HttpStatusCode.NotFound),
+                "/api/v1/linkly/cloud-backend/transactions" => JsonResponse(
+                    """
+                    {
+                      "success": true,
+                      "data": {
+                        "environment": "Sandbox",
+                        "storeCode": "S01",
+                        "deviceCode": "TERM-1",
+                        "sessionId": "refund-session",
+                        "status": "Completed",
+                        "txnRef": "260601120099",
+                        "responseCode": "00",
+                        "responseText": "APPROVED",
+                        "displayText": "APPROVED",
+                        "receiptText": "REFUND RECEIPT",
+                        "recoveryCount": 0,
+                        "receiptPrintedAt": null,
+                        "lastHttpStatus": 200,
+                        "notifications": []
+                      }
+                    }
+                    """),
+                _ => throw new InvalidOperationException($"Unexpected request: {request.RequestUri}")
+            };
+        });
+        var client = CreateClient(handler, new FakeLinklyTerminalDialogService());
+
+        var result = await client.RefundAsync(
+            2m,
+            CreateSession(),
+            CreateSettings(),
+            "ANZBACKEND:260601120001:session=original-session:environment=Sandbox");
+
+        Assert.True(result.Approved);
+        var createBody = await requests.Single(request => request.Method == HttpMethod.Post).Content!.ReadAsStringAsync();
+        Assert.Contains("RFN-ARRAY", createBody, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task RefundAsync_uses_original_backend_txn_ref_when_session_has_no_rfn()
+    {
+        var requests = new List<HttpRequestMessage>();
+        var handler = new StubHttpMessageHandler(request =>
+        {
+            requests.Add(CloneRequestWithBody(request));
+            return request.RequestUri!.AbsolutePath switch
+            {
+                "/api/v1/linkly/cloud-backend/transactions/original-session/status" => JsonResponse(
+                    """
+                    {
+                      "success": true,
+                      "data": {
+                        "environment": "Sandbox",
+                        "storeCode": "S01",
+                        "deviceCode": "TERM-1",
+                        "sessionId": "original-session",
+                        "status": "Completed",
+                        "txnRef": "260601120001",
+                        "responseCode": "00",
+                        "responseText": "APPROVED",
+                        "displayText": "APPROVED",
+                        "receiptText": "MERCHANT RECEIPT\nAPPROVED",
+                        "recoveryCount": 0,
+                        "receiptPrintedAt": null,
+                        "lastHttpStatus": 200,
+                        "notifications": [
+                          {
+                            "type": "transaction",
+                            "payloadJson": "{\"Response\":{\"Success\":true,\"ResponseCode\":\"00\",\"ResponseText\":\"APPROVED\",\"PurchaseAnalysisData\":{}}}",
+                            "receivedAt": "2026-06-01T02:00:01Z"
+                          }
+                        ]
+                      }
+                    }
+                    """),
+                "/api/v1/linkly/cloud-backend/transactions/active" => new HttpResponseMessage(HttpStatusCode.NotFound),
+                "/api/v1/linkly/cloud-backend/transactions" => JsonResponse(
+                    """
+                    {
+                      "success": true,
+                      "data": {
+                        "environment": "Sandbox",
+                        "storeCode": "S01",
+                        "deviceCode": "TERM-1",
+                        "sessionId": "refund-session",
+                        "status": "Completed",
+                        "txnRef": "260601120099",
+                        "responseCode": "00",
+                        "responseText": "APPROVED",
+                        "displayText": "APPROVED",
+                        "receiptText": "REFUND RECEIPT",
+                        "recoveryCount": 0,
+                        "receiptPrintedAt": null,
+                        "lastHttpStatus": 200,
+                        "notifications": []
+                      }
+                    }
+                    """),
+                _ => throw new InvalidOperationException($"Unexpected request: {request.RequestUri}")
+            };
+        });
+        var client = CreateClient(handler, new FakeLinklyTerminalDialogService());
+
+        var result = await client.RefundAsync(
+            2m,
+            CreateSession(),
+            CreateSettings(),
+            "ANZBACKEND:260601120001:session=original-session:environment=Sandbox");
+
+        Assert.True(result.Approved);
+        var createBody = await requests.Single(request => request.Method == HttpMethod.Post).Content!.ReadAsStringAsync();
+        Assert.Contains("260601120001", createBody, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public async Task PurchaseAsync_final_dialog_state_uses_response_text_instead_of_stale_display_prompt()
     {
         var handler = new StubHttpMessageHandler(request =>
@@ -883,8 +1111,194 @@ public sealed class LinklyBackendTerminalClientTests
 
         Assert.True(result.Approved);
         var pending = Assert.Single(dialog.States.Where(state => state.SessionId == "display-no-key-session" && state.Status == "Pending"));
-        Assert.Equal("TAP OK TO CONTINUE", pending.DisplayText);
+        Assert.Equal("Waiting for card terminal result...", pending.DisplayText);
         Assert.Empty(pending.DisplayButtons!);
+    }
+
+    [Theory]
+    [InlineData("SWIPE CARD", "cancelKeyFlag")]
+    [InlineData("PRESENT CARD", "cancelKeyFlag")]
+    [InlineData("TAP CARD", "okKeyFlag")]
+    [InlineData("INSERT CARD", "cancelKeyFlag")]
+    public async Task PurchaseAsync_card_terminal_wait_display_suppresses_sendkey_buttons(
+        string displayText,
+        string enabledFlag)
+    {
+        var handler = new StubHttpMessageHandler(request => request.RequestUri!.AbsolutePath switch
+        {
+            "/api/v1/linkly/cloud-backend/transactions/active" => new HttpResponseMessage(HttpStatusCode.NotFound),
+            "/api/v1/linkly/cloud-backend/transactions" => JsonResponse(
+                $$"""
+                {
+                  "success": true,
+                  "data": {
+                    "environment": "Sandbox",
+                    "storeCode": "S01",
+                    "deviceCode": "TERM-1",
+                    "sessionId": "card-wait-session",
+                    "status": "Pending",
+                    "txnRef": "260601120035",
+                    "displayText": "{{displayText}}",
+                    "receiptText": null,
+                    "recoveryCount": 0,
+                    "receiptPrintedAt": null,
+                    "lastHttpStatus": 202,
+                    "{{enabledFlag}}": true,
+                    "notifications": [
+                      {
+                        "type": "display",
+                        "payloadJson": "{ \"Response\": { \"DisplayText\": [\"{{displayText}}\"], \"{{enabledFlag}}\": \"1\" } }",
+                        "receivedAt": "2026-06-01T02:00:05Z"
+                      }
+                    ]
+                  }
+                }
+                """),
+            _ => JsonResponse(
+                """
+                {
+                  "success": true,
+                  "data": {
+                    "environment": "Sandbox",
+                    "storeCode": "S01",
+                    "deviceCode": "TERM-1",
+                    "sessionId": "card-wait-session",
+                    "status": "Completed",
+                    "txnRef": "260601120035",
+                    "responseCode": "00",
+                    "responseText": "APPROVED",
+                    "displayText": "APPROVED",
+                    "receiptText": "CARD WAIT RECEIPT",
+                    "recoveryCount": 0,
+                    "receiptPrintedAt": null,
+                    "lastHttpStatus": 200,
+                    "notifications": []
+                  }
+                }
+                """)
+        });
+        var dialog = new FakeLinklyTerminalDialogService();
+        var client = CreateClient(handler, dialog);
+
+        var result = await client.PurchaseAsync(10m, CreateSession(), CreateSettings());
+
+        Assert.True(result.Approved);
+        var pending = Assert.Single(dialog.States.Where(state => state.SessionId == "card-wait-session" && state.Status == "Pending"));
+        Assert.Equal(displayText, pending.DisplayText);
+        Assert.Empty(pending.DisplayButtons!);
+    }
+
+    [Fact]
+    public async Task PurchaseAsync_tap_ok_prompt_is_masked_without_sending_key_and_refreshes_status_immediately()
+    {
+        var requests = new List<HttpRequestMessage>();
+        var handler = new StubHttpMessageHandler(request =>
+        {
+            requests.Add(CloneRequestWithBody(request));
+            return requests.Count switch
+            {
+                1 => new HttpResponseMessage(HttpStatusCode.NotFound),
+                2 => JsonResponse(
+                    """
+                    {
+                      "success": true,
+                      "data": {
+                        "environment": "Sandbox",
+                        "storeCode": "S01",
+                        "deviceCode": "TERM-1",
+                        "sessionId": "tap-ok-session",
+                        "status": "Pending",
+                        "txnRef": "260601120036",
+                        "displayText": "TAP OK TO CONTINUE",
+                        "receiptText": null,
+                        "recoveryCount": 0,
+                        "receiptPrintedAt": null,
+                        "lastHttpStatus": 202,
+                        "okKeyFlag": true,
+                        "notifications": [
+                          {
+                            "type": "display",
+                            "payloadJson": "{ \"Response\": { \"DisplayText\": [\"TAP OK TO CONTINUE\"], \"OKKeyFlag\": \"1\" } }",
+                            "receivedAt": "2026-06-01T02:00:05Z"
+                          }
+                        ]
+                      }
+                    }
+                    """),
+                3 => JsonResponse(
+                    """
+                    {
+                      "success": true,
+                      "data": {
+                        "environment": "Sandbox",
+                        "storeCode": "S01",
+                        "deviceCode": "TERM-1",
+                        "sessionId": "tap-ok-session",
+                        "status": "Pending",
+                        "txnRef": "260601120036",
+                        "displayText": "SWIPE CARD",
+                        "receiptText": null,
+                        "recoveryCount": 0,
+                        "receiptPrintedAt": null,
+                        "lastHttpStatus": 202,
+                        "notifications": [
+                          {
+                            "type": "display",
+                            "payloadJson": "{ \"Response\": { \"DisplayText\": [\"SWIPE CARD\"], \"CancelKeyFlag\": \"1\" } }",
+                            "receivedAt": "2026-06-01T02:00:06Z"
+                          }
+                        ]
+                      }
+                    }
+                    """),
+                _ => JsonResponse(
+                    """
+                    {
+                      "success": true,
+                      "data": {
+                        "environment": "Sandbox",
+                        "storeCode": "S01",
+                        "deviceCode": "TERM-1",
+                        "sessionId": "tap-ok-session",
+                        "status": "Completed",
+                        "txnRef": "260601120036",
+                        "responseCode": "00",
+                        "responseText": "APPROVED",
+                        "displayText": "APPROVED",
+                        "receiptText": "AUTO OK RECEIPT",
+                        "recoveryCount": 0,
+                        "receiptPrintedAt": null,
+                        "lastHttpStatus": 200,
+                        "notifications": []
+                      }
+                    }
+                    """)
+            };
+        });
+        var dialog = new FakeLinklyTerminalDialogService();
+        var client = CreateClient(handler, dialog);
+
+        var result = await client.PurchaseAsync(10m, CreateSession(), CreateSettings());
+
+        Assert.True(result.Approved);
+        Assert.Collection(
+            requests,
+            active => Assert.Equal(HttpMethod.Get, active.Method),
+            start => Assert.Equal(HttpMethod.Post, start.Method),
+            firstStatus => Assert.Equal("https://api.example/api/v1/linkly/cloud-backend/transactions/tap-ok-session/status?environment=Sandbox", firstStatus.RequestUri!.AbsoluteUri),
+            finalStatus => Assert.Equal("https://api.example/api/v1/linkly/cloud-backend/transactions/tap-ok-session/status?environment=Sandbox", finalStatus.RequestUri!.AbsoluteUri));
+        Assert.DoesNotContain(requests, request => request.RequestUri!.AbsolutePath.EndsWith("/sendkey", StringComparison.OrdinalIgnoreCase));
+        Assert.DoesNotContain(dialog.States, state => state.DisplayText == "TAP OK TO CONTINUE");
+        Assert.Contains(dialog.States, state =>
+            state.SessionId == "tap-ok-session" &&
+            state.Status == "Pending" &&
+            state.DisplayText == "Waiting for card terminal result..." &&
+            state.DisplayButtons!.Count == 0);
+        Assert.Contains(dialog.States, state =>
+            state.SessionId == "tap-ok-session" &&
+            state.Status == "Pending" &&
+            state.DisplayText == "SWIPE CARD" &&
+            state.DisplayButtons!.Count == 0);
     }
 
     [Fact]
@@ -1147,7 +1561,7 @@ public sealed class LinklyBackendTerminalClientTests
     }
 
     [Fact]
-    public async Task PurchaseAsync_treats_202_retry_hint_as_short_status_poll()
+    public async Task PurchaseAsync_refreshes_202_pending_status_immediately()
     {
         var requests = new List<HttpRequestMessage>();
         var handler = new StubHttpMessageHandler(request =>
@@ -1215,7 +1629,7 @@ public sealed class LinklyBackendTerminalClientTests
         var result = await client.PurchaseAsync(10m, CreateSession(), CreateSettings());
 
         Assert.True(result.Approved);
-        Assert.Equal([TimeSpan.FromMilliseconds(100)], delays);
+        Assert.Empty(delays);
         Assert.Equal(
             "https://api.example/api/v1/linkly/cloud-backend/transactions/short-poll-session/status?environment=Sandbox",
             requests[2].RequestUri!.AbsoluteUri);

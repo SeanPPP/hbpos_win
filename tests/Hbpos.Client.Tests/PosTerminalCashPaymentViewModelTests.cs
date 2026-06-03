@@ -1892,14 +1892,17 @@ public sealed class PosTerminalCashPaymentViewModelTests
             new OrderReturnPaymentCapacityDto(PaymentMethodKind.Card, 7m, 0m, 7m, "SQ:card-2")
         ]);
         var cardTerminal = new ApprovedCardTerminalClient("CARD-REFUND");
+        var orders = new InMemoryOrderRepository();
         var viewModel = new PaymentViewModel(
             cart,
             new CashPaymentWorkflowService(
                 new CashCheckoutService(),
-                new InMemoryOrderRepository(),
+                orders,
                 new InMemorySyncQueueRepository(),
                 cardTerminalClient: cardTerminal),
             Session);
+        PaymentCompletedEventArgs? completed = null;
+        viewModel.PaymentCompleted += (_, args) => completed = args;
 
         viewModel.PrepareForEntry(Session);
 
@@ -1911,17 +1914,93 @@ public sealed class PosTerminalCashPaymentViewModelTests
         Assert.Equal("SQ:card-1", firstOriginal);
         Assert.Equal(["SQ:card-1"], cardTerminal.RefundOriginalReferences);
         Assert.True(viewModel.SelectCardCommand.CanExecute(null));
+        Assert.Null(completed);
+        Assert.Null(orders.LastOrder);
 
         await viewModel.SelectCardCommand.ExecuteAsync(null);
 
-        Assert.Equal(2, viewModel.PaymentTenders.Count);
-        var secondTender = viewModel.PaymentTenders[1];
-        Assert.Equal(-7m, secondTender.Amount);
-        Assert.True(CardRefundReference.TryGetOriginalReference(secondTender.Reference, out var secondOriginal));
-        Assert.Equal("SQ:card-2", secondOriginal);
+        Assert.Empty(viewModel.PaymentTenders);
+        Assert.NotNull(completed);
+        Assert.Same(orders.LastOrder, completed!.Order);
+        Assert.Empty(cart.Lines);
+        Assert.Equal(-12m, completed.Order.ActualAmount);
+        Assert.Equal([-5m, -7m], completed.Order.Payments.Select(payment => payment.Amount).ToArray());
+        Assert.All(completed.Order.Payments, payment => Assert.Equal(PaymentMethodKind.Card, payment.Method));
         Assert.Equal(["SQ:card-1", "SQ:card-2"], cardTerminal.RefundOriginalReferences);
         Assert.Equal(0m, viewModel.RemainingAmount);
         Assert.False(viewModel.SelectCardCommand.CanExecute(null));
+    }
+
+    [Fact]
+    public async Task Refund_mode_card_button_rebuilds_linkly_cloud_reference_from_original_rfn()
+    {
+        var cart = new PosCartService();
+        cart.AddReturnLine(new ReturnCartLineRequest(
+            "S001",
+            "SKU-REFUND-LINKLY",
+            null,
+            "Refund Linkly Tea",
+            "930142L",
+            "ITEM-REFUND-LINKLY",
+            null,
+            1m,
+            8m,
+            PriceSourceKind.StoreRetailPrice,
+            PriceSourceKind.StoreRetailPrice.ToString(),
+            "RETURN-VM-LINKLY",
+            Guid.NewGuid(),
+            Guid.NewGuid()));
+        cart.AddReturnPaymentCapacities(
+        [
+            new OrderReturnPaymentCapacityDto(
+                PaymentMethodKind.Card,
+                8m,
+                0m,
+                8m,
+                "ANZCLOUD:TXN-CLOUD-1",
+                [
+                    new CardTransactionDto(
+                        "ANZ",
+                        "TXN-CLOUD-1",
+                        "123456",
+                        "VISA",
+                        4,
+                        "****1234",
+                        "MID",
+                        "00",
+                        "APPROVED",
+                        "42",
+                        null,
+                        8m,
+                        null,
+                        RefundReference: "RFN-ORIGINAL")
+                ])
+        ]);
+        var cardTerminal = new ApprovedCardTerminalClient("CARD-REFUND");
+        var orders = new InMemoryOrderRepository();
+        var viewModel = new PaymentViewModel(
+            cart,
+            new CashPaymentWorkflowService(
+                new CashCheckoutService(),
+                orders,
+                new InMemorySyncQueueRepository(),
+                cardTerminalClient: cardTerminal),
+            Session);
+        PaymentCompletedEventArgs? completed = null;
+        viewModel.PaymentCompleted += (_, args) => completed = args;
+
+        viewModel.PrepareForEntry(Session);
+
+        await viewModel.SelectCardCommand.ExecuteAsync(null);
+
+        Assert.Empty(viewModel.PaymentTenders);
+        Assert.NotNull(completed);
+        var payment = Assert.Single(completed!.Order.Payments);
+        Assert.Equal(-8m, payment.Amount);
+        Assert.True(CardRefundReference.TryGetOriginalReference(payment.Reference, out var originalReference));
+        Assert.Equal("ANZCLOUD:TXN-CLOUD-1:RFN-ORIGINAL", originalReference);
+        Assert.Equal(["ANZCLOUD:TXN-CLOUD-1:RFN-ORIGINAL"], cardTerminal.RefundOriginalReferences);
+        Assert.Same(orders.LastOrder, completed.Order);
     }
 
     [Fact]
@@ -1966,14 +2045,17 @@ public sealed class PosTerminalCashPaymentViewModelTests
             new OrderReturnPaymentCapacityDto(PaymentMethodKind.Card, 90m, 0m, 90m, "SQ:card-b", OriginalOrderGuid: originalOrderB)
         ]);
         var cardTerminal = new ApprovedCardTerminalClient("CARD-REFUND");
+        var orders = new InMemoryOrderRepository();
         var viewModel = new PaymentViewModel(
             cart,
             new CashPaymentWorkflowService(
                 new CashCheckoutService(),
-                new InMemoryOrderRepository(),
+                orders,
                 new InMemorySyncQueueRepository(),
                 cardTerminalClient: cardTerminal),
             Session);
+        PaymentCompletedEventArgs? completed = null;
+        viewModel.PaymentCompleted += (_, args) => completed = args;
 
         viewModel.PrepareForEntry(Session);
 
@@ -1983,13 +2065,15 @@ public sealed class PosTerminalCashPaymentViewModelTests
         Assert.Equal(-10m, firstTender.Amount);
         Assert.True(CardRefundReference.TryGetOriginalReference(firstTender.Reference, out var firstOriginal));
         Assert.Equal("SQ:card-a", firstOriginal);
+        Assert.Null(completed);
 
         await viewModel.SelectCardCommand.ExecuteAsync(null);
 
-        Assert.Equal(2, viewModel.PaymentTenders.Count);
-        var secondTender = viewModel.PaymentTenders[1];
-        Assert.Equal(-90m, secondTender.Amount);
-        Assert.True(CardRefundReference.TryGetOriginalReference(secondTender.Reference, out var secondOriginal));
+        Assert.Empty(viewModel.PaymentTenders);
+        Assert.NotNull(completed);
+        Assert.Same(orders.LastOrder, completed!.Order);
+        Assert.Equal([-10m, -90m], completed.Order.Payments.Select(payment => payment.Amount).ToArray());
+        Assert.True(CardRefundReference.TryGetOriginalReference(completed.Order.Payments[1].Reference, out var secondOriginal));
         Assert.Equal("SQ:card-b", secondOriginal);
         Assert.Equal(["SQ:card-a", "SQ:card-b"], cardTerminal.RefundOriginalReferences);
     }
