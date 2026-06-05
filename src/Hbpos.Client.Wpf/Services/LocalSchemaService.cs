@@ -26,6 +26,7 @@ public sealed class LocalSchemaService(LocalSqliteStore store) : ILocalSchemaSer
         await EnsureLocalPaymentColumnsAsync(connection, cancellationToken);
         await EnsureLocalCardTransactionColumnsAsync(connection, cancellationToken);
         await EnsureLocalCardPaymentAttemptColumnsAsync(connection, cancellationToken);
+        await EnsureLocalSquarePaymentAttemptColumnsAsync(connection, cancellationToken);
         await EnsureLocalInstallmentColumnsAsync(connection, cancellationToken);
         await EnsureSuspendedOrderLineColumnsAsync(connection, cancellationToken);
         await EnsureSuspendedOrderReturnPaymentCapacityColumnsAsync(connection, cancellationToken);
@@ -271,6 +272,53 @@ public sealed class LocalSchemaService(LocalSqliteStore store) : ILocalSchemaSer
         }
     }
 
+    private static async Task EnsureLocalSquarePaymentAttemptColumnsAsync(
+        SqliteConnection connection,
+        CancellationToken cancellationToken)
+    {
+        var columns = await ReadColumnNamesAsync(connection, "LocalSquarePaymentAttempts", cancellationToken);
+        if (columns.Count == 0)
+        {
+            return;
+        }
+
+        var expectedColumns = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+        {
+            ["CheckoutId"] = "TEXT NULL",
+            ["IdempotencyKey"] = "TEXT NOT NULL DEFAULT ''",
+            ["DeviceId"] = "TEXT NOT NULL DEFAULT ''",
+            ["LocationId"] = "TEXT NOT NULL DEFAULT ''",
+            ["Environment"] = "TEXT NOT NULL DEFAULT ''",
+            ["Amount"] = "TEXT NOT NULL DEFAULT '0'",
+            ["AmountCents"] = "INTEGER NOT NULL DEFAULT 0",
+            ["Currency"] = "TEXT NOT NULL DEFAULT 'AUD'",
+            ["Status"] = "TEXT NOT NULL DEFAULT 'Pending'",
+            ["CheckoutStatus"] = "TEXT NULL",
+            ["CancelReason"] = "TEXT NULL",
+            ["OrderDraftJson"] = "TEXT NOT NULL DEFAULT ''",
+            ["StoreCode"] = "TEXT NOT NULL DEFAULT ''",
+            ["DeviceCode"] = "TEXT NOT NULL DEFAULT ''",
+            ["CashierId"] = "TEXT NOT NULL DEFAULT ''",
+            ["PaymentId"] = "TEXT NULL",
+            ["PaymentStatus"] = "TEXT NULL",
+            ["ResponseCode"] = "TEXT NULL",
+            ["ResponseText"] = "TEXT NULL",
+            ["CreatedAt"] = "TEXT NOT NULL DEFAULT ''",
+            ["UpdatedAt"] = "TEXT NOT NULL DEFAULT ''",
+            ["CompletedAt"] = "TEXT NULL",
+            ["OrderCompletedAt"] = "TEXT NULL",
+            ["ResolvedAt"] = "TEXT NULL"
+        };
+
+        foreach (var (columnName, definition) in expectedColumns)
+        {
+            if (!columns.Contains(columnName))
+            {
+                await ExecuteAsync(connection, $"ALTER TABLE LocalSquarePaymentAttempts ADD COLUMN {columnName} {definition};", cancellationToken);
+            }
+        }
+    }
+
     private static async Task EnsureSuspendedOrderReturnPaymentCapacityColumnsAsync(
         SqliteConnection connection,
         CancellationToken cancellationToken)
@@ -446,6 +494,35 @@ public sealed class LocalSchemaService(LocalSqliteStore store) : ILocalSchemaSer
             UpdatedAt TEXT NOT NULL,
             CompletedAt TEXT NULL,
             AcknowledgedAt TEXT NULL
+        );
+        """,
+        """
+        CREATE TABLE IF NOT EXISTS LocalSquarePaymentAttempts (
+            AttemptGuid TEXT PRIMARY KEY,
+            CheckoutId TEXT NULL,
+            IdempotencyKey TEXT NOT NULL,
+            DeviceId TEXT NOT NULL,
+            LocationId TEXT NOT NULL,
+            Environment TEXT NOT NULL,
+            Amount TEXT NOT NULL,
+            AmountCents INTEGER NOT NULL,
+            Currency TEXT NOT NULL,
+            Status TEXT NOT NULL,
+            CheckoutStatus TEXT NULL,
+            CancelReason TEXT NULL,
+            OrderDraftJson TEXT NOT NULL,
+            StoreCode TEXT NOT NULL,
+            DeviceCode TEXT NOT NULL,
+            CashierId TEXT NOT NULL,
+            PaymentId TEXT NULL,
+            PaymentStatus TEXT NULL,
+            ResponseCode TEXT NULL,
+            ResponseText TEXT NULL,
+            CreatedAt TEXT NOT NULL,
+            UpdatedAt TEXT NOT NULL,
+            CompletedAt TEXT NULL,
+            OrderCompletedAt TEXT NULL,
+            ResolvedAt TEXT NULL
         );
         """,
         """
@@ -636,6 +713,14 @@ public sealed class LocalSchemaService(LocalSqliteStore store) : ILocalSchemaSer
         """
         CREATE INDEX IF NOT EXISTS IX_LocalCardPaymentAttempts_RecoverLatest
         ON LocalCardPaymentAttempts (StoreCode, DeviceCode, CashierId, Environment, Status, UpdatedAt DESC, CreatedAt DESC);
+        """,
+        """
+        CREATE INDEX IF NOT EXISTS IX_LocalSquarePaymentAttempts_RecoverLatest
+        ON LocalSquarePaymentAttempts (StoreCode, DeviceCode, CashierId, Environment, Status, UpdatedAt DESC, CreatedAt DESC);
+        """,
+        """
+        CREATE INDEX IF NOT EXISTS IX_LocalSquarePaymentAttempts_CheckoutId
+        ON LocalSquarePaymentAttempts (CheckoutId);
         """,
         """
         CREATE INDEX IF NOT EXISTS IX_LocalOrders_Store_Device_SoldAt

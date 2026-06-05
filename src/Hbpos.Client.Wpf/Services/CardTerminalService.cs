@@ -439,6 +439,8 @@ public sealed class ConfiguredCardTerminalClient : ICardTerminalClient
     private readonly ILinklyTerminalClient? _linklyTerminalClient;
     private readonly ISquareAccessTokenProvider? _squareAccessTokenProvider;
     private readonly ILocalizationService? _localization;
+    private readonly ISquarePaymentAttemptContextAccessor? _squarePaymentAttemptContextAccessor;
+    private readonly ILocalSquarePaymentAttemptRepository? _squarePaymentAttemptRepository;
     private readonly ConcurrentDictionary<SquareRefundAttemptKey, string> _squareRefundIdempotencyKeys = new();
 
     public ConfiguredCardTerminalClient(
@@ -446,13 +448,17 @@ public sealed class ConfiguredCardTerminalClient : ICardTerminalClient
         HttpClient httpClient,
         ILinklyTerminalClient? linklyTerminalClient = null,
         ISquareAccessTokenProvider? squareAccessTokenProvider = null,
-        ILocalizationService? localization = null)
+        ILocalizationService? localization = null,
+        ISquarePaymentAttemptContextAccessor? squarePaymentAttemptContextAccessor = null,
+        ILocalSquarePaymentAttemptRepository? squarePaymentAttemptRepository = null)
     {
         _settingsProvider = settingsProvider;
         _httpClient = httpClient;
         _linklyTerminalClient = linklyTerminalClient;
         _squareAccessTokenProvider = squareAccessTokenProvider;
         _localization = localization;
+        _squarePaymentAttemptContextAccessor = squarePaymentAttemptContextAccessor;
+        _squarePaymentAttemptRepository = squarePaymentAttemptRepository;
     }
 
     public async Task<PaymentAuthorizationResult> AuthorizeAsync(
@@ -526,15 +532,18 @@ public sealed class ConfiguredCardTerminalClient : ICardTerminalClient
         var pollCount = 0;
         string? lastLoggedStatus = null;
         var reference = Limit($"{session.DeviceCode}-{DateTimeOffset.UtcNow:yyyyMMddHHmmssfff}", 40);
+        const string squareCurrency = "AUD";
+        var requestedMinorAmount = ToMinorUnits(amount);
+        var squareAttempt = _squarePaymentAttemptContextAccessor?.Current;
         var createRequest = new
         {
-            idempotency_key = Guid.NewGuid().ToString("N"),
+            idempotency_key = squareAttempt?.IdempotencyKey ?? Guid.NewGuid().ToString("N"),
             checkout = new
             {
                 amount_money = new
                 {
-                    amount = ToMinorUnits(amount),
-                    currency = "AUD"
+                    amount = requestedMinorAmount,
+                    currency = squareCurrency
                 },
                 device_options = new
                 {
@@ -580,6 +589,16 @@ public sealed class ConfiguredCardTerminalClient : ICardTerminalClient
                 }
             }
 
+            if (squareAttempt is not null && _squarePaymentAttemptRepository is not null)
+            {
+                await _squarePaymentAttemptRepository.MarkCheckoutCreatedAsync(
+                    squareAttempt.AttemptGuid,
+                    checkoutId,
+                    lastLoggedStatus,
+                    DateTimeOffset.UtcNow,
+                    timeoutCts.Token);
+            }
+
             LogSquare($"checkout create succeeded checkoutId={checkoutId} status={LogValue(lastLoggedStatus)}");
 
             while (true)
@@ -614,15 +633,111 @@ public sealed class ConfiguredCardTerminalClient : ICardTerminalClient
 
                 if (string.Equals(status, "COMPLETED", StringComparison.OrdinalIgnoreCase))
                 {
-                    var authorizedAmount = ReadAmount(currentCheckout) ?? amount;
-                    if (authorizedAmount != amount)
+                    var paymentId = ReadFirstPaymentId(currentCheckout);
+                    if (string.IsNullOrWhiteSpace(paymentId))
                     {
-                        LogSquare($"checkout amount mismatch checkoutId={checkoutId} requested={amount:0.00} authorized={authorizedAmount:0.00}");
-                        return new PaymentAuthorizationResult(false, null, T("payment.card.squareAmountMismatch", "Square authorized amount did not match the requested amount."));
+                        LogSquare($"checkout completed without payment id checkoutId={checkoutId}");
+                        await MarkSquareAttemptFailureAsync(
+                            squareAttempt,
+                            LocalSquarePaymentAttemptStatus.Unknown,
+                            status,
+                            paymentStatus: null,
+                            responseCode: null,
+                            responseText: "Square checkout did not return a payment id.",
+                            timeoutCts.Token);
+                        return new PaymentAuthorizationResult(false, null, T("payment.card.squareMissingPaymentId", "Square checkout did not return a payment id."));
                     }
 
-                    var paymentId = ReadFirstPaymentId(currentCheckout) ?? checkoutId;
+                    // Square checkout 完成只代表终端流程结束；必须二次读取 Payment 后才能确认真实收款结果。
+                    var paymentResult = await SendSquareWithTokenRefreshAsync(
+                        currentSettings,
+                        HttpMethod.Get,
+                        $"payments/{Uri.EscapeDataString(paymentId)}",
+                        body: null,
+                        allowRefresh: !hasRefreshedToken,
+                        cancellationToken: timeoutCts.Token);
+                    currentSettings = paymentResult.Settings;
+                    hasRefreshedToken = hasRefreshedToken || paymentResult.Refreshed;
+                    using var paymentResponse = paymentResult.Response;
+                    var paymentBody = await paymentResponse.Content.ReadAsStringAsync(timeoutCts.Token);
+                    if (!paymentResponse.IsSuccessStatusCode)
+                    {
+                        LogSquare($"payment lookup failed checkoutId={checkoutId} paymentId={paymentId} http={(int)paymentResponse.StatusCode} detail={LogValue(ReadSquareErrorMessage(paymentBody))}");
+                        await MarkSquareAttemptFailureAsync(
+                            squareAttempt,
+                            LocalSquarePaymentAttemptStatus.Unknown,
+                            status,
+                            paymentStatus: null,
+                            responseCode: ((int)paymentResponse.StatusCode).ToString(CultureInfo.InvariantCulture),
+                            responseText: ReadSquareErrorMessage(paymentBody),
+                            timeoutCts.Token);
+                        return FailSquareRequest("payment", paymentResponse.StatusCode, paymentBody);
+                    }
+
+                    using var paymentDocument = JsonDocument.Parse(paymentBody);
+                    var payment = ReadRequiredPayment(paymentDocument.RootElement);
+                    var paymentStatus = ReadRequiredString(payment, "status");
+                    if (!TryReadMoney(payment, "amount_money", out var paymentMinorAmount, out var paymentCurrency))
+                    {
+                        LogSquare($"payment missing amount checkoutId={checkoutId} paymentId={paymentId}");
+                        await MarkSquareAttemptFailureAsync(
+                            squareAttempt,
+                            LocalSquarePaymentAttemptStatus.Unknown,
+                            status,
+                            paymentStatus,
+                            responseCode: null,
+                            responseText: "Square payment is missing amount_money.",
+                            timeoutCts.Token);
+                        return new PaymentAuthorizationResult(false, null, T("payment.card.squareInvalidResponse", "Square terminal returned an invalid response."));
+                    }
+
+                    var verification = SquarePaymentVerifier.Verify(
+                        paymentStatus,
+                        paymentMinorAmount,
+                        paymentCurrency!,
+                        requestedMinorAmount,
+                        squareCurrency);
+                    if (!verification.Verified)
+                    {
+                        LogSquare($"payment verification failed checkoutId={checkoutId} paymentId={paymentId} reason={verification.Failure} status={paymentStatus} requestedMinor={requestedMinorAmount} paymentMinor={paymentMinorAmount} requestedCurrency={squareCurrency} paymentCurrency={LogValue(paymentCurrency)}");
+                        await MarkSquareAttemptFailureAsync(
+                            squareAttempt,
+                            MapSquarePaymentFailureStatus(paymentStatus, verification.Failure),
+                            status,
+                            paymentStatus,
+                            responseCode: null,
+                            responseText: verification.Message,
+                            timeoutCts.Token);
+                        return verification.Failure switch
+                        {
+                            SquarePaymentVerificationFailure.Status => new PaymentAuthorizationResult(
+                                false,
+                                null,
+                                string.Format(
+                                    _localization?.CurrentCulture ?? CultureInfo.CurrentCulture,
+                                    T("payment.card.squarePaymentStatus", "Square payment status is {0}."),
+                                    paymentStatus)),
+                            SquarePaymentVerificationFailure.Amount => new PaymentAuthorizationResult(false, null, T("payment.card.squarePaymentAmountMismatch", "Square payment amount did not match the requested amount.")),
+                            SquarePaymentVerificationFailure.Currency => new PaymentAuthorizationResult(false, null, T("payment.card.squarePaymentCurrencyMismatch", "Square payment currency did not match the requested currency.")),
+                            _ => new PaymentAuthorizationResult(false, null, T("payment.card.squareInvalidResponse", "Square terminal returned an invalid response."))
+                        };
+                    }
+
+                    var authorizedAmount = paymentMinorAmount / 100m;
+                    if (squareAttempt is not null && _squarePaymentAttemptRepository is not null)
+                    {
+                        await _squarePaymentAttemptRepository.MarkPaymentVerifiedAsync(
+                            squareAttempt.AttemptGuid,
+                            paymentId,
+                            paymentStatus,
+                            responseCode: null,
+                            responseText: "Payment verified.",
+                            DateTimeOffset.UtcNow,
+                            timeoutCts.Token);
+                    }
+
                     LogSquare($"checkout completed checkoutId={checkoutId} paymentId={paymentId} amount={authorizedAmount:0.00}");
+                    LogSquare($"payment verified checkoutId={checkoutId} paymentId={paymentId} status={paymentStatus} amount={authorizedAmount:0.00} currency={paymentCurrency}");
                     return new PaymentAuthorizationResult(
                         true,
                         $"SQ:{paymentId}",
@@ -638,7 +753,7 @@ public sealed class ConfiguredCardTerminalClient : ICardTerminalClient
                                 null,
                                 null,
                                 null,
-                                status,
+                                paymentStatus,
                                 null,
                                 DateTimeOffset.UtcNow,
                                 authorizedAmount,
@@ -649,12 +764,28 @@ public sealed class ConfiguredCardTerminalClient : ICardTerminalClient
                 if (string.Equals(status, "CANCELED", StringComparison.OrdinalIgnoreCase))
                 {
                     LogSquare($"checkout canceled checkoutId={checkoutId} poll={pollCount}");
+                    await MarkSquareAttemptFailureAsync(
+                        squareAttempt,
+                        LocalSquarePaymentAttemptStatus.Canceled,
+                        status,
+                        paymentStatus: null,
+                        responseCode: null,
+                        responseText: "Square checkout was canceled.",
+                        timeoutCts.Token);
                     return new PaymentAuthorizationResult(false, null, T("payment.card.squareCanceled", "Square checkout was canceled."));
                 }
 
                 if (!IsSquarePendingStatus(status))
                 {
                     LogSquare($"checkout entered unexpected status checkoutId={checkoutId} poll={pollCount} status={status}");
+                    await MarkSquareAttemptFailureAsync(
+                        squareAttempt,
+                        LocalSquarePaymentAttemptStatus.Unknown,
+                        status,
+                        paymentStatus: null,
+                        responseCode: null,
+                        responseText: $"Square checkout entered unexpected status '{status}'.",
+                        timeoutCts.Token);
                     return new PaymentAuthorizationResult(
                         false,
                         null,
@@ -680,13 +811,70 @@ public sealed class ConfiguredCardTerminalClient : ICardTerminalClient
         catch (HttpRequestException ex)
         {
             LogSquare($"authorize network failure checkoutId={LogValue(checkoutId)} message={LogValue(ex.Message)}");
+            await MarkSquareAttemptFailureAsync(
+                squareAttempt,
+                LocalSquarePaymentAttemptStatus.Unknown,
+                checkoutStatus: null,
+                paymentStatus: null,
+                responseCode: null,
+                responseText: ex.Message,
+                CancellationToken.None);
             return new PaymentAuthorizationResult(false, null, T("payment.card.squareCommunicationFailed", "Square terminal communication failed."));
         }
         catch (JsonException ex)
         {
             LogSquare($"authorize invalid response checkoutId={LogValue(checkoutId)} message={LogValue(ex.Message)}");
+            await MarkSquareAttemptFailureAsync(
+                squareAttempt,
+                LocalSquarePaymentAttemptStatus.Unknown,
+                checkoutStatus: null,
+                paymentStatus: null,
+                responseCode: null,
+                responseText: ex.Message,
+                CancellationToken.None);
             return new PaymentAuthorizationResult(false, null, T("payment.card.squareInvalidResponse", "Square terminal returned an invalid response."));
         }
+    }
+
+    private async Task MarkSquareAttemptFailureAsync(
+        SquarePaymentAttemptContext? squareAttempt,
+        LocalSquarePaymentAttemptStatus status,
+        string? checkoutStatus,
+        string? paymentStatus,
+        string? responseCode,
+        string? responseText,
+        CancellationToken cancellationToken)
+    {
+        if (squareAttempt is null || _squarePaymentAttemptRepository is null)
+        {
+            return;
+        }
+
+        await _squarePaymentAttemptRepository.MarkFailedAsync(
+            squareAttempt.AttemptGuid,
+            status,
+            checkoutStatus,
+            paymentStatus,
+            responseCode,
+            responseText,
+            DateTimeOffset.UtcNow,
+            cancellationToken);
+    }
+
+    private static LocalSquarePaymentAttemptStatus MapSquarePaymentFailureStatus(
+        string paymentStatus,
+        SquarePaymentVerificationFailure failure)
+    {
+        if (failure != SquarePaymentVerificationFailure.Status)
+        {
+            return LocalSquarePaymentAttemptStatus.Unknown;
+        }
+
+        return string.Equals(paymentStatus, "CANCELED", StringComparison.OrdinalIgnoreCase)
+            ? LocalSquarePaymentAttemptStatus.Canceled
+            : string.Equals(paymentStatus, "FAILED", StringComparison.OrdinalIgnoreCase)
+                ? LocalSquarePaymentAttemptStatus.Failed
+                : LocalSquarePaymentAttemptStatus.Unknown;
     }
 
     private async Task<PaymentAuthorizationResult> RefundSquareAsync(
@@ -1030,18 +1218,37 @@ public sealed class ConfiguredCardTerminalClient : ICardTerminalClient
         return checkoutElement;
     }
 
+    private static JsonElement ReadRequiredPayment(JsonElement root)
+    {
+        if (!root.TryGetProperty("payment", out var paymentElement) || paymentElement.ValueKind != JsonValueKind.Object)
+        {
+            throw new JsonException("Square response is missing required object 'payment'.");
+        }
+
+        return paymentElement;
+    }
+
     private static long ToMinorUnits(decimal amount)
     {
         return decimal.ToInt64(decimal.Round(amount * 100m, 0, MidpointRounding.AwayFromZero));
     }
 
-    private static decimal? ReadAmount(JsonElement checkout)
+    private static bool TryReadMoney(JsonElement element, string propertyName, out long minorUnits, out string? currency)
     {
-        return checkout.TryGetProperty("amount_money", out var money) &&
-            money.TryGetProperty("amount", out var amount) &&
-            amount.TryGetInt64(out var minorUnits)
-                ? minorUnits / 100m
-                : null;
+        minorUnits = 0;
+        currency = null;
+        if (!element.TryGetProperty(propertyName, out var money) || money.ValueKind != JsonValueKind.Object)
+        {
+            return false;
+        }
+
+        if (!money.TryGetProperty("amount", out var amount) || !amount.TryGetInt64(out minorUnits))
+        {
+            return false;
+        }
+
+        currency = ReadOptionalString(money, "currency");
+        return !string.IsNullOrWhiteSpace(currency);
     }
 
     private static string? ReadFirstPaymentId(JsonElement checkout)

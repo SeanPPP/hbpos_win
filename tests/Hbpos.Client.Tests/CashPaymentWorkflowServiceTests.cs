@@ -140,6 +140,62 @@ public sealed class CashPaymentWorkflowServiceTests
     }
 
     [Fact]
+    public async Task Square_card_tender_creates_dedicated_attempt_and_marks_order_completed_after_save()
+    {
+        var cart = new PosCartService();
+        cart.AddItem(CreateItem("SKU-398", "Square Recoverable Tea", "930398", 10m));
+        var orders = new RecordingOrderRepository();
+        var squareAttempts = new RecordingSquarePaymentAttemptRepository();
+        var squareContext = new SquarePaymentAttemptContextAccessor();
+        var terminal = new ObservingCardTerminalClient(() =>
+        {
+            var attempt = Assert.Single(squareAttempts.Attempts);
+            Assert.Equal(LocalSquarePaymentAttemptStatus.Pending, attempt.Status);
+            Assert.Contains("\"cardAmount\":10", attempt.OrderDraftJson, StringComparison.OrdinalIgnoreCase);
+            Assert.Equal(attempt.AttemptGuid, squareContext.Current?.AttemptGuid);
+            Assert.Equal(attempt.IdempotencyKey, squareContext.Current?.IdempotencyKey);
+        }, new PaymentAuthorizationResult(
+            true,
+            "SQ:payment-1",
+            "Square",
+            10m,
+            [new CardTransactionDto("Square", "payment-1", null, null, null, null, null, null, "COMPLETED", null, DateTimeOffset.UtcNow, 10m, null)]));
+        var workflow = new CashPaymentWorkflowService(
+            new CashCheckoutService(),
+            orders,
+            new StubSyncQueueRepository(pendingCount: 1),
+            cardTerminalClient: terminal,
+            cardTerminalSettingsProvider: new StaticCardTerminalSettingsProvider(CreateSquareSettings()),
+            squarePaymentAttemptRepository: squareAttempts,
+            squarePaymentAttemptContextAccessor: squareContext);
+        var session = new PosSessionState("HB POS", "S001", "Main Store", "POS-01", "C001", "Alice", true, 0);
+
+        var tenderResult = await workflow.AddTenderAsync(
+            PaymentMethodKind.Card,
+            session,
+            10m,
+            [],
+            "10.00",
+            cancellationToken: CancellationToken.None,
+            cartSnapshot: cart.CreateSnapshot());
+        var completion = await workflow.CompletePaymentAsync(
+            cart,
+            session,
+            [tenderResult.Tender!],
+            cashTenderedAmount: 0m);
+
+        Assert.True(tenderResult.Succeeded);
+        var savedAttempt = Assert.Single(squareAttempts.Attempts);
+        Assert.Equal(LocalSquarePaymentAttemptStatus.OrderCompleted, savedAttempt.Status);
+        Assert.Equal("SQUARE_ATTEMPT:", tenderResult.Tender!.IdempotencyKey![..15]);
+        var draft = JsonSerializer.Deserialize<CardPaymentOrderDraft>(
+            savedAttempt.OrderDraftJson,
+            new JsonSerializerOptions(JsonSerializerDefaults.Web));
+        Assert.Equal(draft!.OrderGuid, completion.Order.OrderGuid);
+        Assert.Equal("SQ:payment-1", completion.Order.Payments.Single().Reference);
+    }
+
+    [Fact]
     public async Task Cash_payment_workflow_keeps_local_payment_total_aligned_when_cash_rounds_down()
     {
         var cart = new PosCartService();
@@ -761,6 +817,20 @@ public sealed class CashPaymentWorkflowServiceTests
             LinklyConnectionMode.CloudBackendAsync);
     }
 
+    private static CardTerminalSettings CreateSquareSettings()
+    {
+        return new CardTerminalSettings(
+            CardProcessorKind.Square,
+            CardTerminalEnvironment.Production,
+            "127.0.0.1",
+            2011,
+            "square-token",
+            "LOC-1",
+            "DEV-1",
+            CardTerminalSettings.GetSquareApiBaseUrl(CardTerminalEnvironment.Production),
+            TimeSpan.FromSeconds(90));
+    }
+
     private sealed class RecordingOrderRepository : ILocalOrderRepository
     {
         public List<LocalOrder> SavedOrders { get; } = [];
@@ -1006,7 +1076,143 @@ public sealed class CashPaymentWorkflowServiceTests
         }
     }
 
-    private sealed class ObservingCardTerminalClient(Action beforeResult) : ICardTerminalClient
+    private sealed class RecordingSquarePaymentAttemptRepository : ILocalSquarePaymentAttemptRepository
+    {
+        public List<LocalSquarePaymentAttempt> Attempts { get; } = [];
+
+        public Task CreateAsync(LocalSquarePaymentAttempt attempt, CancellationToken cancellationToken = default)
+        {
+            Attempts.Add(attempt);
+            return Task.CompletedTask;
+        }
+
+        public Task MarkCheckoutCreatedAsync(
+            Guid attemptGuid,
+            string checkoutId,
+            string? checkoutStatus,
+            DateTimeOffset updatedAt,
+            CancellationToken cancellationToken = default)
+        {
+            Update(attemptGuid, attempt => attempt with
+            {
+                CheckoutId = checkoutId,
+                CheckoutStatus = checkoutStatus,
+                Status = LocalSquarePaymentAttemptStatus.CheckoutCreated,
+                UpdatedAt = updatedAt
+            });
+            return Task.CompletedTask;
+        }
+
+        public Task MarkRecoveringAsync(Guid attemptGuid, DateTimeOffset updatedAt, CancellationToken cancellationToken = default)
+        {
+            Update(attemptGuid, attempt => attempt with
+            {
+                Status = LocalSquarePaymentAttemptStatus.Recovering,
+                UpdatedAt = updatedAt
+            });
+            return Task.CompletedTask;
+        }
+
+        public Task UpdateCheckoutStatusAsync(
+            Guid attemptGuid,
+            LocalSquarePaymentAttemptStatus status,
+            string? checkoutStatus,
+            string? cancelReason,
+            DateTimeOffset updatedAt,
+            CancellationToken cancellationToken = default)
+        {
+            Update(attemptGuid, attempt => attempt with
+            {
+                Status = status,
+                CheckoutStatus = checkoutStatus ?? attempt.CheckoutStatus,
+                CancelReason = cancelReason ?? attempt.CancelReason,
+                UpdatedAt = updatedAt
+            });
+            return Task.CompletedTask;
+        }
+
+        public Task MarkPaymentVerifiedAsync(
+            Guid attemptGuid,
+            string paymentId,
+            string paymentStatus,
+            string? responseCode,
+            string? responseText,
+            DateTimeOffset completedAt,
+            CancellationToken cancellationToken = default)
+        {
+            Update(attemptGuid, attempt => attempt with
+            {
+                Status = LocalSquarePaymentAttemptStatus.PaymentVerified,
+                PaymentId = paymentId,
+                PaymentStatus = paymentStatus,
+                ResponseCode = responseCode,
+                ResponseText = responseText,
+                CompletedAt = completedAt,
+                UpdatedAt = completedAt
+            });
+            return Task.CompletedTask;
+        }
+
+        public Task MarkFailedAsync(
+            Guid attemptGuid,
+            LocalSquarePaymentAttemptStatus status,
+            string? checkoutStatus,
+            string? paymentStatus,
+            string? responseCode,
+            string? responseText,
+            DateTimeOffset resolvedAt,
+            CancellationToken cancellationToken = default)
+        {
+            Update(attemptGuid, attempt => attempt with
+            {
+                Status = status,
+                CheckoutStatus = checkoutStatus ?? attempt.CheckoutStatus,
+                PaymentStatus = paymentStatus ?? attempt.PaymentStatus,
+                ResponseCode = responseCode,
+                ResponseText = responseText,
+                ResolvedAt = resolvedAt,
+                UpdatedAt = resolvedAt
+            });
+            return Task.CompletedTask;
+        }
+
+        public Task MarkOrderCompletedAsync(Guid attemptGuid, DateTimeOffset completedAt, CancellationToken cancellationToken = default)
+        {
+            Update(attemptGuid, attempt => attempt with
+            {
+                Status = LocalSquarePaymentAttemptStatus.OrderCompleted,
+                OrderCompletedAt = completedAt,
+                UpdatedAt = completedAt
+            });
+            return Task.CompletedTask;
+        }
+
+        public Task<LocalSquarePaymentAttempt?> GetLatestOpenAttemptAsync(
+            string storeCode,
+            string deviceCode,
+            string cashierId,
+            string environment,
+            CancellationToken cancellationToken = default)
+        {
+            return Task.FromResult<LocalSquarePaymentAttempt?>(Attempts.LastOrDefault());
+        }
+
+        public Task<LocalSquarePaymentAttempt?> GetAttemptAsync(Guid attemptGuid, CancellationToken cancellationToken = default)
+        {
+            return Task.FromResult<LocalSquarePaymentAttempt?>(Attempts.SingleOrDefault(attempt => attempt.AttemptGuid == attemptGuid));
+        }
+
+        private void Update(Guid attemptGuid, Func<LocalSquarePaymentAttempt, LocalSquarePaymentAttempt> update)
+        {
+            var index = Attempts.FindIndex(attempt => attempt.AttemptGuid == attemptGuid);
+            Assert.True(index >= 0);
+            Attempts[index] = update(Attempts[index]);
+        }
+    }
+
+    private sealed class ObservingCardTerminalClient(
+        Action beforeResult,
+        PaymentAuthorizationResult? result = null) : ICardTerminalClient
     {
         public Task<PaymentAuthorizationResult> AuthorizeAsync(
             decimal amount,
@@ -1014,7 +1220,7 @@ public sealed class CashPaymentWorkflowServiceTests
             CancellationToken cancellationToken = default)
         {
             beforeResult();
-            return Task.FromResult(new PaymentAuthorizationResult(
+            return Task.FromResult(result ?? new PaymentAuthorizationResult(
                 true,
                 "ANZBACKEND:TXN-1:session=backend-session-1:environment=Sandbox",
                 "APPROVED",

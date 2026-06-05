@@ -34,6 +34,8 @@ public static class ServiceRegistration
         services.AddSingleton<ILocalCatalogRepository, LocalCatalogRepository>();
         services.AddSingleton<ILocalOrderRepository, LocalOrderRepository>();
         services.AddSingleton<ILocalCardPaymentAttemptRepository, LocalCardPaymentAttemptRepository>();
+        services.AddSingleton<ILocalSquarePaymentAttemptRepository, LocalSquarePaymentAttemptRepository>();
+        services.AddSingleton<ISquarePaymentAttemptContextAccessor, SquarePaymentAttemptContextAccessor>();
         services.AddSingleton<ILocalInstallmentOrderRepository, LocalInstallmentOrderRepository>();
         services.AddSingleton<ILocalOrderUploadRepository, LocalOrderUploadRepository>();
         services.AddSingleton<ISuspendedOrderRepository, SuspendedOrderRepository>();
@@ -108,7 +110,9 @@ public static class ServiceRegistration
         services.AddSingleton<IMainShellStartupService, MainShellStartupService>();
         services.AddSingleton<IShellSyncCenterService, ShellSyncCenterService>();
         services.AddSingleton<ICashPaymentWorkflowService, CashPaymentWorkflowService>();
-        services.AddSingleton<ICardPaymentRecoveryService, CardPaymentRecoveryService>();
+        services.AddSingleton<CardPaymentRecoveryService>();
+        services.AddSingleton<ISquarePaymentRecoveryService, SquarePaymentRecoveryService>();
+        services.AddSingleton<ICardPaymentRecoveryService, CardPaymentRecoveryCoordinator>();
         services.AddSingleton<ISuspendedOrderService, SuspendedOrderService>();
         services.AddSingleton<IRemoteOrderHistoryService, RemoteOrderHistoryService>();
         services.AddSingleton<IReceiptQueryService, ReceiptQueryService>();
@@ -154,6 +158,10 @@ public static class ServiceRegistration
         services.AddHttpClient<ISquareTerminalSetupClient, SquareTerminalSetupClient>(client =>
         {
             client.Timeout = TimeSpan.FromSeconds(15);
+        });
+        services.AddHttpClient<ISquareTerminalPaymentClient, SquareTerminalPaymentClient>(client =>
+        {
+            client.Timeout = TimeSpan.FromSeconds(30);
         });
         services.AddSingleton<ICardTerminalSetupService>(sp => new CardTerminalSetupService(
             sp.GetRequiredService<ICardTerminalSettingsStore>(),

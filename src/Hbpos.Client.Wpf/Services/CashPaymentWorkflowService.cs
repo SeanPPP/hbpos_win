@@ -58,7 +58,9 @@ public sealed class CashPaymentWorkflowService(
     ICardTerminalClient? cardTerminalClient = null,
     IVoucherTenderClient? voucherTenderClient = null,
     ILocalCardPaymentAttemptRepository? cardPaymentAttemptRepository = null,
-    ICardTerminalSettingsProvider? cardTerminalSettingsProvider = null) : ICashPaymentWorkflowService
+    ICardTerminalSettingsProvider? cardTerminalSettingsProvider = null,
+    ILocalSquarePaymentAttemptRepository? squarePaymentAttemptRepository = null,
+    ISquarePaymentAttemptContextAccessor? squarePaymentAttemptContextAccessor = null) : ICashPaymentWorkflowService
 {
     private static readonly JsonSerializerOptions CardAttemptJsonOptions = new(JsonSerializerDefaults.Web)
     {
@@ -331,6 +333,7 @@ public sealed class CashPaymentWorkflowService(
         }
 
         await MarkCompletedCardAttemptsAsync(tenders, cancellationToken);
+        await MarkCompletedSquareAttemptsAsync(tenders, cancellationToken);
         cart.Clear();
 
         var pendingSyncCount = await syncQueueRepository.CountPendingAsync(cancellationToken);
@@ -442,8 +445,19 @@ public sealed class CashPaymentWorkflowService(
             referenceText,
             isRefund,
             cancellationToken);
+        var squareAttempt = await TryCreateSquarePaymentAttemptAsync(
+            amount,
+            session,
+            actualAmount,
+            currentTenders,
+            cartSnapshot,
+            isRefund,
+            cancellationToken);
 
         PaymentAuthorizationResult authorization;
+        using var squareAttemptScope = squareAttempt is null || squarePaymentAttemptContextAccessor is null
+            ? null
+            : squarePaymentAttemptContextAccessor.Begin(new SquarePaymentAttemptContext(squareAttempt.AttemptGuid, squareAttempt.IdempotencyKey));
         try
         {
             authorization = isRefund
@@ -464,12 +478,38 @@ public sealed class CashPaymentWorkflowService(
                     CancellationToken.None);
             }
 
+            if (squareAttempt is not null)
+            {
+                await squarePaymentAttemptRepository!.MarkFailedAsync(
+                    squareAttempt.AttemptGuid,
+                    LocalSquarePaymentAttemptStatus.Failed,
+                    null,
+                    null,
+                    null,
+                    "Card terminal request failed before a final response was received.",
+                    DateTimeOffset.UtcNow,
+                    CancellationToken.None);
+            }
+
             throw;
         }
 
         if (attempt is not null)
         {
             await UpdateCardPaymentAttemptAfterAuthorizationAsync(attempt.AttemptGuid, authorization, cancellationToken);
+        }
+
+        if (squareAttempt is not null && !authorization.Approved)
+        {
+            await squarePaymentAttemptRepository!.MarkFailedAsync(
+                squareAttempt.AttemptGuid,
+                MapSquareAuthorizationFailureStatus(authorization.Message),
+                null,
+                authorization.ResponseText,
+                authorization.ResponseCode,
+                authorization.Message,
+                DateTimeOffset.UtcNow,
+                cancellationToken);
         }
 
         ConsoleLog.Write(
@@ -515,7 +555,11 @@ public sealed class CashPaymentWorkflowService(
                 isRefund ? -authorizedAmount : authorizedAmount,
                 reference,
                 CardTransactions: authorization.CardTransactions,
-                IdempotencyKey: attempt is null ? null : FormatCardAttemptTenderKey(attempt.AttemptGuid)),
+                IdempotencyKey: attempt is not null
+                    ? FormatCardAttemptTenderKey(attempt.AttemptGuid)
+                    : squareAttempt is not null
+                        ? FormatSquareAttemptTenderKey(squareAttempt.AttemptGuid)
+                        : null),
             approvedStatusKey);
     }
 
@@ -578,6 +622,74 @@ public sealed class CashPaymentWorkflowService(
         return attempt;
     }
 
+    private async Task<LocalSquarePaymentAttempt?> TryCreateSquarePaymentAttemptAsync(
+        decimal amount,
+        PosSessionState session,
+        decimal actualAmount,
+        IReadOnlyList<PaymentTender> currentTenders,
+        PosCartSnapshot? cartSnapshot,
+        bool isRefund,
+        CancellationToken cancellationToken)
+    {
+        if (squarePaymentAttemptRepository is null ||
+            cardTerminalSettingsProvider is null ||
+            cartSnapshot is null ||
+            isRefund)
+        {
+            return null;
+        }
+
+        var settings = await cardTerminalSettingsProvider.GetSettingsAsync(cancellationToken);
+        if (settings.Processor != CardProcessorKind.Square ||
+            string.IsNullOrWhiteSpace(settings.SquareDeviceId) ||
+            string.IsNullOrWhiteSpace(settings.SquareLocationId))
+        {
+            return null;
+        }
+
+        const string currency = "AUD";
+        var now = DateTimeOffset.UtcNow;
+        var draft = new CardPaymentOrderDraft(
+            Guid.NewGuid(),
+            session,
+            cartSnapshot,
+            currentTenders.ToArray(),
+            actualAmount,
+            amount,
+            "P",
+            null,
+            now);
+        var attempt = new LocalSquarePaymentAttempt(
+            Guid.NewGuid(),
+            null,
+            Guid.NewGuid().ToString("N"),
+            SquareDeviceIdNormalizer.NormalizeForTerminalCheckout(settings.SquareDeviceId) ?? settings.SquareDeviceId,
+            settings.SquareLocationId,
+            settings.Environment.ToString(),
+            amount,
+            ToMinorUnits(amount),
+            currency,
+            LocalSquarePaymentAttemptStatus.Pending,
+            null,
+            null,
+            JsonSerializer.Serialize(draft, CardAttemptJsonOptions),
+            session.StoreCode,
+            session.DeviceCode,
+            session.CashierId,
+            null,
+            null,
+            null,
+            null,
+            now,
+            now,
+            null,
+            null,
+            null);
+
+        await squarePaymentAttemptRepository.CreateAsync(attempt, cancellationToken);
+        return attempt;
+    }
+
     private async Task UpdateCardPaymentAttemptAfterAuthorizationAsync(
         Guid attemptGuid,
         PaymentAuthorizationResult authorization,
@@ -631,15 +743,56 @@ public sealed class CashPaymentWorkflowService(
         return LocalCardPaymentAttemptStatus.Failed;
     }
 
+    private static LocalSquarePaymentAttemptStatus MapSquareAuthorizationFailureStatus(string? message)
+    {
+        var text = (message ?? string.Empty).ToUpperInvariant();
+        if (text.Contains("TIMEOUT", StringComparison.Ordinal))
+        {
+            return LocalSquarePaymentAttemptStatus.TimedOut;
+        }
+
+        if (text.Contains("CANCEL", StringComparison.Ordinal))
+        {
+            return LocalSquarePaymentAttemptStatus.Canceled;
+        }
+
+        if (text.Contains("UNKNOWN", StringComparison.Ordinal) ||
+            text.Contains("CONFIRM", StringComparison.Ordinal))
+        {
+            return LocalSquarePaymentAttemptStatus.Unknown;
+        }
+
+        return LocalSquarePaymentAttemptStatus.Failed;
+    }
+
+    private static long ToMinorUnits(decimal amount)
+    {
+        return decimal.ToInt64(decimal.Round(amount * 100m, 0, MidpointRounding.AwayFromZero));
+    }
+
     private static string FormatCardAttemptTenderKey(Guid attemptGuid)
     {
         return $"CARD_ATTEMPT:{attemptGuid:N}";
+    }
+
+    private static string FormatSquareAttemptTenderKey(Guid attemptGuid)
+    {
+        return $"SQUARE_ATTEMPT:{attemptGuid:N}";
     }
 
     private static bool TryReadCardAttemptTenderKey(string? value, out Guid attemptGuid)
     {
         attemptGuid = Guid.Empty;
         const string prefix = "CARD_ATTEMPT:";
+        return !string.IsNullOrWhiteSpace(value) &&
+            value.StartsWith(prefix, StringComparison.OrdinalIgnoreCase) &&
+            Guid.TryParseExact(value[prefix.Length..], "N", out attemptGuid);
+    }
+
+    private static bool TryReadSquareAttemptTenderKey(string? value, out Guid attemptGuid)
+    {
+        attemptGuid = Guid.Empty;
+        const string prefix = "SQUARE_ATTEMPT:";
         return !string.IsNullOrWhiteSpace(value) &&
             value.StartsWith(prefix, StringComparison.OrdinalIgnoreCase) &&
             Guid.TryParseExact(value[prefix.Length..], "N", out attemptGuid);
@@ -662,6 +815,29 @@ public sealed class CashPaymentWorkflowService(
         {
             // 订单落本地后才把刷卡 attempt 标为完成，避免“刷卡成功但订单未写入”被误判为已恢复。
             await cardPaymentAttemptRepository.MarkOrderCompletedAsync(
+                attemptGuid,
+                DateTimeOffset.UtcNow,
+                cancellationToken);
+        }
+    }
+
+    private async Task MarkCompletedSquareAttemptsAsync(
+        IReadOnlyList<PaymentTender> tenders,
+        CancellationToken cancellationToken)
+    {
+        if (squarePaymentAttemptRepository is null)
+        {
+            return;
+        }
+
+        foreach (var attemptGuid in tenders
+            .Select(tender => TryReadSquareAttemptTenderKey(tender.IdempotencyKey, out var attemptGuid) ? attemptGuid : (Guid?)null)
+            .Where(attemptGuid => attemptGuid is not null)
+            .Select(attemptGuid => attemptGuid!.Value)
+            .Distinct())
+        {
+            // 只有订单真正保存后，Square attempt 才能标为完成，避免恢复时漏救订单。
+            await squarePaymentAttemptRepository.MarkOrderCompletedAsync(
                 attemptGuid,
                 DateTimeOffset.UtcNow,
                 cancellationToken);
@@ -863,28 +1039,35 @@ public sealed class CashPaymentWorkflowService(
         IReadOnlyList<PaymentTender> tenders,
         CancellationToken cancellationToken)
     {
-        if (cardPaymentAttemptRepository is null)
-        {
-            return order;
-        }
-
         var attemptGuid = tenders
             .Select(tender => TryReadCardAttemptTenderKey(tender.IdempotencyKey, out var attemptGuid) ? attemptGuid : (Guid?)null)
             .FirstOrDefault(value => value is not null);
-        if (attemptGuid is null)
+        if (attemptGuid is not null && cardPaymentAttemptRepository is not null)
         {
-            return order;
+            var attempt = await cardPaymentAttemptRepository.GetAttemptAsync(attemptGuid.Value, cancellationToken);
+            if (attempt is not null)
+            {
+                var draft = JsonSerializer.Deserialize<CardPaymentOrderDraft>(attempt.OrderDraftJson, CardAttemptJsonOptions);
+                // 正常落单和重启恢复必须使用同一个订单 GUID，避免崩溃后恢复重复保存订单。
+                return draft is null ? order : order with { OrderGuid = draft.OrderGuid };
+            }
         }
 
-        var attempt = await cardPaymentAttemptRepository.GetAttemptAsync(attemptGuid.Value, cancellationToken);
-        if (attempt is null)
+        var squareAttemptGuid = tenders
+            .Select(tender => TryReadSquareAttemptTenderKey(tender.IdempotencyKey, out var attemptGuid) ? attemptGuid : (Guid?)null)
+            .FirstOrDefault(value => value is not null);
+        if (squareAttemptGuid is not null && squarePaymentAttemptRepository is not null)
         {
-            return order;
+            var attempt = await squarePaymentAttemptRepository.GetAttemptAsync(squareAttemptGuid.Value, cancellationToken);
+            if (attempt is not null)
+            {
+                var draft = JsonSerializer.Deserialize<CardPaymentOrderDraft>(attempt.OrderDraftJson, CardAttemptJsonOptions);
+                // Square 使用独立 attempt 表，但订单 GUID 仍必须和刷卡前草稿保持一致。
+                return draft is null ? order : order with { OrderGuid = draft.OrderGuid };
+            }
         }
 
-        var draft = JsonSerializer.Deserialize<CardPaymentOrderDraft>(attempt.OrderDraftJson, CardAttemptJsonOptions);
-        // 正常落单和重启恢复必须使用同一个订单 GUID，避免崩溃后恢复重复保存订单。
-        return draft is null ? order : order with { OrderGuid = draft.OrderGuid };
+        return order;
     }
 
     private async Task<LocalOrder> IssuePendingRefundVouchersAsync(

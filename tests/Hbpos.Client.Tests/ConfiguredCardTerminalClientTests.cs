@@ -213,6 +213,21 @@ public sealed class ConfiguredCardTerminalClientTests
                     """);
             }
 
+            if (request.Method == HttpMethod.Get &&
+                request.RequestUri!.AbsolutePath.Contains("/v2/payments/", StringComparison.Ordinal))
+            {
+                return JsonResponse(
+                    """
+                    {
+                      "payment": {
+                        "id": "payment-1",
+                        "status": "COMPLETED",
+                        "amount_money": { "amount": 1099, "currency": "AUD" }
+                      }
+                    }
+                    """);
+            }
+
             statusPollCount++;
             return JsonResponse(
                 statusPollCount == 1
@@ -264,6 +279,11 @@ public sealed class ConfiguredCardTerminalClientTests
             {
                 Assert.Equal(HttpMethod.Get, secondStatus.Method);
                 Assert.Equal("https://connect.squareup.com/v2/terminals/checkouts/checkout-1", secondStatus.RequestUri!.AbsoluteUri);
+            },
+            payment =>
+            {
+                Assert.Equal(HttpMethod.Get, payment.Method);
+                Assert.Equal("https://connect.squareup.com/v2/payments/payment-1", payment.RequestUri!.AbsoluteUri);
             });
         AssertContainsLogLine(logs.Lines, "authorize start");
         AssertContainsLogLine(logs.Lines, "storedSquareDeviceId=DEV-1 checkoutDeviceId=DEV-1");
@@ -271,7 +291,250 @@ public sealed class ConfiguredCardTerminalClientTests
         AssertContainsLogLine(logs.Lines, "checkout status checkoutId=checkout-1 poll=1 status=IN_PROGRESS");
         AssertContainsLogLine(logs.Lines, "checkout status checkoutId=checkout-1 poll=2 status=COMPLETED");
         AssertContainsLogLine(logs.Lines, "checkout completed checkoutId=checkout-1 paymentId=payment-1 amount=10.99");
+        AssertContainsLogLine(logs.Lines, "payment verified checkoutId=checkout-1 paymentId=payment-1 status=COMPLETED amount=10.99 currency=AUD");
         AssertNoSensitiveTokenLogged(logs.Lines);
+    }
+
+    [Fact]
+    public async Task AuthorizeAsync_rejects_completed_square_checkout_without_payment_id()
+    {
+        var handler = new StubHttpMessageHandler((request, _) =>
+        {
+            if (request.Method == HttpMethod.Post)
+            {
+                return JsonResponse(
+                    """
+                    {
+                      "checkout": {
+                        "id": "checkout-no-payment",
+                        "status": "PENDING"
+                      }
+                    }
+                    """);
+            }
+
+            return JsonResponse(
+                """
+                {
+                  "checkout": {
+                    "id": "checkout-no-payment",
+                    "status": "COMPLETED",
+                    "amount_money": { "amount": 500, "currency": "AUD" },
+                    "payment_ids": []
+                  }
+                }
+                """);
+        });
+        var client = new ConfiguredCardTerminalClient(new StaticCardTerminalSettingsProvider(CreateSquareSettings()), new HttpClient(handler));
+
+        var result = await client.AuthorizeAsync(5m, CreateSession());
+
+        Assert.False(result.Approved);
+        Assert.Equal("Square checkout did not return a payment id.", result.Message);
+    }
+
+    [Theory]
+    [InlineData("APPROVED")]
+    [InlineData("PENDING")]
+    [InlineData("CANCELED")]
+    [InlineData("FAILED")]
+    public async Task AuthorizeAsync_rejects_square_payment_status_that_is_not_completed(string paymentStatus)
+    {
+        var handler = CreateCompletedCheckoutThenPaymentHandler(
+            """
+            {
+              "payment": {
+                "id": "payment-1",
+                "status": "%STATUS%",
+                "amount_money": { "amount": 500, "currency": "AUD" }
+              }
+            }
+            """.Replace("%STATUS%", paymentStatus, StringComparison.Ordinal));
+        var client = new ConfiguredCardTerminalClient(new StaticCardTerminalSettingsProvider(CreateSquareSettings()), new HttpClient(handler));
+
+        var result = await client.AuthorizeAsync(5m, CreateSession());
+
+        Assert.False(result.Approved);
+        Assert.Equal($"Square payment status is {paymentStatus}.", result.Message);
+    }
+
+    [Fact]
+    public async Task AuthorizeAsync_rejects_square_payment_amount_mismatch()
+    {
+        var handler = CreateCompletedCheckoutThenPaymentHandler(
+            """
+            {
+              "payment": {
+                "id": "payment-1",
+                "status": "COMPLETED",
+                "amount_money": { "amount": 499, "currency": "AUD" }
+              }
+            }
+            """);
+        var client = new ConfiguredCardTerminalClient(new StaticCardTerminalSettingsProvider(CreateSquareSettings()), new HttpClient(handler));
+
+        var result = await client.AuthorizeAsync(5m, CreateSession());
+
+        Assert.False(result.Approved);
+        Assert.Equal("Square payment amount did not match the requested amount.", result.Message);
+    }
+
+    [Fact]
+    public async Task AuthorizeAsync_rejects_square_payment_currency_mismatch()
+    {
+        var handler = CreateCompletedCheckoutThenPaymentHandler(
+            """
+            {
+              "payment": {
+                "id": "payment-1",
+                "status": "COMPLETED",
+                "amount_money": { "amount": 500, "currency": "USD" }
+              }
+            }
+            """);
+        var client = new ConfiguredCardTerminalClient(new StaticCardTerminalSettingsProvider(CreateSquareSettings()), new HttpClient(handler));
+
+        var result = await client.AuthorizeAsync(5m, CreateSession());
+
+        Assert.False(result.Approved);
+        Assert.Equal("Square payment currency did not match the requested currency.", result.Message);
+    }
+
+    [Fact]
+    public async Task AuthorizeAsync_returns_square_error_detail_for_failed_payment_lookup()
+    {
+        var handler = CreateCompletedCheckoutThenPaymentHandler(
+            HttpStatusCode.BadRequest,
+            """
+            {
+              "errors": [
+                {
+                  "code": "BAD_REQUEST",
+                  "detail": "Payment is unavailable."
+                }
+              ]
+            }
+            """);
+        var client = new ConfiguredCardTerminalClient(new StaticCardTerminalSettingsProvider(CreateSquareSettings()), new HttpClient(handler));
+
+        var result = await client.AuthorizeAsync(5m, CreateSession());
+
+        Assert.False(result.Approved);
+        Assert.Equal("Square payment failed with HTTP 400: BAD_REQUEST: Payment is unavailable.", result.Message);
+    }
+
+    [Fact]
+    public async Task AuthorizeAsync_returns_invalid_response_when_square_payment_payload_is_missing_payment()
+    {
+        var handler = CreateCompletedCheckoutThenPaymentHandler(
+            """
+            {
+              "not_payment": {
+                "id": "payment-1"
+              }
+            }
+            """);
+        var client = new ConfiguredCardTerminalClient(new StaticCardTerminalSettingsProvider(CreateSquareSettings()), new HttpClient(handler));
+
+        var result = await client.AuthorizeAsync(5m, CreateSession());
+
+        Assert.False(result.Approved);
+        Assert.Equal("Square terminal returned an invalid response.", result.Message);
+    }
+
+    [Fact]
+    public async Task AuthorizeAsync_returns_invalid_response_when_square_payment_is_missing_amount_money()
+    {
+        var handler = CreateCompletedCheckoutThenPaymentHandler(
+            """
+            {
+              "payment": {
+                "id": "payment-1",
+                "status": "COMPLETED"
+              }
+            }
+            """);
+        var client = new ConfiguredCardTerminalClient(new StaticCardTerminalSettingsProvider(CreateSquareSettings()), new HttpClient(handler));
+
+        var result = await client.AuthorizeAsync(5m, CreateSession());
+
+        Assert.False(result.Approved);
+        Assert.Equal("Square terminal returned an invalid response.", result.Message);
+    }
+
+    [Fact]
+    public async Task AuthorizeAsync_refreshes_square_token_once_when_payment_lookup_is_unauthorized()
+    {
+        var requests = new List<HttpRequestMessage>();
+        var paymentLookupCount = 0;
+        var handler = new StubHttpMessageHandler((request, _) =>
+        {
+            requests.Add(CloneRequest(request));
+            if (request.Method == HttpMethod.Post)
+            {
+                return JsonResponse(
+                    """
+                    {
+                      "checkout": {
+                        "id": "checkout-payment-refresh",
+                        "status": "PENDING"
+                      }
+                    }
+                    """);
+            }
+
+            if (request.Method == HttpMethod.Get &&
+                request.RequestUri!.AbsolutePath.Contains("/v2/payments/", StringComparison.Ordinal))
+            {
+                paymentLookupCount++;
+                if (paymentLookupCount == 1)
+                {
+                    return new HttpResponseMessage(HttpStatusCode.Unauthorized)
+                    {
+                        ReasonPhrase = "Unauthorized"
+                    };
+                }
+
+                return JsonResponse(
+                    """
+                    {
+                      "payment": {
+                        "id": "payment-1",
+                        "status": "COMPLETED",
+                        "amount_money": { "amount": 500, "currency": "AUD" }
+                      }
+                    }
+                    """);
+            }
+
+            return JsonResponse(
+                """
+                {
+                  "checkout": {
+                    "id": "checkout-payment-refresh",
+                    "status": "COMPLETED",
+                    "amount_money": { "amount": 500, "currency": "AUD" },
+                    "payment_ids": [ "payment-1" ]
+                  }
+                }
+                """);
+        });
+        var tokenProvider = new FakeSquareAccessTokenProvider(RefreshedToken);
+        var client = new ConfiguredCardTerminalClient(
+            new StaticCardTerminalSettingsProvider(CreateSquareSettings()),
+            new HttpClient(handler),
+            squareAccessTokenProvider: tokenProvider);
+
+        var result = await client.AuthorizeAsync(5m, CreateSession());
+
+        Assert.True(result.Approved);
+        Assert.Equal(1, tokenProvider.ForceRefreshCount);
+        Assert.Collection(
+            requests,
+            create => Assert.True(HasBearerToken(create, InitialToken), "create request should use the cached Square token"),
+            status => Assert.True(HasBearerToken(status, InitialToken), "checkout status request should use the cached Square token"),
+            failedPayment => Assert.True(HasBearerToken(failedPayment, InitialToken), "first payment request should use the cached Square token"),
+            retriedPayment => Assert.True(HasBearerToken(retriedPayment, RefreshedToken), "retried payment request should use the refreshed Square token"));
     }
 
     [Fact]
@@ -290,6 +553,21 @@ public sealed class ConfiguredCardTerminalClientTests
                       "checkout": {
                         "id": "checkout-normalized",
                         "status": "PENDING"
+                      }
+                    }
+                    """);
+            }
+
+            if (request.Method == HttpMethod.Get &&
+                request.RequestUri!.AbsolutePath.Contains("/v2/payments/", StringComparison.Ordinal))
+            {
+                return JsonResponse(
+                    """
+                    {
+                      "payment": {
+                        "id": "payment-normalized",
+                        "status": "COMPLETED",
+                        "amount_money": { "amount": 500, "currency": "AUD" }
                       }
                     }
                     """);
@@ -348,6 +626,21 @@ public sealed class ConfiguredCardTerminalClientTests
                     """);
             }
 
+            if (request.Method == HttpMethod.Get &&
+                request.RequestUri!.AbsolutePath.Contains("/v2/payments/", StringComparison.Ordinal))
+            {
+                return JsonResponse(
+                    """
+                    {
+                      "payment": {
+                        "id": "payment-1",
+                        "status": "COMPLETED",
+                        "amount_money": { "amount": 500, "currency": "AUD" }
+                      }
+                    }
+                    """);
+            }
+
             return JsonResponse(
                 """
                 {
@@ -375,7 +668,8 @@ public sealed class ConfiguredCardTerminalClientTests
             requests,
             first => Assert.True(HasBearerToken(first, InitialToken), "first checkout request should use the cached Square token"),
             retry => Assert.True(HasBearerToken(retry, RefreshedToken), "retry checkout request should use the refreshed Square token"),
-            status => Assert.True(HasBearerToken(status, RefreshedToken), "status request should use the refreshed Square token"));
+            status => Assert.True(HasBearerToken(status, RefreshedToken), "status request should use the refreshed Square token"),
+            payment => Assert.True(HasBearerToken(payment, RefreshedToken), "payment request should use the refreshed Square token"));
         AssertContainsLogLine(logs.Lines, "auth refresh requested method=POST path=terminals/checkouts environment=Production");
         AssertContainsLogLine(logs.Lines, "auth refresh succeeded method=POST path=terminals/checkouts");
         AssertNoSensitiveTokenLogged(logs.Lines);
@@ -812,6 +1106,48 @@ public sealed class ConfiguredCardTerminalClientTests
         {
             Content = new StringContent(json, Encoding.UTF8, "application/json")
         };
+    }
+
+    private static StubHttpMessageHandler CreateCompletedCheckoutThenPaymentHandler(string paymentJson)
+    {
+        return CreateCompletedCheckoutThenPaymentHandler(HttpStatusCode.OK, paymentJson);
+    }
+
+    private static StubHttpMessageHandler CreateCompletedCheckoutThenPaymentHandler(HttpStatusCode paymentStatusCode, string paymentJson)
+    {
+        return new StubHttpMessageHandler((request, _) =>
+        {
+            if (request.Method == HttpMethod.Post)
+            {
+                return JsonResponse(
+                    """
+                    {
+                      "checkout": {
+                        "id": "checkout-verified",
+                        "status": "PENDING"
+                      }
+                    }
+                    """);
+            }
+
+            if (request.Method == HttpMethod.Get &&
+                request.RequestUri!.AbsolutePath.Contains("/v2/payments/", StringComparison.Ordinal))
+            {
+                return JsonResponse(paymentStatusCode, paymentJson);
+            }
+
+            return JsonResponse(
+                """
+                {
+                  "checkout": {
+                    "id": "checkout-verified",
+                    "status": "COMPLETED",
+                    "amount_money": { "amount": 500, "currency": "AUD" },
+                    "payment_ids": [ "payment-1" ]
+                  }
+                }
+                """);
+        });
     }
 
     private static HttpRequestMessage CloneRequest(HttpRequestMessage request)

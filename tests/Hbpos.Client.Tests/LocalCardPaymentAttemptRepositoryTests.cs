@@ -20,6 +20,9 @@ public sealed class LocalCardPaymentAttemptRepositoryTests
             await using var connection = await store.OpenConnectionAsync();
             Assert.Equal(1, await ReadScalarIntAsync(connection, "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'LocalCardPaymentAttempts';"));
             Assert.Equal(1, await ReadScalarIntAsync(connection, "SELECT COUNT(*) FROM sqlite_master WHERE type = 'index' AND name = 'IX_LocalCardPaymentAttempts_RecoverLatest';"));
+            Assert.Equal(1, await ReadScalarIntAsync(connection, "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'LocalSquarePaymentAttempts';"));
+            Assert.Equal(1, await ReadScalarIntAsync(connection, "SELECT COUNT(*) FROM sqlite_master WHERE type = 'index' AND name = 'IX_LocalSquarePaymentAttempts_RecoverLatest';"));
+            Assert.Equal(1, await ReadScalarIntAsync(connection, "SELECT COUNT(*) FROM sqlite_master WHERE type = 'index' AND name = 'IX_LocalSquarePaymentAttempts_CheckoutId';"));
             Assert.Equal(
                 [
                     "Pending",
@@ -34,6 +37,112 @@ public sealed class LocalCardPaymentAttemptRepositoryTests
                     "Abandoned"
                 ],
                 Enum.GetNames<LocalCardPaymentAttemptStatus>());
+            Assert.Equal(
+                [
+                    "Pending",
+                    "CheckoutCreated",
+                    "Recovering",
+                    "CheckoutCompleted",
+                    "PaymentVerified",
+                    "Canceled",
+                    "TimedOut",
+                    "Failed",
+                    "Unknown",
+                    "OrderCompleted",
+                    "Abandoned"
+                ],
+                Enum.GetNames<LocalSquarePaymentAttemptStatus>());
+        }
+        finally
+        {
+            DeleteTempDatabase(databasePath);
+        }
+    }
+
+    [Fact]
+    public async Task Square_attempt_repository_persists_checkout_payment_and_order_completion()
+    {
+        var databasePath = CreateTempDatabasePath();
+
+        try
+        {
+            var store = new LocalSqliteStore(databasePath);
+            var schema = new LocalSchemaService(store);
+            var repository = new LocalSquarePaymentAttemptRepository(store);
+            var attempt = CreateSquareAttempt();
+            var checkoutAt = attempt.CreatedAt.AddMinutes(1);
+            var paymentAt = attempt.CreatedAt.AddMinutes(2);
+            var completedAt = attempt.CreatedAt.AddMinutes(3);
+
+            await schema.InitializeAsync();
+            await repository.CreateAsync(attempt);
+            await repository.MarkCheckoutCreatedAsync(attempt.AttemptGuid, "checkout-1", "PENDING", checkoutAt);
+            await repository.MarkPaymentVerifiedAsync(
+                attempt.AttemptGuid,
+                "payment-1",
+                "COMPLETED",
+                null,
+                "Payment verified.",
+                paymentAt);
+            await repository.MarkOrderCompletedAsync(attempt.AttemptGuid, completedAt);
+
+            var saved = await repository.GetAttemptAsync(attempt.AttemptGuid);
+
+            Assert.NotNull(saved);
+            Assert.Equal("checkout-1", saved.CheckoutId);
+            Assert.Equal("payment-1", saved.PaymentId);
+            Assert.Equal("COMPLETED", saved.PaymentStatus);
+            Assert.Equal(LocalSquarePaymentAttemptStatus.OrderCompleted, saved.Status);
+            Assert.Equal(paymentAt, saved.CompletedAt);
+            Assert.Equal(completedAt, saved.OrderCompletedAt);
+            Assert.Equal(completedAt, saved.UpdatedAt);
+        }
+        finally
+        {
+            DeleteTempDatabase(databasePath);
+        }
+    }
+
+    [Fact]
+    public async Task Square_attempt_repository_gets_latest_open_attempt_with_scope_filter()
+    {
+        var databasePath = CreateTempDatabasePath();
+
+        try
+        {
+            var store = new LocalSqliteStore(databasePath);
+            var schema = new LocalSchemaService(store);
+            var repository = new LocalSquarePaymentAttemptRepository(store);
+            var baseTime = DateTimeOffset.Parse("2026-06-05T09:00:00+10:00");
+            var olderOpen = CreateSquareAttempt(
+                attemptGuid: Guid.Parse("11111111-aaaa-1111-1111-111111111111"),
+                status: LocalSquarePaymentAttemptStatus.Pending,
+                updatedAt: baseTime);
+            var latestOpen = CreateSquareAttempt(
+                attemptGuid: Guid.Parse("22222222-aaaa-2222-2222-222222222222"),
+                status: LocalSquarePaymentAttemptStatus.PaymentVerified,
+                updatedAt: baseTime.AddMinutes(1));
+            var terminal = CreateSquareAttempt(
+                attemptGuid: Guid.Parse("33333333-aaaa-3333-3333-333333333333"),
+                status: LocalSquarePaymentAttemptStatus.Failed,
+                updatedAt: baseTime.AddMinutes(2));
+            var otherCashier = CreateSquareAttempt(
+                attemptGuid: Guid.Parse("44444444-aaaa-4444-4444-444444444444"),
+                cashierId: "C002",
+                status: LocalSquarePaymentAttemptStatus.Recovering,
+                updatedAt: baseTime.AddMinutes(3));
+
+            await schema.InitializeAsync();
+            await repository.CreateAsync(olderOpen);
+            await repository.CreateAsync(latestOpen);
+            await repository.CreateAsync(terminal);
+            await repository.CreateAsync(otherCashier);
+
+            var saved = await repository.GetLatestOpenAttemptAsync("S001", "POS-01", "C001", "Production");
+
+            Assert.NotNull(saved);
+            Assert.Equal(latestOpen.AttemptGuid, saved.AttemptGuid);
+            Assert.Equal(LocalSquarePaymentAttemptStatus.PaymentVerified, saved.Status);
         }
         finally
         {
@@ -218,6 +327,46 @@ public sealed class LocalCardPaymentAttemptRepositoryTests
             null,
             effectiveUpdatedAt.AddMinutes(-1),
             effectiveUpdatedAt,
+            null,
+            null);
+    }
+
+    private static LocalSquarePaymentAttempt CreateSquareAttempt(
+        Guid? attemptGuid = null,
+        string storeCode = "S001",
+        string deviceCode = "POS-01",
+        string cashierId = "C001",
+        string environment = "Production",
+        LocalSquarePaymentAttemptStatus status = LocalSquarePaymentAttemptStatus.Pending,
+        DateTimeOffset? updatedAt = null,
+        string orderDraftJson = "{}")
+    {
+        var effectiveUpdatedAt = updatedAt ?? DateTimeOffset.Parse("2026-06-05T10:00:00+10:00");
+
+        return new LocalSquarePaymentAttempt(
+            attemptGuid ?? Guid.Parse("aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"),
+            null,
+            "idem-1",
+            "DEV-1",
+            "LOC-1",
+            environment,
+            12.34m,
+            1234,
+            "AUD",
+            status,
+            null,
+            null,
+            orderDraftJson,
+            storeCode,
+            deviceCode,
+            cashierId,
+            null,
+            null,
+            null,
+            null,
+            effectiveUpdatedAt.AddMinutes(-1),
+            effectiveUpdatedAt,
+            null,
             null,
             null);
     }
