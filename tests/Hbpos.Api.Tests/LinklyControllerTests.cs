@@ -13,6 +13,7 @@ using Hbpos.Contracts.Linkly;
 using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Hosting;
+using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.Extensions.DependencyInjection;
@@ -425,6 +426,54 @@ public sealed class LinklyControllerTests
     }
 
     [Fact]
+    public async Task ReceiveCloudBackendNotification_LogsRequestAndResponseAsJson()
+    {
+        var backendService = new CapturingLinklyCloudBackendAsyncService();
+        var logger = new RecordingLogger<LinklyController>();
+        var controller = new LinklyController(
+            new StubLinklyCloudCredentialService(),
+            backendService,
+            logger)
+        {
+            ControllerContext = new ControllerContext
+            {
+                HttpContext = new DefaultHttpContext()
+            }
+        };
+        controller.ControllerContext.HttpContext.Request.Headers.Authorization = "Bearer sandbox-notify";
+        using var payload = JsonDocument.Parse(
+            """
+            {
+              "Response": {
+                "ResponseCode": "00",
+                "ResponseText": "APPROVED",
+                "TxnRef": "260605043452E4C3"
+              }
+            }
+            """);
+
+        var result = await controller.ReceiveCloudBackendNotification(
+            "Sandbox",
+            "session-123",
+            "transaction",
+            payload.RootElement,
+            CancellationToken.None);
+
+        Assert.IsType<OkObjectResult>(result.Result);
+        using var requestLog = FindLinklyLog(logger.Lines, "notification-transaction", "request");
+        Assert.Equal("api-linkly-controller", requestLog.RootElement.GetProperty("source").GetString());
+        Assert.Equal("request", requestLog.RootElement.GetProperty("direction").GetString());
+        Assert.Equal("Sandbox", requestLog.RootElement.GetProperty("environment").GetString());
+        Assert.Equal("session-123", requestLog.RootElement.GetProperty("sessionId").GetString());
+        Assert.Equal("Bearer sandbox-notify", requestLog.RootElement.GetProperty("request").GetProperty("authorization").GetString());
+        Assert.Equal("APPROVED", requestLog.RootElement.GetProperty("request").GetProperty("payload").GetProperty("Response").GetProperty("ResponseText").GetString());
+        using var responseLog = FindLinklyLog(logger.Lines, "notification-transaction", "response");
+        Assert.Equal(200, responseLog.RootElement.GetProperty("httpStatus").GetInt32());
+        Assert.True(responseLog.RootElement.GetProperty("response").GetProperty("Success").GetBoolean());
+        Assert.Equal("accepted", responseLog.RootElement.GetProperty("response").GetProperty("Data").GetString());
+    }
+
+    [Fact]
     public async Task SendCloudBackendKey_ReturnsBadRequestWhenLinklyRejectsActionButKeepsSessionPending()
     {
         var sendKeyResponse = CreateBackendResponse("session-key-400", "Pending") with
@@ -527,6 +576,58 @@ public sealed class LinklyControllerTests
         var exception = Assert.Throws<InvalidOperationException>(() => factory.CreateClient());
 
         Assert.Contains("schema bootstrap failed", exception.Message);
+    }
+
+    private static JsonDocument FindLinklyLog(
+        IReadOnlyList<string> lines,
+        string operation,
+        string phase)
+    {
+        foreach (var line in lines)
+        {
+            var jsonStart = line.IndexOf('{', StringComparison.Ordinal);
+            if (jsonStart < 0)
+            {
+                continue;
+            }
+
+            var document = JsonDocument.Parse(line[jsonStart..]);
+            if (string.Equals(document.RootElement.GetProperty("operation").GetString(), operation, StringComparison.Ordinal) &&
+                string.Equals(document.RootElement.GetProperty("phase").GetString(), phase, StringComparison.Ordinal))
+            {
+                return document;
+            }
+
+            document.Dispose();
+        }
+
+        throw new Xunit.Sdk.XunitException($"Expected Linkly JSON log operation={operation} phase={phase}.");
+    }
+
+    private sealed class RecordingLogger<T> : ILogger<T>
+    {
+        public List<string> Lines { get; } = [];
+
+        public IDisposable? BeginScope<TState>(TState state)
+            where TState : notnull
+        {
+            return null;
+        }
+
+        public bool IsEnabled(LogLevel logLevel)
+        {
+            return true;
+        }
+
+        public void Log<TState>(
+            LogLevel logLevel,
+            EventId eventId,
+            TState state,
+            Exception? exception,
+            Func<TState, Exception?, string> formatter)
+        {
+            Lines.Add(formatter(state, exception));
+        }
     }
 
     private sealed class LinklyApiFactory(

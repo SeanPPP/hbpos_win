@@ -204,7 +204,7 @@ public sealed class LinklyCloudCredentialApiClient(HttpClient httpClient) : ILin
 
     private static void Log(string message)
     {
-        ConsoleLog.Write("LinklyCloud", message);
+        LinklyJsonLog.WriteMessage("LinklyCloud", "cloud-credential-api", message);
     }
 
     private static string LogValue(string? value)

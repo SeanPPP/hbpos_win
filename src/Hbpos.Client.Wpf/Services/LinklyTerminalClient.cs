@@ -108,6 +108,8 @@ public sealed class LinklyTerminalClient(
     ILinklyEftClientFactory clientFactory,
     ILocalizationService? localization = null) : ILinklyTerminalClient
 {
+    private const string LogCategory = "LinklyLocal";
+    private const string LogSource = "local-ip";
     private const string ProcessorName = "ANZ";
     private const string Merchant = "00";
     private const string CancelledMessage = "ANZ Linkly transaction was cancelled.";
@@ -122,18 +124,50 @@ public sealed class LinklyTerminalClient(
         using var client = clientFactory.Create();
         try
         {
+            var connectRequest = CreateConnectRequest(host, port);
+            LogJson(
+                "connect",
+                "start",
+                "request",
+                request: connectRequest);
             var connected = await client.ConnectAsync(host, port, useSsl: false, useKeepAlive: false)
                 .WaitAsync(timeoutCts.Token);
+            LogJson(
+                "connect",
+                connected ? "succeeded" : "failed",
+                "response",
+                success: connected,
+                request: connectRequest,
+                response: new
+                {
+                    connected
+                });
             return connected
                 ? new LinklyConnectionTestResult(true, T("linkly.local.test.success", "Linkly EFT-Client connection succeeded."))
                 : new LinklyConnectionTestResult(false, T("linkly.local.test.failed", "Linkly EFT-Client connection failed."));
         }
         catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
         {
+            LogJson(
+                "connect",
+                "failed",
+                "response",
+                success: false,
+                reason: "timeout");
             return new LinklyConnectionTestResult(false, T("linkly.local.test.timeout", "Linkly EFT-Client connection timed out."));
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
+            LogJson(
+                "connect",
+                "failed",
+                "response",
+                success: false,
+                reason: ex.GetType().Name,
+                details: new
+                {
+                    ex.Message
+                });
             return new LinklyConnectionTestResult(
                 false,
                 string.Format(
@@ -143,7 +177,7 @@ public sealed class LinklyTerminalClient(
         }
         finally
         {
-            SafeDisconnect(client);
+            SafeDisconnect(client, txnRef: null);
         }
     }
 
@@ -221,24 +255,70 @@ public sealed class LinklyTerminalClient(
 
         try
         {
+            var connectRequest = CreateConnectRequest(settings.LinklyHost, settings.LinklyPort);
+            LogJson(
+                "connect",
+                "start",
+                "request",
+                settings.Environment,
+                txnRef,
+                request: connectRequest);
             var connected = await client.ConnectAsync(settings.LinklyHost, settings.LinklyPort, useSsl: false, useKeepAlive: false)
                 .WaitAsync(timeoutCts.Token);
+            LogJson(
+                "connect",
+                connected ? "succeeded" : "failed",
+                "response",
+                settings.Environment,
+                txnRef,
+                success: connected,
+                request: connectRequest,
+                response: new
+                {
+                    connected
+                });
             if (!connected)
             {
                 return new PaymentAuthorizationResult(false, null, T("linkly.local.connectionFailed", "ANZ Linkly EFT-Client connection failed."));
             }
 
+            // 保留终端原始交易报文，方便把 POS 请求与终端回包按 TxnRef 串起来排查。
+            LogJson(
+                "transaction",
+                "sent",
+                "request",
+                settings.Environment,
+                txnRef,
+                request: request);
             if (!await client.WriteRequestAsync(request).WaitAsync(timeoutCts.Token))
             {
+                LogJson(
+                    "transaction",
+                    "failed",
+                    "response",
+                    settings.Environment,
+                    txnRef,
+                    success: false,
+                    reason: "write-request-failed",
+                    request: request);
                 return new PaymentAuthorizationResult(false, null, T("linkly.local.requestSendFailed", "ANZ Linkly transaction request could not be sent."));
             }
 
             transactionRequestSent = true;
-            var response = await ReadTransactionResponseAsync(client, receipts, timeoutCts.Token);
+            var response = await ReadTransactionResponseAsync(client, receipts, timeoutCts.Token, settings.Environment, txnRef);
             return ToAuthorizationResult(response, amount, txnRef, receipts);
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
+            LogJson(
+                "transaction",
+                "failed",
+                "response",
+                settings.Environment,
+                txnRef,
+                success: false,
+                reason: "caller-cancelled",
+                request: request);
             if (transactionRequestSent)
             {
                 return await TryCancelActiveTransactionAsync(
@@ -256,6 +336,20 @@ public sealed class LinklyTerminalClient(
             var fallbackMessage = ex is OperationCanceledException
                 ? T("linkly.local.timeout", "ANZ Linkly transaction timed out.")
                 : T("linkly.local.connectionClosed", "ANZ Linkly connection was closed.");
+            LogJson(
+                "transaction",
+                "failed",
+                "response",
+                settings.Environment,
+                txnRef,
+                success: false,
+                reason: ex is OperationCanceledException ? "timeout" : "connection-closed",
+                request: request,
+                details: new
+                {
+                    exception = ex.GetType().Name,
+                    ex.Message
+                });
 
             if (!transactionRequestSent)
             {
@@ -276,6 +370,19 @@ public sealed class LinklyTerminalClient(
                 CultureInfo.CurrentCulture,
                 T("linkly.local.transactionFailed", "ANZ Linkly transaction failed: {0}"),
                 ex.Message);
+            LogJson(
+                "transaction",
+                "failed",
+                "response",
+                settings.Environment,
+                txnRef,
+                success: false,
+                reason: ex.GetType().Name,
+                request: request,
+                details: new
+                {
+                    ex.Message
+                });
             if (transactionRequestSent)
             {
                 return await TryRecoverLastTransactionAsync(
@@ -291,7 +398,7 @@ public sealed class LinklyTerminalClient(
         }
         finally
         {
-            SafeDisconnect(client);
+            SafeDisconnect(client, txnRef);
         }
     }
 
@@ -305,11 +412,28 @@ public sealed class LinklyTerminalClient(
         var receipts = new List<string>(capturedReceipts);
         var fallbackMessage = T("linkly.local.cancelOutcomeUnknown", "ANZ Linkly cancellation outcome could not be confirmed.");
         using var cancelCts = CreateTimeoutToken(settings.TerminalTimeout, CancellationToken.None);
+        var cancelRequest = CreateCancelRequest();
 
         try
         {
+            LogJson(
+                "cancel",
+                "sent",
+                "request",
+                settings.Environment,
+                txnRef,
+                request: cancelRequest);
             if (!await client.SendCancelRequestAsync().WaitAsync(cancelCts.Token))
             {
+                LogJson(
+                    "cancel",
+                    "failed",
+                    "response",
+                    settings.Environment,
+                    txnRef,
+                    success: false,
+                    reason: "send-cancel-failed",
+                    request: cancelRequest);
                 return await TryRecoverLastTransactionAsync(
                     settings,
                     amount,
@@ -319,11 +443,25 @@ public sealed class LinklyTerminalClient(
                     CancellationToken.None);
             }
 
-            var response = await ReadTransactionResponseAsync(client, receipts, cancelCts.Token);
+            var response = await ReadTransactionResponseAsync(client, receipts, cancelCts.Token, settings.Environment, txnRef);
             return ToAuthorizationResult(response, amount, txnRef, receipts);
         }
         catch (Exception ex) when (ex is OperationCanceledException or ConnectionException)
         {
+            LogJson(
+                "cancel",
+                "failed",
+                "response",
+                settings.Environment,
+                txnRef,
+                success: false,
+                reason: ex is OperationCanceledException ? "timeout" : "connection-closed",
+                request: cancelRequest,
+                details: new
+                {
+                    exception = ex.GetType().Name,
+                    ex.Message
+                });
             return await TryRecoverLastTransactionAsync(
                 settings,
                 amount,
@@ -334,6 +472,15 @@ public sealed class LinklyTerminalClient(
         }
         catch
         {
+            LogJson(
+                "cancel",
+                "failed",
+                "response",
+                settings.Environment,
+                txnRef,
+                success: false,
+                reason: "unexpected-error",
+                request: cancelRequest);
             return await TryRecoverLastTransactionAsync(
                 settings,
                 amount,
@@ -360,10 +507,38 @@ public sealed class LinklyTerminalClient(
         using var timeoutCts = CreateTimeoutToken(settings.TerminalTimeout, cancellationToken);
         using var client = clientFactory.Create();
         var receipts = new List<string>(capturedReceipts);
+        var connectRequest = CreateConnectRequest(settings.LinklyHost, settings.LinklyPort);
         try
         {
+            LogJson(
+                "connect",
+                "start",
+                "request",
+                settings.Environment,
+                txnRef,
+                request: connectRequest,
+                details: new
+                {
+                    recovery = true
+                });
             var connected = await client.ConnectAsync(settings.LinklyHost, settings.LinklyPort, useSsl: false, useKeepAlive: false)
                 .WaitAsync(timeoutCts.Token);
+            LogJson(
+                "connect",
+                connected ? "succeeded" : "failed",
+                "response",
+                settings.Environment,
+                txnRef,
+                success: connected,
+                request: connectRequest,
+                response: new
+                {
+                    connected
+                },
+                details: new
+                {
+                    recovery = true
+                });
             if (!connected)
             {
                 return new PaymentAuthorizationResult(false, null, fallbackMessage);
@@ -374,8 +549,24 @@ public sealed class LinklyTerminalClient(
                 Application = TerminalApplication.EFTPOS,
                 Merchant = Merchant
             };
+            LogJson(
+                "get-last-transaction",
+                "sent",
+                "request",
+                settings.Environment,
+                txnRef,
+                request: request);
             if (!await client.WriteRequestAsync(request).WaitAsync(timeoutCts.Token))
             {
+                LogJson(
+                    "get-last-transaction",
+                    "failed",
+                    "response",
+                    settings.Environment,
+                    txnRef,
+                    success: false,
+                    reason: "write-request-failed",
+                    request: request);
                 return new PaymentAuthorizationResult(false, null, fallbackMessage);
             }
 
@@ -386,38 +577,111 @@ public sealed class LinklyTerminalClient(
                 {
                     case EFTReceiptResponse receipt:
                         CaptureReceipt(receipts, receipt);
+                        LogJson(
+                            "receipt",
+                            "received",
+                            "response",
+                            settings.Environment,
+                            txnRef,
+                            response: receipt,
+                            details: new
+                            {
+                                recovery = true
+                            });
                         break;
                     case EFTGetLastTransactionResponse last:
+                        LogJson(
+                            "get-last-transaction",
+                            "received",
+                            "response",
+                            settings.Environment,
+                            txnRef,
+                            success: last.Success && last.LastTransactionSuccess,
+                            request: request,
+                            response: last);
                         return ToAuthorizationResult(last, amount, txnRef, receipts);
                     case EFTTransactionResponse transaction:
+                        LogJson(
+                            "transaction",
+                            "received",
+                            "response",
+                            settings.Environment,
+                            txnRef,
+                            success: transaction.Success,
+                            request: request,
+                            response: transaction,
+                            details: new
+                            {
+                                recovery = true
+                            });
                         return ToAuthorizationResult(transaction, amount, txnRef, receipts);
                     case null:
+                        LogJson(
+                            "get-last-transaction",
+                            "failed",
+                            "response",
+                            settings.Environment,
+                            txnRef,
+                            success: false,
+                            reason: "empty-response",
+                            request: request);
                         return new PaymentAuthorizationResult(false, null, fallbackMessage);
                 }
             }
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
+            LogJson(
+                "get-last-transaction",
+                "failed",
+                "response",
+                settings.Environment,
+                txnRef,
+                success: false,
+                reason: "caller-cancelled");
             return new PaymentAuthorizationResult(false, null, T("linkly.local.cancelled", CancelledMessage));
         }
         catch (Exception ex) when (ex is OperationCanceledException or ConnectionException)
         {
+            LogJson(
+                "get-last-transaction",
+                "failed",
+                "response",
+                settings.Environment,
+                txnRef,
+                success: false,
+                reason: ex is OperationCanceledException ? "timeout" : "connection-closed",
+                details: new
+                {
+                    exception = ex.GetType().Name,
+                    ex.Message
+                });
             return new PaymentAuthorizationResult(false, null, fallbackMessage);
         }
         catch
         {
+            LogJson(
+                "get-last-transaction",
+                "failed",
+                "response",
+                settings.Environment,
+                txnRef,
+                success: false,
+                reason: "unexpected-error");
             return new PaymentAuthorizationResult(false, null, fallbackMessage);
         }
         finally
         {
-            SafeDisconnect(client);
+            SafeDisconnect(client, txnRef);
         }
     }
 
     private async Task<EFTTransactionResponse> ReadTransactionResponseAsync(
         ILinklyEftClient client,
         ICollection<string> receipts,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        CardTerminalEnvironment environment,
+        string txnRef)
     {
         while (true)
         {
@@ -426,10 +690,33 @@ public sealed class LinklyTerminalClient(
             {
                 case EFTReceiptResponse receipt:
                     CaptureReceipt(receipts, receipt);
+                    LogJson(
+                        "receipt",
+                        "received",
+                        "response",
+                        environment,
+                        txnRef,
+                        response: receipt);
                     break;
                 case EFTTransactionResponse transaction:
+                    LogJson(
+                        "transaction",
+                        "received",
+                        "response",
+                        environment,
+                        txnRef,
+                        success: transaction.Success,
+                        response: transaction);
                     return transaction;
                 case null:
+                    LogJson(
+                        "transaction",
+                        "failed",
+                        "response",
+                        environment,
+                        txnRef,
+                        success: false,
+                        reason: "empty-response");
                     throw new InvalidOperationException(T("linkly.local.emptyResponse", "ANZ Linkly returned an empty response."));
             }
         }
@@ -636,14 +923,152 @@ public sealed class LinklyTerminalClient(
         return value.Length <= maxLength ? value : value[..maxLength];
     }
 
-    private static void SafeDisconnect(ILinklyEftClient client)
+    private void LogJson(
+        string operation,
+        string phase,
+        string? direction = null,
+        CardTerminalEnvironment? environment = null,
+        string? sessionId = null,
+        bool? success = null,
+        string? reason = null,
+        object? request = null,
+        object? response = null,
+        object? details = null)
     {
         try
         {
-            client.Disconnect();
+            LinklyJsonLog.Write(
+                LogCategory,
+                LogSource,
+                operation,
+                phase,
+                direction,
+                environment,
+                sessionId,
+                success: success,
+                reason: reason,
+                request: NormalizeLogPayload(request),
+                response: NormalizeLogPayload(response),
+                details: details);
         }
         catch
         {
+            // 日志仅用于诊断，不能影响刷卡主流程。
+        }
+    }
+
+    private static object? NormalizeLogPayload(object? payload)
+    {
+        return payload switch
+        {
+            null => null,
+            EFTTransactionRequest request => new
+            {
+                request.TxnType,
+                request.AmtPurchase,
+                request.AmtCash,
+                request.TxnRef,
+                request.Application,
+                request.Merchant,
+                request.ReceiptAutoPrint
+            },
+            EFTGetLastTransactionRequest request => new
+            {
+                request.TxnRef,
+                request.Application,
+                request.Merchant
+            },
+            EFTSendKeyRequest request => new
+            {
+                request.Key
+            },
+            EFTReceiptResponse response => new
+            {
+                response.ReceiptText
+            },
+            EFTTransactionResponse response => new
+            {
+                response.Success,
+                response.TxnRef,
+                response.AmtPurchase,
+                response.ResponseCode,
+                response.ResponseText,
+                response.AuthCode,
+                response.CardType,
+                response.Pan,
+                response.Caid,
+                response.Stan,
+                response.CardName,
+                response.DateSettlement
+            },
+            EFTGetLastTransactionResponse response => new
+            {
+                response.Success,
+                response.LastTransactionSuccess,
+                response.TxnRef,
+                response.AmtPurchase,
+                response.ResponseCode,
+                response.ResponseText,
+                response.AuthCode,
+                response.CardType,
+                response.Pan,
+                response.Caid,
+                response.Stan,
+                response.CardName,
+                response.DateSettlement
+            },
+            _ => payload
+        };
+    }
+
+    private static object CreateConnectRequest(string host, int port)
+    {
+        return new
+        {
+            host,
+            port,
+            useSsl = false,
+            useKeepAlive = false
+        };
+    }
+
+    private static EFTSendKeyRequest CreateCancelRequest()
+    {
+        return new EFTSendKeyRequest
+        {
+            Key = EFTPOSKey.OkCancel
+        };
+    }
+
+    private void SafeDisconnect(ILinklyEftClient client, string? txnRef)
+    {
+        try
+        {
+            var disconnected = client.Disconnect();
+            LogJson(
+                "disconnect",
+                disconnected ? "succeeded" : "failed",
+                "response",
+                sessionId: txnRef,
+                success: disconnected,
+                response: new
+                {
+                    disconnected
+                });
+        }
+        catch (Exception ex)
+        {
+            LogJson(
+                "disconnect",
+                "failed",
+                "response",
+                sessionId: txnRef,
+                success: false,
+                reason: ex.GetType().Name,
+                details: new
+                {
+                    ex.Message
+                });
         }
     }
 }

@@ -525,7 +525,7 @@ public sealed class CardTerminalSetupService(
 
     private static void LogLinklyCloudSetup(string message)
     {
-        ConsoleLog.Write("LinklyCloud", $"settings {message}");
+        LinklyJsonLog.WriteMessage("LinklyCloud", "settings-service", $"settings {message}");
     }
 
     private static string DescribeTokenSource(string? accessToken)

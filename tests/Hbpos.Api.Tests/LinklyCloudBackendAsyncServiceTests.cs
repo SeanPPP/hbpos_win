@@ -3,6 +3,7 @@ using System.Net.Http.Json;
 using System.Text.Json;
 using Hbpos.Api.Services;
 using Hbpos.Contracts.Linkly;
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 
 namespace Hbpos.Api.Tests;
@@ -568,6 +569,96 @@ namespace Hbpos.Api.Tests;
     }
 
     [Fact]
+    public async Task TokenProvider_logs_linkly_token_request_and_response_json()
+    {
+        var credentialRepository = new CapturingCredentialRepository(new LinklyCloudCredentialRecord
+        {
+            StoreCode = "S01",
+            Environment = "Sandbox",
+            Username = "merchant-user",
+            Password = "merchant-password",
+            UpdatedAt = DateTime.UtcNow
+        });
+        var terminalRepository = new CapturingTerminalCredentialRepository(new LinklyCloudBackendTerminalCredentialRecord
+        {
+            Environment = "Sandbox",
+            StoreCode = "S01",
+            DeviceCode = "POS-01",
+            Secret = "secret-pos-01",
+            PosId = "11111111-1111-4111-8111-111111111111"
+        });
+        var logger = new RecordingLogger<HttpLinklyCloudBackendTokenProvider>();
+        var provider = new HttpLinklyCloudBackendTokenProvider(
+            credentialRepository,
+            terminalRepository,
+            new HttpClient(new CapturingTokenHttpMessageHandler()),
+            Options.Create(new LinklyCloudBackendAsyncOptions
+            {
+                SandboxAuthBaseUrl = "https://auth.sandbox.example/v1/",
+                SandboxRestBaseUrl = "https://rest.sandbox.example/v1/",
+                SandboxPosVendorId = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+                PosName = "HBPOS",
+                PosVersion = "2026.5.1"
+            }),
+            logger);
+
+        await provider.GetTokenAsync("Sandbox", "S01", "POS-01", CancellationToken.None);
+
+        using var requestLog = FindLinklyLog(logger.Lines, "token", "request");
+        Assert.Equal("api-backend-token-provider", requestLog.RootElement.GetProperty("source").GetString());
+        Assert.Equal("https://auth.sandbox.example/v1/tokens/cloudpos", requestLog.RootElement.GetProperty("details").GetProperty("url").GetString());
+        Assert.Equal("secret-pos-01", requestLog.RootElement.GetProperty("request").GetProperty("secret").GetString());
+        Assert.Equal("11111111-1111-4111-8111-111111111111", requestLog.RootElement.GetProperty("request").GetProperty("posId").GetString());
+        using var responseLog = FindLinklyLog(logger.Lines, "token", "response");
+        Assert.Equal(200, responseLog.RootElement.GetProperty("httpStatus").GetInt32());
+        Assert.Equal("token-for-111111111111", responseLog.RootElement.GetProperty("response").GetProperty("token").GetString());
+    }
+
+    [Fact]
+    public async Task Transport_logs_linkly_sandbox_rest_request_and_response_json()
+    {
+        var logger = new RecordingLogger<HttpLinklyCloudBackendAsyncTransport>();
+        var transport = new HttpLinklyCloudBackendAsyncTransport(
+            new HttpClient(new LinklyTransportHttpMessageHandler(
+                """
+                {
+                  "SessionId": "session-1",
+                  "Response": {
+                    "TxnRef": "260601120001",
+                    "ResponseCode": "00"
+                  }
+                }
+                """)),
+            logger);
+
+        await transport.StartTransactionAsync(
+            new LinklyCloudBackendTransportTransactionRequest(
+                "Sandbox",
+                "https://rest.sandbox.example/v1/",
+                "access-token",
+                "session-1",
+                "P",
+                1234,
+                "260601120001",
+                new Dictionary<string, string> { ["OPR"] = "C001|Cashier" },
+                new LinklyCloudBackendNotificationRequest(
+                    "https://public.example/api/v1/linkly/cloud-notifications/Sandbox/session-1/transaction",
+                    "Bearer callback-secret")),
+            CancellationToken.None);
+
+        using var requestLog = FindLinklyLog(logger.Lines, "transaction", "request");
+        Assert.Equal("api-backend-transport", requestLog.RootElement.GetProperty("source").GetString());
+        Assert.Equal("POST", requestLog.RootElement.GetProperty("details").GetProperty("method").GetString());
+        Assert.Equal("https://rest.sandbox.example/v1/sessions/session-1/transaction?async=true", requestLog.RootElement.GetProperty("details").GetProperty("url").GetString());
+        Assert.Equal("260601120001", requestLog.RootElement.GetProperty("details").GetProperty("txnRef").GetString());
+        Assert.Equal("260601120001", requestLog.RootElement.GetProperty("request").GetProperty("Request").GetProperty("TxnRef").GetString());
+        Assert.Equal("Bearer callback-secret", requestLog.RootElement.GetProperty("request").GetProperty("Notification").GetProperty("AuthorizationHeader").GetString());
+        using var responseLog = FindLinklyLog(logger.Lines, "transaction", "response");
+        Assert.Equal(200, responseLog.RootElement.GetProperty("httpStatus").GetInt32());
+        Assert.Equal("session-1", responseLog.RootElement.GetProperty("response").GetProperty("SessionId").GetString());
+    }
+
+    [Fact]
     public async Task TokenProvider_returns_clear_error_when_store_credential_is_missing()
     {
         var provider = new HttpLinklyCloudBackendTokenProvider(
@@ -702,6 +793,45 @@ namespace Hbpos.Api.Tests;
         Assert.All(health.Checks, check => Assert.True(check.IsReady));
         Assert.Single(terminalRepository.Credentials);
         Assert.Equal("secret-pos-01-updated", terminalRepository.Credentials.Single().Secret);
+    }
+
+    [Fact]
+    public async Task TerminalCredentialAndHealth_write_backend_pairing_json_without_secret_plaintext()
+    {
+        var logger = new RecordingLogger<LinklyCloudBackendAsyncService>();
+        var terminalRepository = new CapturingTerminalCredentialRepository();
+        var service = CreateService(
+            new CapturingLinklyCloudBackendAsyncTransport(HttpStatusCode.Accepted),
+            terminalCredentialRepository: terminalRepository,
+            logger: logger);
+
+        await service.UpsertTerminalCredentialAsync(
+            " S01 ",
+            " POS-01 ",
+            new LinklyCloudBackendTerminalCredentialUpsertRequest(
+                " sandbox ",
+                "secret-pos-01",
+                "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"),
+            "device:POS-01",
+            CancellationToken.None);
+        await service.GetHealthAsync("S01", "POS-01", "Sandbox", CancellationToken.None);
+
+        using var requestLog = FindLinklyLog(logger.Lines, "terminal-credential", "request");
+        Assert.Equal("api-backend-service", requestLog.RootElement.GetProperty("source").GetString());
+        Assert.Equal("Sandbox", requestLog.RootElement.GetProperty("environment").GetString());
+        Assert.Equal("S01", requestLog.RootElement.GetProperty("details").GetProperty("storeCode").GetString());
+        Assert.Equal("POS-01", requestLog.RootElement.GetProperty("details").GetProperty("deviceCode").GetString());
+        Assert.Equal("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", requestLog.RootElement.GetProperty("request").GetProperty("posId").GetString());
+        Assert.Equal(13, requestLog.RootElement.GetProperty("request").GetProperty("secret").GetProperty("secretLength").GetInt32());
+        Assert.DoesNotContain("secret-pos-01", logger.Lines, StringComparer.Ordinal);
+
+        using var successLog = FindLinklyLog(logger.Lines, "terminal-credential", "succeeded");
+        Assert.True(successLog.RootElement.GetProperty("success").GetBoolean());
+        Assert.True(successLog.RootElement.GetProperty("response").GetProperty("hasSecret").GetBoolean());
+
+        using var healthLog = FindLinklyLog(logger.Lines, "backend-health", "response");
+        Assert.True(healthLog.RootElement.GetProperty("success").GetBoolean());
+        Assert.Empty(healthLog.RootElement.GetProperty("response").GetProperty("failedChecks").EnumerateArray());
     }
 
     [Theory]
@@ -1005,7 +1135,8 @@ namespace Hbpos.Api.Tests;
         string? publicNotificationBaseUrl = "https://public.example/callback/",
         ILinklyCloudBackendAsyncRepository? repository = null,
         ILinklyCloudCredentialRepository? credentialRepository = null,
-        ILinklyCloudBackendTerminalCredentialRepository? terminalCredentialRepository = null)
+        ILinklyCloudBackendTerminalCredentialRepository? terminalCredentialRepository = null,
+        ILogger<LinklyCloudBackendAsyncService>? logger = null)
     {
         repository ??= new InMemoryLinklyCloudBackendAsyncRepository();
         credentialRepository ??= new CapturingCredentialRepository(new LinklyCloudCredentialRecord
@@ -1035,7 +1166,8 @@ namespace Hbpos.Api.Tests;
                 ProductionNotificationBearer = "production-notify",
                 SandboxNotificationBearer = "sandbox-notify",
                 PublicNotificationBaseUrl = publicNotificationBaseUrl
-            }));
+            }),
+            logger);
     }
 
     private static LinklyCloudBackendTransactionRequest CreateTransactionRequest()
@@ -1070,8 +1202,9 @@ namespace Hbpos.Api.Tests;
         ILinklyCloudBackendTokenProvider tokenProvider,
         ILinklyCloudCredentialRepository credentialRepository,
         ILinklyCloudBackendTerminalCredentialRepository terminalCredentialRepository,
-        IOptions<LinklyCloudBackendAsyncOptions> options)
-        : LinklyCloudBackendAsyncService(repository, transport, tokenProvider, credentialRepository, terminalCredentialRepository, options)
+        IOptions<LinklyCloudBackendAsyncOptions> options,
+        ILogger<LinklyCloudBackendAsyncService>? logger = null)
+        : LinklyCloudBackendAsyncService(repository, transport, tokenProvider, credentialRepository, terminalCredentialRepository, options, logger)
     {
         public ILinklyCloudBackendAsyncRepository Repository { get; } = repository;
     }
@@ -1381,6 +1514,71 @@ namespace Hbpos.Api.Tests;
                     expirySeconds = 300
                 })
             };
+        }
+    }
+
+    private sealed class LinklyTransportHttpMessageHandler(string responseJson) : HttpMessageHandler
+    {
+        protected override Task<HttpResponseMessage> SendAsync(
+            HttpRequestMessage request,
+            CancellationToken cancellationToken)
+        {
+            return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent(responseJson, System.Text.Encoding.UTF8, "application/json")
+            });
+        }
+    }
+
+    private static JsonDocument FindLinklyLog(
+        IReadOnlyList<string> lines,
+        string operation,
+        string phase)
+    {
+        foreach (var line in lines)
+        {
+            var jsonStart = line.IndexOf('{', StringComparison.Ordinal);
+            if (jsonStart < 0)
+            {
+                continue;
+            }
+
+            var document = JsonDocument.Parse(line[jsonStart..]);
+            if (string.Equals(document.RootElement.GetProperty("operation").GetString(), operation, StringComparison.Ordinal) &&
+                string.Equals(document.RootElement.GetProperty("phase").GetString(), phase, StringComparison.Ordinal))
+            {
+                return document;
+            }
+
+            document.Dispose();
+        }
+
+        throw new Xunit.Sdk.XunitException($"Expected Linkly JSON log operation={operation} phase={phase}.");
+    }
+
+    private sealed class RecordingLogger<T> : ILogger<T>
+    {
+        public List<string> Lines { get; } = [];
+
+        public IDisposable? BeginScope<TState>(TState state)
+            where TState : notnull
+        {
+            return null;
+        }
+
+        public bool IsEnabled(LogLevel logLevel)
+        {
+            return true;
+        }
+
+        public void Log<TState>(
+            LogLevel logLevel,
+            EventId eventId,
+            TState state,
+            Exception? exception,
+            Func<TState, Exception?, string> formatter)
+        {
+            Lines.Add(formatter(state, exception));
         }
     }
 }

@@ -1528,7 +1528,7 @@ public sealed partial class SettingsViewModel : ObservableObject
 
     private static void LogLinklyCloudSettings(string message)
     {
-        ConsoleLog.Write("LinklyCloud", $"settings ui {message}");
+        LinklyJsonLog.WriteMessage("LinklyCloud", "settings-ui", $"settings ui {message}");
     }
 
     private static string LogValue(string? value)

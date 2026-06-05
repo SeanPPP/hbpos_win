@@ -447,10 +447,19 @@ public sealed class LinklyController(
         [FromBody] JsonElement payload,
         CancellationToken cancellationToken)
     {
-        Log(
-            $"cloud backend notification request environment={LogValue(environment)} " +
-            $"sessionId={LogValue(sessionId)} type={LogValue(type)} " +
-            $"authorizationPresent={!string.IsNullOrWhiteSpace(Request.Headers.Authorization.ToString())}");
+        LogNotification(
+            "request",
+            "request",
+            environment,
+            sessionId,
+            type,
+            statusCode: null,
+            request: new
+            {
+                authorization = Request.Headers.Authorization.ToString(),
+                payload
+            },
+            response: null);
         try
         {
             await linklyCloudBackendAsyncService.ReceiveNotificationAsync(
@@ -460,28 +469,49 @@ public sealed class LinklyController(
                 Request.Headers.Authorization.ToString(),
                 payload,
                 cancellationToken);
-            Log(
-                $"cloud backend notification response environment={LogValue(environment)} " +
-                $"sessionId={LogValue(sessionId)} type={LogValue(type)} status=200");
-            return Ok(ApiResult<string>.Ok("accepted"));
+            var accepted = ApiResult<string>.Ok("accepted");
+            LogNotification(
+                "response",
+                "response",
+                environment,
+                sessionId,
+                type,
+                StatusCodes.Status200OK,
+                request: null,
+                response: accepted);
+            return Ok(accepted);
         }
         catch (LinklyCloudBackendNotificationUnauthorizedException)
         {
-            Log(
-                $"cloud backend notification response environment={LogValue(environment)} " +
-                $"sessionId={LogValue(sessionId)} type={LogValue(type)} status=401");
-            return Unauthorized(ApiResult<string>.Fail(
+            var unauthorized = ApiResult<string>.Fail(
                 "LINKLY_CLOUD_BACKEND_NOTIFICATION_UNAUTHORIZED",
-                "Linkly Cloud notification authorization is invalid."));
+                "Linkly Cloud notification authorization is invalid.");
+            LogNotification(
+                "response",
+                "response",
+                environment,
+                sessionId,
+                type,
+                StatusCodes.Status401Unauthorized,
+                request: null,
+                response: unauthorized);
+            return Unauthorized(unauthorized);
         }
         catch (LinklyCloudBackendValidationException ex)
         {
-            Log(
-                $"cloud backend notification response environment={LogValue(environment)} " +
-                $"sessionId={LogValue(sessionId)} type={LogValue(type)} status=400");
-            return BadRequest(ApiResult<string>.Fail(
+            var badRequest = ApiResult<string>.Fail(
                 CloudBackendInvalidCode,
-                ex.Message));
+                ex.Message);
+            LogNotification(
+                "response",
+                "response",
+                environment,
+                sessionId,
+                type,
+                StatusCodes.Status400BadRequest,
+                request: null,
+                response: badRequest);
+            return BadRequest(badRequest);
         }
     }
 
@@ -508,8 +538,121 @@ public sealed class LinklyController(
 
     private void Log(string message)
     {
-        Console.WriteLine($"[HBPOS][Api][LinklyCloud] {DateTimeOffset.Now:O} {message}");
-        logger?.LogInformation("[HBPOS][Api][LinklyCloud] {Message}", message);
+        LogJson(BuildJsonLog(
+            source: "api-linkly-controller",
+            operation: InferOperation(message),
+            phase: InferPhase(message),
+            direction: null,
+            environment: null,
+            sessionId: null,
+            httpStatus: null,
+            request: null,
+            response: null,
+            details: new
+            {
+                message
+            }));
+    }
+
+    private void LogNotification(
+        string phase,
+        string direction,
+        string environment,
+        string sessionId,
+        string type,
+        int? statusCode,
+        object? request,
+        object? response)
+    {
+        LogJson(BuildJsonLog(
+            source: "api-linkly-controller",
+            operation: $"notification-{type}",
+            phase: phase,
+            direction: direction,
+            environment: environment,
+            sessionId: sessionId,
+            httpStatus: statusCode,
+            request: request,
+            response: response,
+            details: new
+            {
+                type,
+                timestamp = DateTimeOffset.Now.ToString("O")
+            }));
+    }
+
+    private void LogJson(string json)
+    {
+        Console.WriteLine($"[HBPOS][Api][LinklyCloud] {DateTimeOffset.Now:O} {json}");
+        logger?.LogInformation("[HBPOS][Api][LinklyCloud] {Message}", json);
+    }
+
+    private static string BuildJsonLog(
+        string source,
+        string operation,
+        string phase,
+        string? direction,
+        string? environment,
+        string? sessionId,
+        int? httpStatus,
+        object? request,
+        object? response,
+        object? details)
+    {
+        return JsonSerializer.Serialize(new
+        {
+            source,
+            operation,
+            phase,
+            direction,
+            environment,
+            sessionId,
+            httpStatus,
+            success = httpStatus.HasValue ? httpStatus.Value is >= 200 and < 300 : (bool?)null,
+            reason = (string?)null,
+            elapsedMs = (long?)null,
+            request,
+            response,
+            details
+        });
+    }
+
+    private static string InferOperation(string message)
+    {
+        if (string.IsNullOrWhiteSpace(message))
+        {
+            return "linkly";
+        }
+
+        var trimmed = message.Trim();
+        var index = trimmed.IndexOf(' ', StringComparison.Ordinal);
+        return index <= 0 ? trimmed : trimmed[..index];
+    }
+
+    private static string InferPhase(string message)
+    {
+        if (message.Contains("rejected", StringComparison.OrdinalIgnoreCase))
+        {
+            return "rejected";
+        }
+
+        if (message.Contains("failed", StringComparison.OrdinalIgnoreCase))
+        {
+            return "failed";
+        }
+
+        if (message.Contains("response", StringComparison.OrdinalIgnoreCase))
+        {
+            return "response";
+        }
+
+        if (message.Contains("request", StringComparison.OrdinalIgnoreCase) ||
+            message.Contains("upsert", StringComparison.OrdinalIgnoreCase))
+        {
+            return "request";
+        }
+
+        return "event";
     }
 
     private static string LogValue(string? value)

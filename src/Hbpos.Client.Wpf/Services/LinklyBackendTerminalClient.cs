@@ -508,15 +508,27 @@ public sealed class LinklyBackendTerminalClient(
         CancellationToken cancellationToken)
     {
         var stopwatch = Stopwatch.StartNew();
-        Log($"start transaction http request start environment={request.Environment} txnType={request.TxnType}");
+        const string relativeUrl = "api/v1/linkly/cloud-backend/transactions";
+        LogHttpRequest(
+            "start transaction",
+            HttpMethod.Post,
+            FormatRequestUrl(relativeUrl),
+            request.TxnType,
+            txnRef: null,
+            bodyJson: SerializeDebugJson(request));
         using var response = await httpClient.PostAsJsonAsync(
-            "api/v1/linkly/cloud-backend/transactions",
+            relativeUrl,
             request,
             JsonOptions,
             cancellationToken);
-        var status = await ReadApiResultAsync(response, cancellationToken);
-        stopwatch.Stop();
-        LogStatusSnapshot($"start transaction http response elapsedMs={stopwatch.ElapsedMilliseconds} http={(int)response.StatusCode}", status);
+        var status = await ReadApiResultAsync(
+            response,
+            "start transaction",
+            HttpMethod.Post,
+            FormatRequestUrl(relativeUrl),
+            request.TxnType,
+            stopwatch,
+            cancellationToken);
         return status;
     }
 
@@ -525,20 +537,41 @@ public sealed class LinklyBackendTerminalClient(
         CancellationToken cancellationToken)
     {
         var stopwatch = Stopwatch.StartNew();
-        Log($"active session http request start environment={settings.Environment}");
+        var relativeUrl = $"api/v1/linkly/cloud-backend/transactions/active?environment={Uri.EscapeDataString(settings.Environment.ToString())}";
+        LogHttpRequest(
+            "active session",
+            HttpMethod.Get,
+            FormatRequestUrl(relativeUrl),
+            txnType: null,
+            txnRef: null,
+            bodyJson: null);
         using var response = await httpClient.GetAsync(
-            $"api/v1/linkly/cloud-backend/transactions/active?environment={Uri.EscapeDataString(settings.Environment.ToString())}",
+            relativeUrl,
             cancellationToken);
         if (response.StatusCode == HttpStatusCode.NotFound)
         {
+            var body = await response.Content.ReadAsStringAsync(cancellationToken);
             stopwatch.Stop();
-            Log($"active session http response elapsedMs={stopwatch.ElapsedMilliseconds} http=404");
+            LogHttpResponse(
+                "active session",
+                HttpMethod.Get,
+                FormatRequestUrl(relativeUrl),
+                response.StatusCode,
+                stopwatch.ElapsedMilliseconds,
+                txnType: null,
+                txnRef: null,
+                body);
             return null;
         }
 
-        var status = await ReadApiResultAsync(response, cancellationToken);
-        stopwatch.Stop();
-        LogStatusSnapshot($"active session http response elapsedMs={stopwatch.ElapsedMilliseconds} http={(int)response.StatusCode}", status);
+        var status = await ReadApiResultAsync(
+            response,
+            "active session",
+            HttpMethod.Get,
+            FormatRequestUrl(relativeUrl),
+            txnType: null,
+            stopwatch,
+            cancellationToken);
         return status;
     }
 
@@ -548,13 +581,25 @@ public sealed class LinklyBackendTerminalClient(
         CancellationToken cancellationToken)
     {
         var stopwatch = Stopwatch.StartNew();
-        Log($"status http request start sessionId={sessionId} environment={settings.Environment}");
+        var relativeUrl = $"api/v1/linkly/cloud-backend/transactions/{Uri.EscapeDataString(sessionId)}/status?environment={Uri.EscapeDataString(settings.Environment.ToString())}";
+        LogHttpRequest(
+            "status",
+            HttpMethod.Get,
+            FormatRequestUrl(relativeUrl),
+            txnType: null,
+            txnRef: null,
+            bodyJson: null);
         using var response = await httpClient.GetAsync(
-            $"api/v1/linkly/cloud-backend/transactions/{Uri.EscapeDataString(sessionId)}/status?environment={Uri.EscapeDataString(settings.Environment.ToString())}",
+            relativeUrl,
             cancellationToken);
-        var status = await ReadApiResultAsync(response, cancellationToken);
-        stopwatch.Stop();
-        LogStatusSnapshot($"status http response elapsedMs={stopwatch.ElapsedMilliseconds} http={(int)response.StatusCode}", status);
+        var status = await ReadApiResultAsync(
+            response,
+            "status",
+            HttpMethod.Get,
+            FormatRequestUrl(relativeUrl),
+            txnType: null,
+            stopwatch,
+            cancellationToken);
         return status;
     }
 
@@ -564,15 +609,28 @@ public sealed class LinklyBackendTerminalClient(
         CancellationToken cancellationToken)
     {
         var stopwatch = Stopwatch.StartNew();
-        Log($"recover http request start sessionId={sessionId} environment={settings.Environment}");
+        var relativeUrl = $"api/v1/linkly/cloud-backend/transactions/{Uri.EscapeDataString(sessionId)}/recover";
+        var request = new LinklyCloudBackendRecoverRequest(settings.Environment.ToString());
+        LogHttpRequest(
+            "recover",
+            HttpMethod.Post,
+            FormatRequestUrl(relativeUrl),
+            txnType: null,
+            txnRef: null,
+            bodyJson: SerializeDebugJson(request));
         using var response = await httpClient.PostAsJsonAsync(
-            $"api/v1/linkly/cloud-backend/transactions/{Uri.EscapeDataString(sessionId)}/recover",
-            new LinklyCloudBackendRecoverRequest(settings.Environment.ToString()),
+            relativeUrl,
+            request,
             JsonOptions,
             cancellationToken);
-        var status = await ReadApiResultAsync(response, cancellationToken);
-        stopwatch.Stop();
-        LogStatusSnapshot($"recover http response elapsedMs={stopwatch.ElapsedMilliseconds} http={(int)response.StatusCode}", status);
+        var status = await ReadApiResultAsync(
+            response,
+            "recover",
+            HttpMethod.Post,
+            FormatRequestUrl(relativeUrl),
+            txnType: null,
+            stopwatch,
+            cancellationToken);
         return status;
     }
 
@@ -584,18 +642,31 @@ public sealed class LinklyBackendTerminalClient(
     {
         var normalizedKey = LinklyTerminalDialogKeys.Normalize(action.Key);
         var stopwatch = Stopwatch.StartNew();
-        Log($"sendkey http request start sessionId={sessionId} environment={settings.Environment} key={normalizedKey}");
+        var relativeUrl = $"api/v1/linkly/cloud-backend/transactions/{Uri.EscapeDataString(sessionId)}/sendkey";
+        var request = new LinklyCloudBackendSendKeyRequest(
+            settings.Environment.ToString(),
+            normalizedKey,
+            NormalizeOptional(action.Data));
+        LogHttpRequest(
+            "sendkey",
+            HttpMethod.Post,
+            FormatRequestUrl(relativeUrl),
+            txnType: null,
+            txnRef: null,
+            bodyJson: SerializeDebugJson(request));
         using var response = await httpClient.PostAsJsonAsync(
-            $"api/v1/linkly/cloud-backend/transactions/{Uri.EscapeDataString(sessionId)}/sendkey",
-            new LinklyCloudBackendSendKeyRequest(
-                settings.Environment.ToString(),
-                normalizedKey,
-                NormalizeOptional(action.Data)),
+            relativeUrl,
+            request,
             JsonOptions,
             cancellationToken);
-        var status = await ReadApiResultAsync(response, cancellationToken);
-        stopwatch.Stop();
-        LogStatusSnapshot($"sendkey http response elapsedMs={stopwatch.ElapsedMilliseconds} http={(int)response.StatusCode}", status);
+        var status = await ReadApiResultAsync(
+            response,
+            "sendkey",
+            HttpMethod.Post,
+            FormatRequestUrl(relativeUrl),
+            txnType: null,
+            stopwatch,
+            cancellationToken);
         return status;
     }
 
@@ -639,6 +710,11 @@ public sealed class LinklyBackendTerminalClient(
 
     private static async Task<LinklyCloudBackendSessionResponse> ReadApiResultAsync(
         HttpResponseMessage response,
+        string operation,
+        HttpMethod method,
+        string url,
+        string? txnType,
+        Stopwatch stopwatch,
         CancellationToken cancellationToken)
     {
         var content = await response.Content.ReadAsStringAsync(cancellationToken);
@@ -654,6 +730,16 @@ public sealed class LinklyBackendTerminalClient(
                 result = null;
             }
         }
+        stopwatch.Stop();
+        LogHttpResponse(
+            operation,
+            method,
+            url,
+            response.StatusCode,
+            stopwatch.ElapsedMilliseconds,
+            txnType,
+            result?.Data?.TxnRef,
+            content);
 
         if (!response.IsSuccessStatusCode)
         {
@@ -674,6 +760,7 @@ public sealed class LinklyBackendTerminalClient(
             throw new JsonException("Linkly backend response is missing session id.");
         }
 
+        LogStatusSnapshot($"{operation} http response elapsedMs={stopwatch.ElapsedMilliseconds} http={(int)response.StatusCode}", result.Data);
         return result.Data;
     }
 
@@ -1420,16 +1507,113 @@ public sealed class LinklyBackendTerminalClient(
 
     private static void Log(string message)
     {
-        ConsoleLog.Write("LinklyBackend", message);
+        LinklyJsonLog.WriteMessage("LinklyBackend", "backend-terminal", message);
+    }
+
+    private string FormatRequestUrl(string relativeUrl)
+    {
+        return httpClient.BaseAddress is null
+            ? relativeUrl
+            : new Uri(httpClient.BaseAddress, relativeUrl).ToString();
+    }
+
+    private static string SerializeDebugJson<T>(T value)
+    {
+        return JsonSerializer.Serialize(value, JsonOptions);
+    }
+
+    private static void LogHttpRequest(
+        string operation,
+        HttpMethod method,
+        string url,
+        string? txnType,
+        string? txnRef,
+        string? bodyJson)
+    {
+        LinklyJsonLog.Write(
+            "LinklyBackend",
+            "backend-terminal",
+            operation,
+            "request",
+            direction: "request",
+            request: new
+            {
+                method = method.Method,
+                url,
+                body = RawJsonBody(bodyJson)
+            },
+            details: new
+            {
+                timestamp = DateTimeOffset.Now,
+                txnType,
+                txnRef
+            });
+    }
+
+    private static void LogHttpResponse(
+        string operation,
+        HttpMethod method,
+        string url,
+        HttpStatusCode statusCode,
+        long elapsedMs,
+        string? txnType,
+        string? txnRef,
+        string? bodyJson)
+    {
+        LinklyJsonLog.Write(
+            "LinklyBackend",
+            "backend-terminal",
+            operation,
+            "response",
+            direction: "response",
+            httpStatus: statusCode,
+            success: (int)statusCode is >= 200 and < 300,
+            elapsedMs: elapsedMs,
+            response: new
+            {
+                method = method.Method,
+                url,
+                body = RawJsonBody(bodyJson)
+            },
+            details: new
+            {
+                timestamp = DateTimeOffset.Now,
+                txnType,
+                txnRef
+            });
     }
 
     private static void LogStatusSnapshot(string prefix, LinklyCloudBackendSessionResponse status)
     {
         Log(
             $"{prefix} sessionId={status.SessionId} status={status.Status} lastHttp={status.LastHttpStatus?.ToString(CultureInfo.InvariantCulture) ?? "<null>"} " +
+            $"txnRef={LogValue(status.TxnRef)} " +
             $"display=\"{LogValue(TruncateForLog(status.DisplayText, 80))}\" " +
             $"flags=cancel:{status.CancelKeyFlag},ok:{status.OKKeyFlag},yes:{status.AcceptYesKeyFlag},no:{status.DeclineNoKeyFlag},auth:{status.AuthoriseKeyFlag} " +
             $"notifications={status.Notifications?.Count ?? 0}");
+    }
+
+    private static string LogJsonBody(string? value)
+    {
+        return string.IsNullOrWhiteSpace(value) ? "<none>" : value.Trim();
+    }
+
+    private static object? RawJsonBody(string? bodyJson)
+    {
+        if (string.IsNullOrWhiteSpace(bodyJson))
+        {
+            return null;
+        }
+
+        try
+        {
+            using var document = JsonDocument.Parse(bodyJson);
+            return JsonSerializer.Deserialize<object>(document.RootElement.GetRawText(), JsonOptions);
+        }
+        catch (JsonException)
+        {
+            return bodyJson;
+        }
     }
 
     private static string LogValue(string? value)

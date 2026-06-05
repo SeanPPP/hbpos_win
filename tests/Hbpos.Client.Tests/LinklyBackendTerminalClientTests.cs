@@ -158,6 +158,7 @@ public sealed class LinklyBackendTerminalClientTests
     [Fact]
     public async Task PurchaseAsync_uses_backend_contract_without_client_secret_payload()
     {
+        using var logs = new ConsoleLogCapture();
         var requests = new List<HttpRequestMessage>();
         var handler = new StubHttpMessageHandler(request =>
         {
@@ -228,6 +229,19 @@ public sealed class LinklyBackendTerminalClientTests
         Assert.True(LinklyBackendPaymentReference.TryGetPrintMarker(result.Reference, out var environment, out var sessionId));
         Assert.Equal("Sandbox", environment);
         Assert.Equal("backend-session-1", sessionId);
+        using var activeRequestLog = FindLinklyLog(logs.Lines, "active session", "request");
+        Assert.Equal("GET", activeRequestLog.RootElement.GetProperty("request").GetProperty("method").GetString());
+        Assert.Equal(JsonValueKind.Null, activeRequestLog.RootElement.GetProperty("request").GetProperty("body").ValueKind);
+        using var startRequestLog = FindLinklyLog(logs.Lines, "start transaction", "request");
+        Assert.Equal("POST", startRequestLog.RootElement.GetProperty("request").GetProperty("method").GetString());
+        Assert.Equal("Sandbox", startRequestLog.RootElement.GetProperty("request").GetProperty("body").GetProperty("environment").GetString());
+        Assert.Equal("P", startRequestLog.RootElement.GetProperty("request").GetProperty("body").GetProperty("txnType").GetString());
+        using var startResponseLog = FindLinklyLog(logs.Lines, "start transaction", "response");
+        Assert.Equal("260601120001", startResponseLog.RootElement.GetProperty("details").GetProperty("txnRef").GetString());
+        Assert.Equal("backend-session-1", startResponseLog.RootElement.GetProperty("response").GetProperty("body").GetProperty("data").GetProperty("sessionId").GetString());
+        using var statusResponseLog = FindLinklyLog(logs.Lines, "status", "response");
+        Assert.Equal("GET", statusResponseLog.RootElement.GetProperty("response").GetProperty("method").GetString());
+        Assert.Equal("Completed", statusResponseLog.RootElement.GetProperty("response").GetProperty("body").GetProperty("data").GetProperty("status").GetString());
         Assert.Collection(
             requests,
             active =>
@@ -1969,9 +1983,47 @@ public sealed class LinklyBackendTerminalClientTests
         }
     }
 
+    private static JsonDocument FindLinklyLog(
+        IReadOnlyList<string> lines,
+        string operation,
+        string phase)
+    {
+        foreach (var line in lines)
+        {
+            var jsonStart = line.IndexOf('{', StringComparison.Ordinal);
+            if (jsonStart < 0)
+            {
+                continue;
+            }
+
+            var document = JsonDocument.Parse(line[jsonStart..]);
+            if (string.Equals(document.RootElement.GetProperty("operation").GetString(), operation, StringComparison.Ordinal) &&
+                string.Equals(document.RootElement.GetProperty("phase").GetString(), phase, StringComparison.Ordinal))
+            {
+                return document;
+            }
+
+            document.Dispose();
+        }
+
+        throw new Xunit.Sdk.XunitException($"Expected Linkly JSON log operation={operation} phase={phase}.");
+    }
+
     private sealed class ConsoleLogCapture : IDisposable
     {
-        public List<string> Lines { get; } = [];
+        private readonly object syncRoot = new();
+        private readonly List<string> lines = [];
+
+        public IReadOnlyList<string> Lines
+        {
+            get
+            {
+                lock (syncRoot)
+                {
+                    return lines.ToArray();
+                }
+            }
+        }
 
         public ConsoleLogCapture()
         {
@@ -1985,7 +2037,10 @@ public sealed class LinklyBackendTerminalClientTests
 
         private void OnLineWritten(string line)
         {
-            Lines.Add(line);
+            lock (syncRoot)
+            {
+                lines.Add(line);
+            }
         }
     }
 }

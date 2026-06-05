@@ -623,7 +623,7 @@ public sealed class LinklyCloudTerminalClient(
 
     private static void Log(string message)
     {
-        ConsoleLog.Write("LinklyCloud", message);
+        LinklyJsonLog.WriteMessage("LinklyCloud", "cloud-terminal", message);
     }
 
     private static string LogValue(string? value)

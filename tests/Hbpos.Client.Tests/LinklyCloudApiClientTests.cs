@@ -31,11 +31,15 @@ public sealed class LinklyCloudApiClientTests
         Assert.Equal("store-user", ReadJsonString(body, "username"));
         Assert.Equal("store-password", ReadJsonString(body, "password"));
         Assert.Equal("12345", ReadJsonString(body, "pairCode"));
-        Assert.Contains(logs.Lines, line => line.Contains("pair request start", StringComparison.Ordinal));
-        Assert.DoesNotContain(logs.Lines, line => line.Contains("store-user", StringComparison.Ordinal));
-        Assert.DoesNotContain(logs.Lines, line => line.Contains("store-password", StringComparison.Ordinal));
-        Assert.DoesNotContain(logs.Lines, line => line.Contains("12345", StringComparison.Ordinal));
-        Assert.DoesNotContain(logs.Lines, line => line.Contains("paired-secret", StringComparison.Ordinal));
+        using var requestLog = FindLinklyLog(logs.Lines, "pair", "request");
+        Assert.Equal("cloud-api", requestLog.RootElement.GetProperty("source").GetString());
+        Assert.Equal("request", requestLog.RootElement.GetProperty("direction").GetString());
+        Assert.Equal("https://auth.example/v1/", requestLog.RootElement.GetProperty("details").GetProperty("authBaseUrl").GetString());
+        Assert.Equal("store-user", requestLog.RootElement.GetProperty("request").GetProperty("username").GetString());
+        Assert.Equal("store-password", requestLog.RootElement.GetProperty("request").GetProperty("password").GetString());
+        Assert.Equal("12345", requestLog.RootElement.GetProperty("request").GetProperty("pairCode").GetString());
+        using var successLog = FindLinklyLog(logs.Lines, "pair", "succeeded");
+        Assert.Equal("paired-secret", successLog.RootElement.GetProperty("response").GetProperty("secret").GetString());
     }
 
     [Fact]
@@ -83,9 +87,11 @@ public sealed class LinklyCloudApiClientTests
         Assert.Equal("2026.5.1", ReadJsonString(body, "posVersion"));
         Assert.Equal("3e7f5001-58a3-43fa-9129-6e84a7b4f2a0", ReadJsonString(body, "posId"));
         Assert.Equal("a256b7ec-709d-4c7d-8ffe-57cc7ca1fd22", ReadJsonString(body, "posVendorId"));
-        Assert.Contains(logs.Lines, line => line.Contains("token request start", StringComparison.Ordinal));
-        Assert.DoesNotContain(logs.Lines, line => line.Contains("paired-secret", StringComparison.Ordinal));
-        Assert.DoesNotContain(logs.Lines, line => line.Contains("bearer-token", StringComparison.Ordinal));
+        using var requestLog = FindLinklyLog(logs.Lines, "token", "request");
+        Assert.Equal("paired-secret", requestLog.RootElement.GetProperty("request").GetProperty("secret").GetString());
+        Assert.Equal("3e7f5001-58a3-43fa-9129-6e84a7b4f2a0", requestLog.RootElement.GetProperty("request").GetProperty("posId").GetString());
+        using var successLog = FindLinklyLog(logs.Lines, "token", "succeeded");
+        Assert.Equal("bearer-token", successLog.RootElement.GetProperty("response").GetProperty("token").GetString());
     }
 
     [Theory]
@@ -353,6 +359,32 @@ public sealed class LinklyCloudApiClientTests
         using var document = JsonDocument.Parse(json);
         var value = document.RootElement.GetProperty(objectName).GetProperty(propertyName);
         return value.ValueKind == JsonValueKind.Number ? value.GetRawText() : value.GetString();
+    }
+
+    private static JsonDocument FindLinklyLog(
+        IReadOnlyList<string> lines,
+        string operation,
+        string phase)
+    {
+        foreach (var line in lines)
+        {
+            var jsonStart = line.IndexOf('{', StringComparison.Ordinal);
+            if (jsonStart < 0)
+            {
+                continue;
+            }
+
+            var document = JsonDocument.Parse(line[jsonStart..]);
+            if (string.Equals(document.RootElement.GetProperty("operation").GetString(), operation, StringComparison.Ordinal) &&
+                string.Equals(document.RootElement.GetProperty("phase").GetString(), phase, StringComparison.Ordinal))
+            {
+                return document;
+            }
+
+            document.Dispose();
+        }
+
+        throw new Xunit.Sdk.XunitException($"Expected Linkly JSON log operation={operation} phase={phase}.");
     }
 
     private sealed class StubHttpMessageHandler(

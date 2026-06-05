@@ -1,6 +1,7 @@
 using Hbpos.Client.Wpf.Models;
 using Hbpos.Client.Wpf.Services;
 using PCEFTPOS.EFTClient.IPInterface;
+using System.Text.Json;
 
 namespace Hbpos.Client.Tests;
 
@@ -9,6 +10,7 @@ public sealed class LinklyTerminalClientTests
     [Fact]
     public async Task PurchaseAsync_sends_purchase_request_and_returns_card_transaction()
     {
+        using var logs = new ConsoleLogCapture();
         var eftClient = new FakeLinklyEftClient(
             new EFTReceiptResponse
             {
@@ -45,11 +47,31 @@ public sealed class LinklyTerminalClientTests
         Assert.Equal("TXN-1", transaction.TxnRef);
         Assert.Equal("****1234", transaction.MaskedCardNumber);
         Assert.Contains("MERCHANT COPY", transaction.ReceiptText);
+
+        var events = logs.ReadJsonEvents("LinklyLocal");
+        var connectEvent = AssertEvent(events, "connect", "succeeded", "response");
+        Assert.True(connectEvent.GetProperty("response").GetProperty("connected").GetBoolean());
+        var requestEvent = AssertEvent(events, "transaction", "sent", "request");
+        Assert.True(requestEvent.TryGetProperty("request", out var requestJson));
+        Assert.StartsWith("TERM1", requestJson.GetProperty("txnRef").GetString(), StringComparison.Ordinal);
+        Assert.Equal("00", requestJson.GetProperty("merchant").GetString());
+        Assert.Equal("10", requestJson.GetProperty("amtPurchase").GetRawText());
+        var receiptEvent = AssertEvent(events, "receipt", "received", "response");
+        Assert.True(receiptEvent.TryGetProperty("response", out var receiptJson));
+        Assert.Equal("MERCHANT COPY", receiptJson.GetProperty("receiptText")[0].GetString());
+        var responseEvent = AssertEvent(events, "transaction", "received", "response");
+        Assert.True(responseEvent.TryGetProperty("response", out var responseJson));
+        Assert.Equal("TXN-1", responseJson.GetProperty("txnRef").GetString());
+        Assert.Equal("00", responseJson.GetProperty("responseCode").GetString());
+        Assert.Equal("10", responseJson.GetProperty("amtPurchase").GetRawText());
+        var disconnectEvent = AssertEvent(events, "disconnect", "succeeded", "response");
+        Assert.True(disconnectEvent.GetProperty("response").GetProperty("disconnected").GetBoolean());
     }
 
     [Fact]
     public async Task PurchaseAsync_fails_closed_when_connection_fails()
     {
+        using var logs = new ConsoleLogCapture();
         var eftClient = new FakeLinklyEftClient { ConnectResult = false };
         var client = new LinklyTerminalClient(new FakeLinklyEftClientFactory(eftClient));
 
@@ -57,6 +79,11 @@ public sealed class LinklyTerminalClientTests
 
         Assert.False(result.Approved);
         Assert.Contains("connection failed", result.Message, StringComparison.OrdinalIgnoreCase);
+        var events = logs.ReadJsonEvents("LinklyLocal");
+        var connectEvent = AssertEvent(events, "connect", "failed", "response");
+        Assert.True(connectEvent.TryGetProperty("request", out _));
+        Assert.True(connectEvent.TryGetProperty("response", out var responseJson));
+        Assert.False(responseJson.GetProperty("connected").GetBoolean());
     }
 
     [Fact]
@@ -152,6 +179,7 @@ public sealed class LinklyTerminalClientTests
     [Fact]
     public async Task PurchaseAsync_recovers_approved_get_last_transaction_after_cancel_outcome_is_unknown()
     {
+        using var logs = new ConsoleLogCapture();
         using var cts = new CancellationTokenSource();
         var readCount = 0;
         var purchaseClient = new FakeLinklyEftClient
@@ -183,11 +211,24 @@ public sealed class LinklyTerminalClientTests
         Assert.Equal("ANZ:TERM12605260000000", result.Reference);
         Assert.IsType<EFTSendKeyRequest>(purchaseClient.Requests[1]);
         Assert.IsType<EFTGetLastTransactionRequest>(getLastClient.LastRequest);
+        var events = logs.ReadJsonEvents("LinklyLocal");
+        var cancelRequestEvent = AssertEvent(events, "cancel", "sent", "request");
+        Assert.True(cancelRequestEvent.GetProperty("request").TryGetProperty("key", out _));
+        var cancelFailedEvent = AssertEvent(events, "cancel", "failed", "response");
+        Assert.Equal("send-cancel-failed", cancelFailedEvent.GetProperty("reason").GetString());
+        var recoveryRequestEvent = AssertEvent(events, "get-last-transaction", "sent", "request");
+        Assert.StartsWith("TERM1", recoveryRequestEvent.GetProperty("request").GetProperty("txnRef").GetString(), StringComparison.Ordinal);
+        var recoveryResponseEvent = AssertEvent(events, "get-last-transaction", "received", "response");
+        Assert.True(recoveryResponseEvent.TryGetProperty("response", out var recoveryResponse));
+        Assert.Equal("TERM12605260000000", recoveryResponse.GetProperty("txnRef").GetString());
+        Assert.Equal("00", recoveryResponse.GetProperty("responseCode").GetString());
+        Assert.True(recoveryResponseEvent.GetProperty("success").GetBoolean());
     }
 
     [Fact]
     public async Task PurchaseAsync_recovers_approved_get_last_transaction_after_unknown_exception()
     {
+        using var logs = new ConsoleLogCapture();
         var purchaseClient = new FakeLinklyEftClient();
         purchaseClient.ReadExceptions.Enqueue(new InvalidOperationException("Linkly parser failed."));
         var getLastClient = new FakeLinklyEftClient(new EFTGetLastTransactionResponse
@@ -206,6 +247,15 @@ public sealed class LinklyTerminalClientTests
         Assert.True(result.Approved);
         Assert.Equal("ANZ:TERM12605260000000", result.Reference);
         Assert.IsType<EFTGetLastTransactionRequest>(getLastClient.LastRequest);
+        var events = logs.ReadJsonEvents("LinklyLocal");
+        var failureEvent = AssertEvent(events, "transaction", "failed", "response");
+        Assert.True(failureEvent.TryGetProperty("request", out var failedRequest));
+        Assert.True(failedRequest.TryGetProperty("txnType", out _));
+        Assert.Equal("InvalidOperationException", failureEvent.GetProperty("reason").GetString());
+        Assert.Equal("Linkly parser failed.", failureEvent.GetProperty("details").GetProperty("message").GetString());
+        var recoveryEvent = AssertEvent(events, "get-last-transaction", "received", "response");
+        Assert.True(recoveryEvent.TryGetProperty("response", out var recoveryResponse));
+        Assert.Equal("TERM12605260000000", recoveryResponse.GetProperty("txnRef").GetString());
     }
 
     [Fact]
@@ -363,6 +413,62 @@ public sealed class LinklyTerminalClientTests
 
         public void Dispose()
         {
+        }
+    }
+
+    private static JsonElement AssertEvent(
+        IReadOnlyList<JsonElement> events,
+        string operation,
+        string phase,
+        string direction)
+    {
+        var match = events.FirstOrDefault(element =>
+            string.Equals(element.GetProperty("operation").GetString(), operation, StringComparison.Ordinal) &&
+            string.Equals(element.GetProperty("phase").GetString(), phase, StringComparison.Ordinal) &&
+            string.Equals(element.GetProperty("direction").GetString(), direction, StringComparison.Ordinal));
+        Assert.True(match.ValueKind != JsonValueKind.Undefined, $"Missing log event {operation}/{phase}/{direction}.");
+        return match;
+    }
+
+    private static JsonElement ParseJsonPayload(string line)
+    {
+        var jsonStart = line.IndexOf('{', StringComparison.Ordinal);
+        Assert.True(jsonStart >= 0, $"Expected JSON payload in line: {line}");
+        using var document = JsonDocument.Parse(line[jsonStart..]);
+        return document.RootElement.Clone();
+    }
+
+    private sealed class ConsoleLogCapture : IDisposable
+    {
+        private readonly List<string> _lines = [];
+
+        public ConsoleLogCapture()
+        {
+            ConsoleLog.LineWritten += OnLineWritten;
+        }
+
+        public void Dispose()
+        {
+            ConsoleLog.LineWritten -= OnLineWritten;
+        }
+
+        public IReadOnlyList<JsonElement> ReadJsonEvents(string category)
+        {
+            lock (_lines)
+            {
+                return _lines
+                    .Where(line => line.Contains($"[HBPOS][Client][{category}]", StringComparison.Ordinal))
+                    .Select(ParseJsonPayload)
+                    .ToArray();
+            }
+        }
+
+        private void OnLineWritten(string line)
+        {
+            lock (_lines)
+            {
+                _lines.Add(line);
+            }
         }
     }
 }
