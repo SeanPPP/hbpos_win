@@ -2,6 +2,7 @@ using Hbpos.Client.Wpf.Models;
 using Hbpos.Client.Wpf.Services;
 using Hbpos.Contracts.Catalog;
 using Hbpos.Contracts.Orders;
+using System.Text.Json;
 
 namespace Hbpos.Client.Tests;
 
@@ -90,6 +91,52 @@ public sealed class CashPaymentWorkflowServiceTests
         Assert.Equal(2.20m, result.ChangeAmount);
         Assert.Equal(PaymentMethodKind.Cash, payment.Method);
         Assert.Equal(7.82m, payment.Amount);
+    }
+
+    [Fact]
+    public async Task Card_tender_creates_local_attempt_before_terminal_request_and_marks_order_completed_after_save()
+    {
+        var cart = new PosCartService();
+        cart.AddItem(CreateItem("SKU-399", "Recoverable Card Tea", "930399", 10m));
+        var orders = new RecordingOrderRepository();
+        var attempts = new RecordingCardPaymentAttemptRepository();
+        var terminal = new ObservingCardTerminalClient(() =>
+        {
+            var attempt = Assert.Single(attempts.Attempts);
+            Assert.Equal(LocalCardPaymentAttemptStatus.Pending, attempt.Status);
+            Assert.Contains("\"cardAmount\":10", attempt.OrderDraftJson, StringComparison.OrdinalIgnoreCase);
+        });
+        var workflow = new CashPaymentWorkflowService(
+            new CashCheckoutService(),
+            orders,
+            new StubSyncQueueRepository(pendingCount: 1),
+            cardTerminalClient: terminal,
+            cardPaymentAttemptRepository: attempts,
+            cardTerminalSettingsProvider: new StaticCardTerminalSettingsProvider(CreateBackendLinklySettings()));
+        var session = new PosSessionState("HB POS", "S001", "Main Store", "POS-01", "C001", "Alice", true, 0);
+
+        var tenderResult = await workflow.AddTenderAsync(
+            PaymentMethodKind.Card,
+            session,
+            10m,
+            [],
+            "10.00",
+            cancellationToken: CancellationToken.None,
+            cartSnapshot: cart.CreateSnapshot());
+        var completion = await workflow.CompletePaymentAsync(
+            cart,
+            session,
+            [tenderResult.Tender!],
+            cashTenderedAmount: 0m);
+
+        Assert.True(tenderResult.Succeeded);
+        Assert.Equal("backend-session-1", attempts.Attempts.Single().SessionId);
+        Assert.Equal(LocalCardPaymentAttemptStatus.OrderCompleted, attempts.Attempts.Single().Status);
+        var draft = JsonSerializer.Deserialize<CardPaymentOrderDraft>(
+            attempts.Attempts.Single().OrderDraftJson,
+            new JsonSerializerOptions(JsonSerializerDefaults.Web));
+        Assert.Equal(draft!.OrderGuid, completion.Order.OrderGuid);
+        Assert.Equal("ANZBACKEND:TXN-1:session=backend-session-1:environment=Sandbox", completion.Order.Payments.Single().Reference);
     }
 
     [Fact]
@@ -699,6 +746,21 @@ public sealed class CashPaymentWorkflowServiceTests
             UpdatedAt: DateTimeOffset.UtcNow);
     }
 
+    private static CardTerminalSettings CreateBackendLinklySettings()
+    {
+        return new CardTerminalSettings(
+            CardProcessorKind.Linkly,
+            CardTerminalEnvironment.Sandbox,
+            "127.0.0.1",
+            2011,
+            null,
+            null,
+            null,
+            CardTerminalSettings.GetSquareApiBaseUrl(CardTerminalEnvironment.Sandbox),
+            TimeSpan.FromSeconds(90),
+            LinklyConnectionMode.CloudBackendAsync);
+    }
+
     private sealed class RecordingOrderRepository : ILocalOrderRepository
     {
         public List<LocalOrder> SavedOrders { get; } = [];
@@ -830,6 +892,166 @@ public sealed class CashPaymentWorkflowServiceTests
         public Task<IReadOnlyList<SyncQueueListItem>> GetActiveItemsAsync(int take = 20, CancellationToken cancellationToken = default)
         {
             return Task.FromResult<IReadOnlyList<SyncQueueListItem>>([]);
+        }
+    }
+
+    private sealed class RecordingCardPaymentAttemptRepository : ILocalCardPaymentAttemptRepository
+    {
+        public List<LocalCardPaymentAttempt> Attempts { get; } = [];
+
+        public Task CreateAsync(LocalCardPaymentAttempt attempt, CancellationToken cancellationToken = default)
+        {
+            Attempts.Add(attempt);
+            return Task.CompletedTask;
+        }
+
+        public Task UpdateSessionAsync(
+            Guid attemptGuid,
+            string sessionId,
+            string? txnRef,
+            DateTimeOffset updatedAt,
+            CancellationToken cancellationToken = default)
+        {
+            Update(attemptGuid, attempt => attempt with
+            {
+                SessionId = sessionId,
+                TxnRef = txnRef,
+                Status = LocalCardPaymentAttemptStatus.SessionStarted,
+                UpdatedAt = updatedAt
+            });
+            return Task.CompletedTask;
+        }
+
+        public Task UpdateOutcomeAsync(
+            Guid attemptGuid,
+            LocalCardPaymentAttemptStatus status,
+            string? responseCode,
+            string? responseText,
+            string? paymentReference,
+            DateTimeOffset completedAt,
+            CancellationToken cancellationToken = default)
+        {
+            Update(attemptGuid, attempt => attempt with
+            {
+                Status = status,
+                ResponseCode = responseCode,
+                ResponseText = responseText,
+                PaymentReference = paymentReference,
+                CompletedAt = completedAt,
+                UpdatedAt = completedAt
+            });
+            return Task.CompletedTask;
+        }
+
+        public Task MarkOrderCompletedAsync(
+            Guid attemptGuid,
+            DateTimeOffset completedAt,
+            CancellationToken cancellationToken = default)
+        {
+            Update(attemptGuid, attempt => attempt with
+            {
+                Status = LocalCardPaymentAttemptStatus.OrderCompleted,
+                CompletedAt = attempt.CompletedAt ?? completedAt,
+                UpdatedAt = completedAt
+            });
+            return Task.CompletedTask;
+        }
+
+        public Task MarkAcknowledgedAsync(
+            Guid attemptGuid,
+            DateTimeOffset acknowledgedAt,
+            CancellationToken cancellationToken = default)
+        {
+            Update(attemptGuid, attempt => attempt with
+            {
+                AcknowledgedAt = acknowledgedAt,
+                UpdatedAt = acknowledgedAt
+            });
+            return Task.CompletedTask;
+        }
+
+        public Task MarkRecoveringAsync(
+            Guid attemptGuid,
+            DateTimeOffset updatedAt,
+            CancellationToken cancellationToken = default)
+        {
+            Update(attemptGuid, attempt => attempt with
+            {
+                Status = LocalCardPaymentAttemptStatus.Recovering,
+                UpdatedAt = updatedAt
+            });
+            return Task.CompletedTask;
+        }
+
+        public Task<LocalCardPaymentAttempt?> GetLatestOpenAttemptAsync(
+            string storeCode,
+            string deviceCode,
+            string cashierId,
+            string environment,
+            CancellationToken cancellationToken = default)
+        {
+            return Task.FromResult<LocalCardPaymentAttempt?>(Attempts.LastOrDefault());
+        }
+
+        public Task<LocalCardPaymentAttempt?> GetAttemptAsync(Guid attemptGuid, CancellationToken cancellationToken = default)
+        {
+            return Task.FromResult<LocalCardPaymentAttempt?>(Attempts.SingleOrDefault(attempt => attempt.AttemptGuid == attemptGuid));
+        }
+
+        private void Update(Guid attemptGuid, Func<LocalCardPaymentAttempt, LocalCardPaymentAttempt> update)
+        {
+            var index = Attempts.FindIndex(attempt => attempt.AttemptGuid == attemptGuid);
+            Assert.True(index >= 0);
+            Attempts[index] = update(Attempts[index]);
+        }
+    }
+
+    private sealed class ObservingCardTerminalClient(Action beforeResult) : ICardTerminalClient
+    {
+        public Task<PaymentAuthorizationResult> AuthorizeAsync(
+            decimal amount,
+            PosSessionState session,
+            CancellationToken cancellationToken = default)
+        {
+            beforeResult();
+            return Task.FromResult(new PaymentAuthorizationResult(
+                true,
+                "ANZBACKEND:TXN-1:session=backend-session-1:environment=Sandbox",
+                "APPROVED",
+                amount,
+                [
+                    new CardTransactionDto(
+                        "ANZ",
+                        "TXN-1",
+                        null,
+                        null,
+                        null,
+                        null,
+                        null,
+                        "00",
+                        "APPROVED",
+                        null,
+                        DateTimeOffset.UtcNow,
+                        amount,
+                        null)
+                ],
+                "ANZ",
+                "Sandbox",
+                LinklyConnectionMode.CloudBackendAsync.ToString(),
+                "P",
+                "backend-session-1",
+                "TXN-1",
+                "00",
+                "APPROVED"));
+        }
+
+        public Task<PaymentAuthorizationResult> RefundAsync(
+            decimal amount,
+            PosSessionState session,
+            string? originalReference,
+            CancellationToken cancellationToken = default)
+        {
+            throw new NotSupportedException();
         }
     }
 

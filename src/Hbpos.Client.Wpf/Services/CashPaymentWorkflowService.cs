@@ -1,4 +1,6 @@
 using System.Globalization;
+using System.Text.Json;
+using System.Text.Json.Serialization;
 using Hbpos.Client.Wpf.Models;
 using Hbpos.Contracts.Orders;
 
@@ -23,7 +25,8 @@ public interface ICashPaymentWorkflowService
         IReadOnlyList<PaymentTender> currentTenders,
         string? amountText,
         string? referenceText = null,
-        CancellationToken cancellationToken = default);
+        CancellationToken cancellationToken = default,
+        PosCartSnapshot? cartSnapshot = null);
 
     Task<CashPaymentWorkflowResult> CompleteAsync(
         PosCartService cart,
@@ -53,8 +56,15 @@ public sealed class CashPaymentWorkflowService(
     ISyncQueueRepository syncQueueRepository,
     IOrderUploadService? orderUploadService = null,
     ICardTerminalClient? cardTerminalClient = null,
-    IVoucherTenderClient? voucherTenderClient = null) : ICashPaymentWorkflowService
+    IVoucherTenderClient? voucherTenderClient = null,
+    ILocalCardPaymentAttemptRepository? cardPaymentAttemptRepository = null,
+    ICardTerminalSettingsProvider? cardTerminalSettingsProvider = null) : ICashPaymentWorkflowService
 {
+    private static readonly JsonSerializerOptions CardAttemptJsonOptions = new(JsonSerializerDefaults.Web)
+    {
+        DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull
+    };
+
     private readonly CashRoundingPolicy _cashRoundingPolicy = new();
     private readonly ICardTerminalClient _cardTerminalClient = cardTerminalClient ?? UnavailableCardTerminalClient.Instance;
     private readonly IVoucherTenderClient _voucherTenderClient = voucherTenderClient ?? UnavailableVoucherTenderClient.Instance;
@@ -147,7 +157,8 @@ public sealed class CashPaymentWorkflowService(
         IReadOnlyList<PaymentTender> currentTenders,
         string? amountText,
         string? referenceText = null,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default,
+        PosCartSnapshot? cartSnapshot = null)
     {
         if (!TryParseTenderedAmount(amountText, out var amount) || amount <= 0m)
         {
@@ -180,14 +191,16 @@ public sealed class CashPaymentWorkflowService(
             return method switch
             {
                 PaymentMethodKind.Cash => CreateRefundCashTenderAttempt(amount),
-                PaymentMethodKind.Card => await AuthorizeRefundTenderAsync(
+                PaymentMethodKind.Card => await AuthorizeCardTenderAsync(
                     amount,
                     CalculateExternalRemainingAmount(actualAmount, currentTenders),
                     session,
+                    actualAmount,
+                    currentTenders,
+                    cartSnapshot,
                     referenceText,
                     cancellationToken,
-                    _cardTerminalClient.RefundAsync,
-                    PaymentMethodKind.Card,
+                    isRefund: true,
                     "payment.status.cardExceedsRemaining",
                     "payment.status.cardDeclined",
                     "payment.status.cardTenderAdded"),
@@ -207,14 +220,16 @@ public sealed class CashPaymentWorkflowService(
         return method switch
         {
             PaymentMethodKind.Cash => CreateCashTenderAttempt(amount),
-            PaymentMethodKind.Card => await AuthorizeExternalTenderAsync(
+            PaymentMethodKind.Card => await AuthorizeCardTenderAsync(
                 amount,
                 CalculateExternalRemainingAmount(actualAmount, currentTenders),
                 session,
+                actualAmount,
+                currentTenders,
+                cartSnapshot,
                 null,
                 cancellationToken,
-                (paymentAmount, paymentSession, _, token) => _cardTerminalClient.AuthorizeAsync(paymentAmount, paymentSession, token),
-                PaymentMethodKind.Card,
+                isRefund: false,
                 "payment.status.cardExceedsRemaining",
                 "payment.status.cardDeclined",
                 "payment.status.cardTenderAdded"),
@@ -269,7 +284,10 @@ public sealed class CashPaymentWorkflowService(
     {
         var result = checkout.CreatePaymentOrder(cart, session, tenders, cashTenderedAmount);
         // 退款代金券先以待发券状态落本地，确保崩溃后仍能沿用原始幂等键恢复。
-        var order = PrepareOrderForVoucherRefundPersistence(result.Order);
+        var order = await PrepareOrderForRecoverableCardPersistenceAsync(
+            PrepareOrderForVoucherRefundPersistence(result.Order),
+            tenders,
+            cancellationToken);
         await orderRepository.SavePendingOrderAsync(order, cancellationToken);
         try
         {
@@ -312,6 +330,7 @@ public sealed class CashPaymentWorkflowService(
             }
         }
 
+        await MarkCompletedCardAttemptsAsync(tenders, cancellationToken);
         cart.Clear();
 
         var pendingSyncCount = await syncQueueRepository.CountPendingAsync(cancellationToken);
@@ -385,6 +404,268 @@ public sealed class CashPaymentWorkflowService(
             changeAmount,
             pendingSyncCount,
             updatedSession);
+    }
+
+    private async Task<PaymentTenderAttemptResult> AuthorizeCardTenderAsync(
+        decimal amount,
+        decimal remainingAmount,
+        PosSessionState session,
+        decimal actualAmount,
+        IReadOnlyList<PaymentTender> currentTenders,
+        PosCartSnapshot? cartSnapshot,
+        string? referenceText,
+        CancellationToken cancellationToken,
+        bool isRefund,
+        string exceedsRemainingStatusKey,
+        string declinedStatusKey,
+        string approvedStatusKey)
+    {
+        if (amount > remainingAmount)
+        {
+            ConsoleLog.Write(
+                "CardRefund",
+                $"workflow blocked card {(isRefund ? "refund" : "payment")} reason=amount-exceeds-remaining amount={amount:0.00} remaining={remainingAmount:0.00} originalReference={LogValue(referenceText)}");
+            return PaymentTenderAttemptResult.Fail(exceedsRemainingStatusKey);
+        }
+
+        var operation = isRefund ? "refund" : "payment";
+        ConsoleLog.Write(
+            "CardRefund",
+            $"workflow terminal {operation} start amount={amount:0.00} remaining={remainingAmount:0.00} originalReference={LogValue(referenceText)}");
+
+        var attempt = await TryCreateCardPaymentAttemptAsync(
+            amount,
+            session,
+            actualAmount,
+            currentTenders,
+            cartSnapshot,
+            referenceText,
+            isRefund,
+            cancellationToken);
+
+        PaymentAuthorizationResult authorization;
+        try
+        {
+            authorization = isRefund
+                ? await _cardTerminalClient.RefundAsync(amount, session, referenceText, cancellationToken)
+                : await _cardTerminalClient.AuthorizeAsync(amount, session, cancellationToken);
+        }
+        catch
+        {
+            if (attempt is not null)
+            {
+                await cardPaymentAttemptRepository!.UpdateOutcomeAsync(
+                    attempt.AttemptGuid,
+                    LocalCardPaymentAttemptStatus.Failed,
+                    null,
+                    "Card terminal request failed before a final response was received.",
+                    null,
+                    DateTimeOffset.UtcNow,
+                    CancellationToken.None);
+            }
+
+            throw;
+        }
+
+        if (attempt is not null)
+        {
+            await UpdateCardPaymentAttemptAfterAuthorizationAsync(attempt.AttemptGuid, authorization, cancellationToken);
+        }
+
+        ConsoleLog.Write(
+            "CardRefund",
+            $"workflow terminal {operation} completed approved={authorization.Approved} reference={LogValue(authorization.Reference)} " +
+            $"message={LogValue(authorization.Message)} authorizedAmount={authorization.AuthorizedAmount?.ToString("0.00") ?? "<null>"} " +
+            $"cardTxCount={authorization.CardTransactions?.Count ?? 0}");
+
+        if (!authorization.Approved)
+        {
+            return PaymentTenderAttemptResult.Fail(
+                declinedStatusKey,
+                authorization.Message);
+        }
+
+        var authorizedAmount = decimal.Round(
+            authorization.AuthorizedAmount ?? amount,
+            2,
+            MidpointRounding.AwayFromZero);
+        if (authorizedAmount <= 0m)
+        {
+            return PaymentTenderAttemptResult.Fail(declinedStatusKey, authorization.Message);
+        }
+
+        if (authorizedAmount > remainingAmount)
+        {
+            return PaymentTenderAttemptResult.Fail(exceedsRemainingStatusKey);
+        }
+
+        if (authorizedAmount != amount)
+        {
+            return PaymentTenderAttemptResult.Fail(
+                declinedStatusKey,
+                "Card terminal authorized amount did not match the requested amount.");
+        }
+
+        var reference = isRefund
+            ? CardRefundReference.Format(authorization.Reference, referenceText!)
+            : authorization.Reference;
+        return PaymentTenderAttemptResult.Success(
+            new PaymentTender(
+                PaymentMethodKind.Card,
+                isRefund ? -authorizedAmount : authorizedAmount,
+                reference,
+                CardTransactions: authorization.CardTransactions,
+                IdempotencyKey: attempt is null ? null : FormatCardAttemptTenderKey(attempt.AttemptGuid)),
+            approvedStatusKey);
+    }
+
+    private async Task<LocalCardPaymentAttempt?> TryCreateCardPaymentAttemptAsync(
+        decimal amount,
+        PosSessionState session,
+        decimal actualAmount,
+        IReadOnlyList<PaymentTender> currentTenders,
+        PosCartSnapshot? cartSnapshot,
+        string? referenceText,
+        bool isRefund,
+        CancellationToken cancellationToken)
+    {
+        if (cardPaymentAttemptRepository is null || cardTerminalSettingsProvider is null || cartSnapshot is null)
+        {
+            return null;
+        }
+
+        var settings = await cardTerminalSettingsProvider.GetSettingsAsync(cancellationToken);
+        if (settings.Processor != CardProcessorKind.Linkly ||
+            CardTerminalSettings.NormalizeLinklyConnectionMode(settings.LinklyConnectionMode) != LinklyConnectionMode.CloudBackendAsync)
+        {
+            return null;
+        }
+
+        var now = DateTimeOffset.UtcNow;
+        var draft = new CardPaymentOrderDraft(
+            Guid.NewGuid(),
+            session,
+            cartSnapshot,
+            currentTenders.ToArray(),
+            actualAmount,
+            amount,
+            isRefund ? "R" : "P",
+            referenceText,
+            now);
+        var attempt = new LocalCardPaymentAttempt(
+            Guid.NewGuid(),
+            null,
+            null,
+            settings.Processor.ToString(),
+            settings.Environment.ToString(),
+            CardTerminalSettings.FormatLinklyConnectionMode(settings.LinklyConnectionMode),
+            isRefund ? "R" : "P",
+            amount,
+            LocalCardPaymentAttemptStatus.Pending,
+            JsonSerializer.Serialize(draft, CardAttemptJsonOptions),
+            session.StoreCode,
+            session.DeviceCode,
+            session.CashierId,
+            null,
+            null,
+            null,
+            now,
+            now,
+            null,
+            null);
+
+        await cardPaymentAttemptRepository.CreateAsync(attempt, cancellationToken);
+        return attempt;
+    }
+
+    private async Task UpdateCardPaymentAttemptAfterAuthorizationAsync(
+        Guid attemptGuid,
+        PaymentAuthorizationResult authorization,
+        CancellationToken cancellationToken)
+    {
+        var now = DateTimeOffset.UtcNow;
+        if (!string.IsNullOrWhiteSpace(authorization.SessionId))
+        {
+            await cardPaymentAttemptRepository!.UpdateSessionAsync(
+                attemptGuid,
+                authorization.SessionId,
+                authorization.TxnRef,
+                now,
+                cancellationToken);
+        }
+
+        var firstTransaction = authorization.CardTransactions?.FirstOrDefault();
+        var status = authorization.Approved
+            ? LocalCardPaymentAttemptStatus.Approved
+            : MapCardAttemptFailureStatus(authorization.Message, firstTransaction?.ResponseText);
+        await cardPaymentAttemptRepository!.UpdateOutcomeAsync(
+            attemptGuid,
+            status,
+            firstTransaction?.ResponseCode ?? authorization.ResponseCode,
+            firstTransaction?.ResponseText ?? authorization.ResponseText ?? authorization.Message,
+            authorization.Reference,
+            now,
+            cancellationToken);
+    }
+
+    private static LocalCardPaymentAttemptStatus MapCardAttemptFailureStatus(
+        string? message,
+        string? responseText)
+    {
+        var text = $"{message} {responseText}".ToUpperInvariant();
+        if (text.Contains("TIMEOUT", StringComparison.Ordinal))
+        {
+            return LocalCardPaymentAttemptStatus.TimedOut;
+        }
+
+        if (text.Contains("CANCEL", StringComparison.Ordinal))
+        {
+            return LocalCardPaymentAttemptStatus.Cancelled;
+        }
+
+        if (text.Contains("DECLIN", StringComparison.Ordinal))
+        {
+            return LocalCardPaymentAttemptStatus.Declined;
+        }
+
+        return LocalCardPaymentAttemptStatus.Failed;
+    }
+
+    private static string FormatCardAttemptTenderKey(Guid attemptGuid)
+    {
+        return $"CARD_ATTEMPT:{attemptGuid:N}";
+    }
+
+    private static bool TryReadCardAttemptTenderKey(string? value, out Guid attemptGuid)
+    {
+        attemptGuid = Guid.Empty;
+        const string prefix = "CARD_ATTEMPT:";
+        return !string.IsNullOrWhiteSpace(value) &&
+            value.StartsWith(prefix, StringComparison.OrdinalIgnoreCase) &&
+            Guid.TryParseExact(value[prefix.Length..], "N", out attemptGuid);
+    }
+
+    private async Task MarkCompletedCardAttemptsAsync(
+        IReadOnlyList<PaymentTender> tenders,
+        CancellationToken cancellationToken)
+    {
+        if (cardPaymentAttemptRepository is null)
+        {
+            return;
+        }
+
+        foreach (var attemptGuid in tenders
+            .Select(tender => TryReadCardAttemptTenderKey(tender.IdempotencyKey, out var attemptGuid) ? attemptGuid : (Guid?)null)
+            .Where(attemptGuid => attemptGuid is not null)
+            .Select(attemptGuid => attemptGuid!.Value)
+            .Distinct())
+        {
+            // 订单落本地后才把刷卡 attempt 标为完成，避免“刷卡成功但订单未写入”被误判为已恢复。
+            await cardPaymentAttemptRepository.MarkOrderCompletedAsync(
+                attemptGuid,
+                DateTimeOffset.UtcNow,
+                cancellationToken);
+        }
     }
 
     private static async Task<PaymentTenderAttemptResult> AuthorizeExternalTenderAsync(
@@ -575,6 +856,35 @@ public sealed class CashPaymentWorkflowService(
         return changed
             ? order with { Payments = updatedPayments }
             : order;
+    }
+
+    private async Task<LocalOrder> PrepareOrderForRecoverableCardPersistenceAsync(
+        LocalOrder order,
+        IReadOnlyList<PaymentTender> tenders,
+        CancellationToken cancellationToken)
+    {
+        if (cardPaymentAttemptRepository is null)
+        {
+            return order;
+        }
+
+        var attemptGuid = tenders
+            .Select(tender => TryReadCardAttemptTenderKey(tender.IdempotencyKey, out var attemptGuid) ? attemptGuid : (Guid?)null)
+            .FirstOrDefault(value => value is not null);
+        if (attemptGuid is null)
+        {
+            return order;
+        }
+
+        var attempt = await cardPaymentAttemptRepository.GetAttemptAsync(attemptGuid.Value, cancellationToken);
+        if (attempt is null)
+        {
+            return order;
+        }
+
+        var draft = JsonSerializer.Deserialize<CardPaymentOrderDraft>(attempt.OrderDraftJson, CardAttemptJsonOptions);
+        // 正常落单和重启恢复必须使用同一个订单 GUID，避免崩溃后恢复重复保存订单。
+        return draft is null ? order : order with { OrderGuid = draft.OrderGuid };
     }
 
     private async Task<LocalOrder> IssuePendingRefundVouchersAsync(
@@ -781,7 +1091,26 @@ public sealed record PaymentAuthorizationResult(
     string? Reference = null,
     string? Message = null,
     decimal? AuthorizedAmount = null,
-    IReadOnlyList<CardTransactionDto>? CardTransactions = null);
+    IReadOnlyList<CardTransactionDto>? CardTransactions = null,
+    string? Processor = null,
+    string? Environment = null,
+    string? ConnectionMode = null,
+    string? TxnType = null,
+    string? SessionId = null,
+    string? TxnRef = null,
+    string? ResponseCode = null,
+    string? ResponseText = null);
+
+public sealed record CardPaymentOrderDraft(
+    Guid OrderGuid,
+    PosSessionState Session,
+    PosCartSnapshot CartSnapshot,
+    IReadOnlyList<PaymentTender> CurrentTenders,
+    decimal ActualAmount,
+    decimal CardAmount,
+    string TxnType,
+    string? OriginalReference,
+    DateTimeOffset CreatedAt);
 
 public sealed record PaymentTenderAttemptResult(
     bool Succeeded,

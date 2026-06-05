@@ -65,6 +65,7 @@ public sealed partial class MainViewModel : ObservableObject
     private readonly IConfirmationDialogService _confirmationDialogService;
     private readonly ITestSalesDataResetService? _testSalesDataResetService;
     private readonly ILinklyTerminalDialogPresenter? _linklyTerminalDialogPresenter;
+    private readonly ICardPaymentRecoveryService? _cardPaymentRecoveryService;
     private readonly PosTerminalWorkflowFactory _posTerminalWorkflowFactory;
     private readonly DispatcherTimer _clockTimer = new() { Interval = TimeSpan.FromSeconds(1) };
     private readonly DispatcherTimer _connectivityTimer = new() { Interval = TimeSpan.FromSeconds(30) };
@@ -79,6 +80,7 @@ public sealed partial class MainViewModel : ObservableObject
     private CancellationTokenSource? _startupCatalogIndexLoadCts;
     private Task? _deviceRegistrationStoreLoadTask;
     private Task? _posPostShowStartupTask;
+    private Task<CardPaymentRecoveryResult>? _cardPaymentRecoveryTask;
     private bool _customerDisplayPrewarmed;
     private Task<IReadOnlyList<SellableItemDto>>? _startupCatalogIndexLoadTask;
     private AppStartupOptions? _startupOptions;
@@ -293,7 +295,8 @@ public sealed partial class MainViewModel : ObservableObject
         IConfirmationDialogService? confirmationDialogService = null,
         IInstallmentOrderService? installmentOrderService = null,
         ITestSalesDataResetService? testSalesDataResetService = null,
-        ILinklyTerminalDialogPresenter? linklyTerminalDialogPresenter = null)
+        ILinklyTerminalDialogPresenter? linklyTerminalDialogPresenter = null,
+        ICardPaymentRecoveryService? cardPaymentRecoveryService = null)
     {
         _priceIndex = priceIndex;
         _cart = cart;
@@ -340,6 +343,7 @@ public sealed partial class MainViewModel : ObservableObject
         _confirmationDialogService = confirmationDialogService ?? new WpfConfirmationDialogService();
         _testSalesDataResetService = testSalesDataResetService;
         _linklyTerminalDialogPresenter = linklyTerminalDialogPresenter;
+        _cardPaymentRecoveryService = cardPaymentRecoveryService;
         _posTerminalWorkflowFactory = posTerminalWorkflowFactory;
 
         PaymentSuccess = new PaymentSuccessViewModel(
@@ -669,6 +673,7 @@ public sealed partial class MainViewModel : ObservableObject
         ConsoleLog.Write(
             "SpecialProducts",
             $"startup home preload skipped store={Session.StoreCode} reason=moved-before-main-window");
+        await RecoverCardPaymentAttemptAsync(navigateToPaymentOnDraft: false);
         await RefreshOnlineStateAsync(CancellationToken.None, autoRetryOrders: true);
         _connectivityTimer.Start();
         BeginInitialCatalogSync();
@@ -1491,12 +1496,21 @@ public sealed partial class MainViewModel : ObservableObject
         }
     }
 
-    private void ShowCashPayment()
+    private async void ShowCashPayment()
     {
         if (_cart.IsEmpty)
         {
-            ShowPos();
-            return;
+            var recovered = await RecoverCardPaymentAttemptAsync(navigateToPaymentOnDraft: true);
+            if (recovered)
+            {
+                return;
+            }
+
+            if (!recovered && _cart.IsEmpty)
+            {
+                ShowPos();
+                return;
+            }
         }
 
         PrepareCachedCashPaymentScreen();
@@ -1508,6 +1522,54 @@ public sealed partial class MainViewModel : ObservableObject
 
         CashPayment.PrepareForEntry(Session);
         CurrentScreen = CashPayment;
+    }
+
+    private async Task<bool> RecoverCardPaymentAttemptAsync(bool navigateToPaymentOnDraft)
+    {
+        if (_cardPaymentRecoveryService is null)
+        {
+            return false;
+        }
+
+        _cardPaymentRecoveryTask ??= _cardPaymentRecoveryService.RecoverLatestAsync(_cart, Session, CancellationToken.None);
+        var result = await _cardPaymentRecoveryTask;
+        if (result.Outcome == CardPaymentRecoveryOutcome.None)
+        {
+            return false;
+        }
+
+        StatusMessage = result.Message;
+        if (result.UpdatedSession is not null)
+        {
+            Session = result.UpdatedSession;
+        }
+
+        if (result.Outcome == CardPaymentRecoveryOutcome.OrderCompleted && result.Order is not null)
+        {
+            _lastCompletedOrder = result.Order;
+            await RefreshPendingSyncAsync();
+            await PaymentSuccess.LoadFromOrderAsync(result.Order);
+            CurrentScreen = PaymentSuccess;
+            ShowCashPaymentCommand.NotifyCanExecuteChanged();
+            return true;
+        }
+
+        if (result.Outcome == CardPaymentRecoveryOutcome.DraftRestored)
+        {
+            PosTerminal?.RefreshCart();
+            CashPayment?.RefreshCart();
+            ShowCashPaymentCommand.NotifyCanExecuteChanged();
+            if (navigateToPaymentOnDraft && !_cart.IsEmpty)
+            {
+                PrepareCachedCashPaymentScreen();
+                CashPayment?.PrepareForEntry(Session);
+                CurrentScreen = CashPayment;
+            }
+
+            return true;
+        }
+
+        return true;
     }
 
     private void ShowInstallmentCenter()

@@ -1,5 +1,6 @@
 using Hbpos.Client.Wpf.Models;
 using Hbpos.Client.Wpf.Services;
+using Hbpos.Contracts.Linkly;
 using PCEFTPOS.EFTClient.IPInterface;
 
 namespace Hbpos.Client.Tests;
@@ -155,6 +156,37 @@ public sealed class ConfiguredLinklyTerminalClientTests
             CancellationToken cancellationToken = default)
         {
             return Task.FromResult(result ?? new PaymentAuthorizationResult(false, null, "Backend async should not be called."));
+        }
+
+        public Task<LinklyCloudBackendSessionResponse?> GetResumableSessionAsync(
+            CardTerminalSettings settings,
+            CancellationToken cancellationToken = default)
+        {
+            return Task.FromResult<LinklyCloudBackendSessionResponse?>(null);
+        }
+
+        public Task<LinklyCloudBackendSessionResponse> RecoverSessionAsync(
+            CardTerminalSettings settings,
+            string sessionId,
+            CancellationToken cancellationToken = default)
+        {
+            throw new NotSupportedException();
+        }
+
+        public Task<LinklyCloudBackendSessionResponse> GetSessionStatusAsync(
+            CardTerminalSettings settings,
+            string sessionId,
+            CancellationToken cancellationToken = default)
+        {
+            throw new NotSupportedException();
+        }
+
+        public Task AcknowledgeSessionAsync(
+            CardTerminalSettings settings,
+            string sessionId,
+            CancellationToken cancellationToken = default)
+        {
+            return Task.CompletedTask;
         }
     }
 

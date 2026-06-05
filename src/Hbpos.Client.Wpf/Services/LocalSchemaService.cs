@@ -25,6 +25,7 @@ public sealed class LocalSchemaService(LocalSqliteStore store) : ILocalSchemaSer
         await EnsureLocalOrderLineColumnsAsync(connection, cancellationToken);
         await EnsureLocalPaymentColumnsAsync(connection, cancellationToken);
         await EnsureLocalCardTransactionColumnsAsync(connection, cancellationToken);
+        await EnsureLocalCardPaymentAttemptColumnsAsync(connection, cancellationToken);
         await EnsureLocalInstallmentColumnsAsync(connection, cancellationToken);
         await EnsureSuspendedOrderLineColumnsAsync(connection, cancellationToken);
         await EnsureSuspendedOrderReturnPaymentCapacityColumnsAsync(connection, cancellationToken);
@@ -259,6 +260,17 @@ public sealed class LocalSchemaService(LocalSqliteStore store) : ILocalSchemaSer
         }
     }
 
+    private static async Task EnsureLocalCardPaymentAttemptColumnsAsync(
+        SqliteConnection connection,
+        CancellationToken cancellationToken)
+    {
+        var columns = await ReadColumnNamesAsync(connection, "LocalCardPaymentAttempts", cancellationToken);
+        if (!columns.Contains("AcknowledgedAt"))
+        {
+            await ExecuteAsync(connection, "ALTER TABLE LocalCardPaymentAttempts ADD COLUMN AcknowledgedAt TEXT NULL;", cancellationToken);
+        }
+    }
+
     private static async Task EnsureSuspendedOrderReturnPaymentCapacityColumnsAsync(
         SqliteConnection connection,
         CancellationToken cancellationToken)
@@ -410,6 +422,30 @@ public sealed class LocalSchemaService(LocalSqliteStore store) : ILocalSchemaSer
             Amount TEXT NOT NULL,
             ReceiptText TEXT NULL,
             RefundReference TEXT NULL
+        );
+        """,
+        """
+        CREATE TABLE IF NOT EXISTS LocalCardPaymentAttempts (
+            AttemptGuid TEXT PRIMARY KEY,
+            SessionId TEXT NULL,
+            TxnRef TEXT NULL,
+            Processor TEXT NOT NULL,
+            Environment TEXT NOT NULL,
+            ConnectionMode TEXT NOT NULL,
+            TxnType TEXT NOT NULL,
+            Amount TEXT NOT NULL,
+            Status TEXT NOT NULL,
+            OrderDraftJson TEXT NOT NULL,
+            StoreCode TEXT NOT NULL,
+            DeviceCode TEXT NOT NULL,
+            CashierId TEXT NOT NULL,
+            ResponseCode TEXT NULL,
+            ResponseText TEXT NULL,
+            PaymentReference TEXT NULL,
+            CreatedAt TEXT NOT NULL,
+            UpdatedAt TEXT NOT NULL,
+            CompletedAt TEXT NULL,
+            AcknowledgedAt TEXT NULL
         );
         """,
         """
@@ -596,6 +632,10 @@ public sealed class LocalSchemaService(LocalSqliteStore store) : ILocalSchemaSer
         """
         CREATE INDEX IF NOT EXISTS IX_LocalCardTransactions_OrderGuid
         ON LocalCardTransactions (OrderGuid);
+        """,
+        """
+        CREATE INDEX IF NOT EXISTS IX_LocalCardPaymentAttempts_RecoverLatest
+        ON LocalCardPaymentAttempts (StoreCode, DeviceCode, CashierId, Environment, Status, UpdatedAt DESC, CreatedAt DESC);
         """,
         """
         CREATE INDEX IF NOT EXISTS IX_LocalOrders_Store_Device_SoldAt

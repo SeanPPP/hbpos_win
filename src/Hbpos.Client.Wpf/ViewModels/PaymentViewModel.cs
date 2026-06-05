@@ -450,7 +450,8 @@ public partial class PaymentViewModel : ObservableObject
                 PaymentTenders.ToList(),
                 amountText,
                 referenceText,
-                method == PaymentMethodKind.Card ? cardPaymentCts?.Token ?? CancellationToken.None : CancellationToken.None);
+                method == PaymentMethodKind.Card ? cardPaymentCts?.Token ?? CancellationToken.None : CancellationToken.None,
+                method == PaymentMethodKind.Card ? _cart.CreateSnapshot() : null);
             if (method == PaymentMethodKind.Card && cardPaymentCts?.IsCancellationRequested == true)
             {
                 cardPaymentWasManuallyCancelled = IsManualCardCancellation(cardPaymentCts);

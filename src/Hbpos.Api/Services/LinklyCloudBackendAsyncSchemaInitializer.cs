@@ -42,6 +42,7 @@ public sealed class SqlSugarLinklyCloudBackendAsyncSchemaInitializer(
                 [ReceiptText] NVARCHAR(MAX) NULL,
                 [RecoveryCount] INT NOT NULL CONSTRAINT [DF_POSM_LinklyCloudBackendSession_RecoveryCount] DEFAULT (0),
                 [ReceiptPrintedAt] DATETIME2(7) NULL,
+                [ClientAcknowledgedAt] DATETIME2(7) NULL,
                 [LastHttpStatus] INT NULL,
                 [IsActive] BIT NOT NULL CONSTRAINT [DF_POSM_LinklyCloudBackendSession_IsActive] DEFAULT (0),
                 [UpdatedAt] DATETIME2(7) NOT NULL CONSTRAINT [DF_POSM_LinklyCloudBackendSession_UpdatedAt] DEFAULT (SYSUTCDATETIME()),
@@ -128,6 +129,12 @@ public sealed class SqlSugarLinklyCloudBackendAsyncSchemaInitializer(
             BEGIN
                 ALTER TABLE [dbo].[POSM_LinklyCloudBackendSession]
                     ADD [ReceiptPrintedAt] DATETIME2(7) NULL;
+            END;
+
+            IF COL_LENGTH(N'dbo.POSM_LinklyCloudBackendSession', N'ClientAcknowledgedAt') IS NULL
+            BEGIN
+                ALTER TABLE [dbo].[POSM_LinklyCloudBackendSession]
+                    ADD [ClientAcknowledgedAt] DATETIME2(7) NULL;
             END;
 
             IF COL_LENGTH(N'dbo.POSM_LinklyCloudBackendSession', N'LastHttpStatus') IS NULL

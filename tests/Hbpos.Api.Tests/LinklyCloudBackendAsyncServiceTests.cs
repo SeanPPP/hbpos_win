@@ -282,6 +282,125 @@ namespace Hbpos.Api.Tests;
     }
 
     [Fact]
+    public async Task GetResumableSessionAsync_returns_active_session_before_completed_unacknowledged()
+    {
+        var service = CreateService(new CapturingLinklyCloudBackendAsyncTransport(HttpStatusCode.Accepted));
+        await service.Repository.UpsertSessionAsync(new LinklyCloudBackendSessionRecord
+        {
+            Environment = "Sandbox",
+            StoreCode = "S01",
+            DeviceCode = "POS-01",
+            SessionId = "completed-session",
+            Status = "Completed",
+            TxnRef = "TXN-COMPLETE",
+            ResponseCode = "00",
+            ResponseText = "APPROVED",
+            IsActive = false,
+            UpdatedAt = DateTimeOffset.UtcNow.AddMinutes(-1)
+        }, CancellationToken.None);
+        await service.Repository.UpsertSessionAsync(new LinklyCloudBackendSessionRecord
+        {
+            Environment = "Sandbox",
+            StoreCode = "S01",
+            DeviceCode = "POS-01",
+            SessionId = "active-session",
+            Status = "Pending",
+            TxnRef = "TXN-ACTIVE",
+            IsActive = true,
+            UpdatedAt = DateTimeOffset.UtcNow
+        }, CancellationToken.None);
+
+        var response = await service.GetResumableSessionAsync("S01", "POS-01", "Sandbox", CancellationToken.None);
+
+        Assert.NotNull(response);
+        Assert.Equal("active-session", response!.SessionId);
+        Assert.Equal("Pending", response.Status);
+    }
+
+    [Fact]
+    public async Task GetResumableSessionAsync_returns_latest_completed_unacknowledged_when_no_active_session()
+    {
+        var service = CreateService(new CapturingLinklyCloudBackendAsyncTransport(HttpStatusCode.Accepted));
+        await service.Repository.UpsertSessionAsync(new LinklyCloudBackendSessionRecord
+        {
+            Environment = "Sandbox",
+            StoreCode = "S01",
+            DeviceCode = "POS-01",
+            SessionId = "older-completed",
+            Status = "Completed",
+            TxnRef = "TXN-OLD",
+            ResponseCode = "00",
+            ResponseText = "APPROVED",
+            IsActive = false,
+            UpdatedAt = DateTimeOffset.UtcNow.AddMinutes(-5)
+        }, CancellationToken.None);
+        await service.Repository.UpsertSessionAsync(new LinklyCloudBackendSessionRecord
+        {
+            Environment = "Sandbox",
+            StoreCode = "S01",
+            DeviceCode = "POS-01",
+            SessionId = "latest-completed",
+            Status = "Completed",
+            TxnRef = "TXN-LATEST",
+            ResponseCode = "00",
+            ResponseText = "APPROVED",
+            IsActive = false,
+            UpdatedAt = DateTimeOffset.UtcNow
+        }, CancellationToken.None);
+
+        var response = await service.GetResumableSessionAsync("S01", "POS-01", "Sandbox", CancellationToken.None);
+
+        Assert.NotNull(response);
+        Assert.Equal("latest-completed", response!.SessionId);
+        Assert.Equal("Completed", response.Status);
+        Assert.Null(response.ClientAcknowledgedAt);
+    }
+
+    [Fact]
+    public async Task AcknowledgeSessionAsync_marks_session_and_removes_it_from_resumable_fallback()
+    {
+        var service = CreateService(new CapturingLinklyCloudBackendAsyncTransport(HttpStatusCode.Accepted));
+        await service.Repository.UpsertSessionAsync(new LinklyCloudBackendSessionRecord
+        {
+            Environment = "Sandbox",
+            StoreCode = "S01",
+            DeviceCode = "POS-01",
+            SessionId = "completed-session",
+            Status = "Completed",
+            TxnRef = "TXN-COMPLETE",
+            ResponseCode = "00",
+            ResponseText = "APPROVED",
+            IsActive = false,
+            UpdatedAt = DateTimeOffset.UtcNow
+        }, CancellationToken.None);
+
+        var acknowledged = await service.AcknowledgeSessionAsync(
+            "S01",
+            "POS-01",
+            "Sandbox",
+            "completed-session",
+            CancellationToken.None);
+
+        Assert.NotNull(acknowledged.ClientAcknowledgedAt);
+        Assert.Equal("completed-session", acknowledged.SessionId);
+        Assert.Null(await service.GetResumableSessionAsync("S01", "POS-01", "Sandbox", CancellationToken.None));
+    }
+
+    [Fact]
+    public async Task AcknowledgeSessionAsync_throws_when_session_is_missing()
+    {
+        var service = CreateService(new CapturingLinklyCloudBackendAsyncTransport(HttpStatusCode.Accepted));
+
+        await Assert.ThrowsAsync<LinklyCloudBackendSessionNotFoundException>(() =>
+            service.AcknowledgeSessionAsync(
+                "S01",
+                "POS-01",
+                "Sandbox",
+                "missing-session",
+                CancellationToken.None));
+    }
+
+    [Fact]
     public async Task SendKeyAsync_uses_server_token_scope_for_existing_session()
     {
         var sessionId = Guid.NewGuid().ToString("D");
@@ -1345,6 +1464,26 @@ namespace Hbpos.Api.Tests;
             CancellationToken cancellationToken)
         {
             return _inner.GetActiveSessionAsync(environment, storeCode, deviceCode, cancellationToken);
+        }
+
+        public Task<LinklyCloudBackendSessionRecord?> GetResumableSessionAsync(
+            string environment,
+            string storeCode,
+            string deviceCode,
+            CancellationToken cancellationToken)
+        {
+            return _inner.GetResumableSessionAsync(environment, storeCode, deviceCode, cancellationToken);
+        }
+
+        public Task<LinklyCloudBackendSessionRecord?> AcknowledgeSessionAsync(
+            string environment,
+            string storeCode,
+            string deviceCode,
+            string sessionId,
+            DateTimeOffset acknowledgedAt,
+            CancellationToken cancellationToken)
+        {
+            return _inner.AcknowledgeSessionAsync(environment, storeCode, deviceCode, sessionId, acknowledgedAt, cancellationToken);
         }
 
         public Task AddNotificationAsync(

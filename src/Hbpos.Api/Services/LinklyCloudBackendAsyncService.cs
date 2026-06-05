@@ -36,6 +36,12 @@ public interface ILinklyCloudBackendAsyncService
         string environment,
         CancellationToken cancellationToken);
 
+    Task<LinklyCloudBackendSessionResponse?> GetResumableSessionAsync(
+        string storeCode,
+        string deviceCode,
+        string environment,
+        CancellationToken cancellationToken);
+
     Task<LinklyCloudBackendHealthResponse> GetHealthAsync(
         string storeCode,
         string deviceCode,
@@ -68,6 +74,13 @@ public interface ILinklyCloudBackendAsyncService
         string deviceCode,
         string sessionId,
         LinklyCloudBackendMarkReceiptPrintedRequest request,
+        CancellationToken cancellationToken);
+
+    Task<LinklyCloudBackendSessionResponse> AcknowledgeSessionAsync(
+        string storeCode,
+        string deviceCode,
+        string environment,
+        string sessionId,
         CancellationToken cancellationToken);
 
     Task ReceiveNotificationAsync(
@@ -226,6 +239,21 @@ public class LinklyCloudBackendAsyncService(
         return session is null ? null : await BuildResponseAsync(session, cancellationToken);
     }
 
+    public async Task<LinklyCloudBackendSessionResponse?> GetResumableSessionAsync(
+        string storeCode,
+        string deviceCode,
+        string environment,
+        CancellationToken cancellationToken)
+    {
+        var session = await repository.GetResumableSessionAsync(
+            NormalizeEnvironment(environment),
+            NormalizeRequired(storeCode, "storeCode"),
+            NormalizeRequired(deviceCode, "deviceCode"),
+            cancellationToken);
+
+        return session is null ? null : await BuildResponseAsync(session, cancellationToken);
+    }
+
     public async Task<LinklyCloudBackendSessionResponse> RecoverAsync(
         string storeCode,
         string deviceCode,
@@ -308,6 +336,27 @@ public class LinklyCloudBackendAsyncService(
         session.UpdatedAt = now;
         var savedSession = await UpsertSessionAndReadLatestAsync(session, cancellationToken);
         return await BuildResponseAsync(savedSession, cancellationToken);
+    }
+
+    public async Task<LinklyCloudBackendSessionResponse> AcknowledgeSessionAsync(
+        string storeCode,
+        string deviceCode,
+        string environment,
+        string sessionId,
+        CancellationToken cancellationToken)
+    {
+        var acknowledgedAt = DateTimeOffset.UtcNow;
+        var session = await repository.AcknowledgeSessionAsync(
+            NormalizeEnvironment(environment),
+            NormalizeRequired(storeCode, "storeCode"),
+            NormalizeRequired(deviceCode, "deviceCode"),
+            NormalizeRequired(sessionId, "sessionId"),
+            acknowledgedAt,
+            cancellationToken);
+
+        return session is null
+            ? throw new LinklyCloudBackendSessionNotFoundException()
+            : await BuildResponseAsync(session, cancellationToken);
     }
 
     public async Task ReceiveNotificationAsync(
@@ -866,6 +915,7 @@ public class LinklyCloudBackendAsyncService(
             session.ReceiptText,
             session.RecoveryCount,
             session.ReceiptPrintedAt,
+            session.ClientAcknowledgedAt,
             session.LastHttpStatus,
             notifications.Select(notification => new LinklyCloudBackendNotificationDto(
                 notification.Type,
@@ -2440,6 +2490,20 @@ public interface ILinklyCloudBackendAsyncRepository
         string deviceCode,
         CancellationToken cancellationToken);
 
+    Task<LinklyCloudBackendSessionRecord?> GetResumableSessionAsync(
+        string environment,
+        string storeCode,
+        string deviceCode,
+        CancellationToken cancellationToken);
+
+    Task<LinklyCloudBackendSessionRecord?> AcknowledgeSessionAsync(
+        string environment,
+        string storeCode,
+        string deviceCode,
+        string sessionId,
+        DateTimeOffset acknowledgedAt,
+        CancellationToken cancellationToken);
+
     Task AddNotificationAsync(
         LinklyCloudBackendNotificationRecord notification,
         CancellationToken cancellationToken);
@@ -2506,7 +2570,15 @@ public sealed class InMemoryLinklyCloudBackendAsyncRepository : ILinklyCloudBack
                 return Task.CompletedTask;
             }
 
-            _sessions[key] = Clone(session);
+            var next = Clone(session);
+            if (_sessions.TryGetValue(key, out existing) &&
+                existing.ClientAcknowledgedAt is not null &&
+                next.ClientAcknowledgedAt is null)
+            {
+                next.ClientAcknowledgedAt = existing.ClientAcknowledgedAt;
+            }
+
+            _sessions[key] = next;
             return Task.CompletedTask;
         }
     }
@@ -2551,6 +2623,52 @@ public sealed class InMemoryLinklyCloudBackendAsyncRepository : ILinklyCloudBack
             var session = _sessions.Values.FirstOrDefault(existing =>
                 existing.IsActive && SameTerminal(existing, environment, storeCode, deviceCode));
             return Task.FromResult(session is null ? null : Clone(session));
+        }
+    }
+
+    public Task<LinklyCloudBackendSessionRecord?> GetResumableSessionAsync(
+        string environment,
+        string storeCode,
+        string deviceCode,
+        CancellationToken cancellationToken)
+    {
+        lock (_gate)
+        {
+            var session = _sessions.Values
+                .Where(existing =>
+                    SameTerminal(existing, environment, storeCode, deviceCode) &&
+                    (existing.IsActive ||
+                        IsCompleted(existing) && existing.ClientAcknowledgedAt is null))
+                .OrderBy(existing => existing.IsActive ? 0 : 1)
+                .ThenByDescending(existing => existing.UpdatedAt)
+                .ThenByDescending(existing => existing.Id)
+                .FirstOrDefault();
+            return Task.FromResult(session is null ? null : Clone(session));
+        }
+    }
+
+    public Task<LinklyCloudBackendSessionRecord?> AcknowledgeSessionAsync(
+        string environment,
+        string storeCode,
+        string deviceCode,
+        string sessionId,
+        DateTimeOffset acknowledgedAt,
+        CancellationToken cancellationToken)
+    {
+        lock (_gate)
+        {
+            var key = SessionKey(environment, storeCode, deviceCode, sessionId);
+            if (!_sessions.TryGetValue(key, out var session))
+            {
+                return Task.FromResult<LinklyCloudBackendSessionRecord?>(null);
+            }
+
+            var next = Clone(session);
+            // 客户端恢复完成后写入确认时间，后续 resumable 查询不再返回这笔已完成会话。
+            next.ClientAcknowledgedAt = acknowledgedAt;
+            next.UpdatedAt = acknowledgedAt;
+            _sessions[key] = Clone(next);
+            return Task.FromResult<LinklyCloudBackendSessionRecord?>(next);
         }
     }
 
@@ -2651,6 +2769,7 @@ public sealed class InMemoryLinklyCloudBackendAsyncRepository : ILinklyCloudBack
             ReceiptText = session.ReceiptText,
             RecoveryCount = session.RecoveryCount,
             ReceiptPrintedAt = session.ReceiptPrintedAt,
+            ClientAcknowledgedAt = session.ClientAcknowledgedAt,
             LastHttpStatus = session.LastHttpStatus,
             IsActive = session.IsActive,
             UpdatedAt = session.UpdatedAt
@@ -2700,13 +2819,13 @@ public sealed class SqlSugarLinklyCloudBackendAsyncRepository(
                 [ResponseCode], [ResponseText], [RecoveryAction], [DisplayText], [DisplayLines],
                 [CancelKeyFlag], [OKKeyFlag], [AcceptYesKeyFlag], [DeclineNoKeyFlag], [AuthoriseKeyFlag],
                 [InputType], [GraphicCode], [ReceiptText],
-                [RecoveryCount], [ReceiptPrintedAt], [LastHttpStatus], [IsActive], [UpdatedAt])
+                [RecoveryCount], [ReceiptPrintedAt], [ClientAcknowledgedAt], [LastHttpStatus], [IsActive], [UpdatedAt])
             VALUES (
                 @Environment, @StoreCode, @DeviceCode, @SessionId, @Status, @TxnRef,
                 @ResponseCode, @ResponseText, @RecoveryAction, @DisplayText, @DisplayLines,
                 @CancelKeyFlag, @OKKeyFlag, @AcceptYesKeyFlag, @DeclineNoKeyFlag, @AuthoriseKeyFlag,
                 @InputType, @GraphicCode, @ReceiptText,
-                @RecoveryCount, @ReceiptPrintedAt, @LastHttpStatus, @IsActive, @UpdatedAt);
+                @RecoveryCount, @ReceiptPrintedAt, @ClientAcknowledgedAt, @LastHttpStatus, @IsActive, @UpdatedAt);
         END;
 
         COMMIT TRANSACTION;
@@ -2746,6 +2865,7 @@ public sealed class SqlSugarLinklyCloudBackendAsyncRepository(
                 [ReceiptText] = @ReceiptText,
                 [RecoveryCount] = @RecoveryCount,
                 [ReceiptPrintedAt] = @ReceiptPrintedAt,
+                [ClientAcknowledgedAt] = COALESCE(@ClientAcknowledgedAt, target.[ClientAcknowledgedAt]),
                 [LastHttpStatus] = @LastHttpStatus,
                 [IsActive] = @IsActive,
                 [UpdatedAt] = @UpdatedAt
@@ -2755,13 +2875,13 @@ public sealed class SqlSugarLinklyCloudBackendAsyncRepository(
                 [ResponseCode], [ResponseText], [RecoveryAction], [DisplayText], [DisplayLines],
                 [CancelKeyFlag], [OKKeyFlag], [AcceptYesKeyFlag], [DeclineNoKeyFlag], [AuthoriseKeyFlag],
                 [InputType], [GraphicCode], [ReceiptText],
-                [RecoveryCount], [ReceiptPrintedAt], [LastHttpStatus], [IsActive], [UpdatedAt])
+                [RecoveryCount], [ReceiptPrintedAt], [ClientAcknowledgedAt], [LastHttpStatus], [IsActive], [UpdatedAt])
             VALUES (
                 @Environment, @StoreCode, @DeviceCode, @SessionId, @Status, @TxnRef,
                 @ResponseCode, @ResponseText, @RecoveryAction, @DisplayText, @DisplayLines,
                 @CancelKeyFlag, @OKKeyFlag, @AcceptYesKeyFlag, @DeclineNoKeyFlag, @AuthoriseKeyFlag,
                 @InputType, @GraphicCode, @ReceiptText,
-                @RecoveryCount, @ReceiptPrintedAt, @LastHttpStatus, @IsActive, @UpdatedAt);
+                @RecoveryCount, @ReceiptPrintedAt, @ClientAcknowledgedAt, @LastHttpStatus, @IsActive, @UpdatedAt);
         """;
 
     public async Task<bool> TryCreateSessionAsync(
@@ -2832,7 +2952,7 @@ public sealed class SqlSugarLinklyCloudBackendAsyncRepository(
                 [ResponseCode], [ResponseText], [RecoveryAction], [DisplayText], [DisplayLines],
                 [CancelKeyFlag], [OKKeyFlag], [AcceptYesKeyFlag], [DeclineNoKeyFlag], [AuthoriseKeyFlag],
                 [InputType], [GraphicCode], [ReceiptText],
-                [RecoveryCount], [ReceiptPrintedAt], [LastHttpStatus], [IsActive], [UpdatedAt]
+                [RecoveryCount], [ReceiptPrintedAt], [ClientAcknowledgedAt], [LastHttpStatus], [IsActive], [UpdatedAt]
             FROM [dbo].[POSM_LinklyCloudBackendSession]
             WHERE [Environment] = @Environment
               AND [StoreCode] = @StoreCode
@@ -2859,7 +2979,7 @@ public sealed class SqlSugarLinklyCloudBackendAsyncRepository(
                 [ResponseCode], [ResponseText], [RecoveryAction], [DisplayText], [DisplayLines],
                 [CancelKeyFlag], [OKKeyFlag], [AcceptYesKeyFlag], [DeclineNoKeyFlag], [AuthoriseKeyFlag],
                 [InputType], [GraphicCode], [ReceiptText],
-                [RecoveryCount], [ReceiptPrintedAt], [LastHttpStatus], [IsActive], [UpdatedAt]
+                [RecoveryCount], [ReceiptPrintedAt], [ClientAcknowledgedAt], [LastHttpStatus], [IsActive], [UpdatedAt]
             FROM [dbo].[POSM_LinklyCloudBackendSession]
             WHERE [Environment] = @Environment
               AND [SessionId] = @SessionId
@@ -2884,7 +3004,7 @@ public sealed class SqlSugarLinklyCloudBackendAsyncRepository(
                 [ResponseCode], [ResponseText], [RecoveryAction], [DisplayText], [DisplayLines],
                 [CancelKeyFlag], [OKKeyFlag], [AcceptYesKeyFlag], [DeclineNoKeyFlag], [AuthoriseKeyFlag],
                 [InputType], [GraphicCode], [ReceiptText],
-                [RecoveryCount], [ReceiptPrintedAt], [LastHttpStatus], [IsActive], [UpdatedAt]
+                [RecoveryCount], [ReceiptPrintedAt], [ClientAcknowledgedAt], [LastHttpStatus], [IsActive], [UpdatedAt]
             FROM [dbo].[POSM_LinklyCloudBackendSession]
             WHERE [Environment] = @Environment
               AND [StoreCode] = @StoreCode
@@ -2898,6 +3018,71 @@ public sealed class SqlSugarLinklyCloudBackendAsyncRepository(
             new SugarParameter("@Environment", environment),
             new SugarParameter("@StoreCode", storeCode),
             new SugarParameter("@DeviceCode", deviceCode));
+    }
+
+    public async Task<LinklyCloudBackendSessionRecord?> GetResumableSessionAsync(
+        string environment,
+        string storeCode,
+        string deviceCode,
+        CancellationToken cancellationToken)
+    {
+        const string sql = """
+            SELECT TOP 1
+                [Id], [Environment], [StoreCode], [DeviceCode], [SessionId], [Status], [TxnRef],
+                [ResponseCode], [ResponseText], [RecoveryAction], [DisplayText], [DisplayLines],
+                [CancelKeyFlag], [OKKeyFlag], [AcceptYesKeyFlag], [DeclineNoKeyFlag], [AuthoriseKeyFlag],
+                [InputType], [GraphicCode], [ReceiptText],
+                [RecoveryCount], [ReceiptPrintedAt], [ClientAcknowledgedAt], [LastHttpStatus], [IsActive], [UpdatedAt]
+            FROM [dbo].[POSM_LinklyCloudBackendSession]
+            WHERE [Environment] = @Environment
+              AND [StoreCode] = @StoreCode
+              AND [DeviceCode] = @DeviceCode
+              AND (
+                    [IsActive] = 1
+                    OR ([Status] = N'Completed' AND [ClientAcknowledgedAt] IS NULL)
+                  )
+            ORDER BY
+                CASE WHEN [IsActive] = 1 THEN 0 ELSE 1 END,
+                [UpdatedAt] DESC,
+                [Id] DESC;
+            """;
+
+        return await dbContext.PosmDb.Ado.SqlQuerySingleAsync<LinklyCloudBackendSessionRecord>(
+            sql,
+            new SugarParameter("@Environment", environment),
+            new SugarParameter("@StoreCode", storeCode),
+            new SugarParameter("@DeviceCode", deviceCode));
+    }
+
+    public async Task<LinklyCloudBackendSessionRecord?> AcknowledgeSessionAsync(
+        string environment,
+        string storeCode,
+        string deviceCode,
+        string sessionId,
+        DateTimeOffset acknowledgedAt,
+        CancellationToken cancellationToken)
+    {
+        const string sql = """
+            UPDATE [dbo].[POSM_LinklyCloudBackendSession]
+            SET [ClientAcknowledgedAt] = @ClientAcknowledgedAt,
+                [UpdatedAt] = @ClientAcknowledgedAt
+            WHERE [Environment] = @Environment
+              AND [StoreCode] = @StoreCode
+              AND [DeviceCode] = @DeviceCode
+              AND [SessionId] = @SessionId;
+            """;
+
+        var acknowledgedAtUtc = acknowledgedAt.UtcDateTime;
+        var affected = await dbContext.PosmDb.Ado.ExecuteCommandAsync(
+            sql,
+            new SugarParameter("@ClientAcknowledgedAt", acknowledgedAtUtc),
+            new SugarParameter("@Environment", environment),
+            new SugarParameter("@StoreCode", storeCode),
+            new SugarParameter("@DeviceCode", deviceCode),
+            new SugarParameter("@SessionId", sessionId));
+        return affected <= 0
+            ? null
+            : await GetSessionAsync(environment, storeCode, deviceCode, sessionId, cancellationToken);
     }
 
     public Task AddNotificationAsync(
@@ -2984,6 +3169,7 @@ public sealed class SqlSugarLinklyCloudBackendAsyncRepository(
             new SugarParameter("@ReceiptText", session.ReceiptText),
             new SugarParameter("@RecoveryCount", session.RecoveryCount),
             new SugarParameter("@ReceiptPrintedAt", session.ReceiptPrintedAt?.UtcDateTime),
+            new SugarParameter("@ClientAcknowledgedAt", session.ClientAcknowledgedAt?.UtcDateTime),
             new SugarParameter("@LastHttpStatus", session.LastHttpStatus),
             new SugarParameter("@IsActive", session.IsActive),
             new SugarParameter("@UpdatedAt", session.UpdatedAt.UtcDateTime)
@@ -3043,6 +3229,8 @@ public sealed class LinklyCloudBackendSessionRecord
     public int RecoveryCount { get; set; }
 
     public DateTimeOffset? ReceiptPrintedAt { get; set; }
+
+    public DateTimeOffset? ClientAcknowledgedAt { get; set; }
 
     public int? LastHttpStatus { get; set; }
 

@@ -3220,7 +3220,8 @@ public sealed class PosTerminalCashPaymentViewModelTests
             IReadOnlyList<PaymentTender> currentTenders,
             string? amountText,
             string? referenceText = null,
-            CancellationToken cancellationToken = default)
+            CancellationToken cancellationToken = default,
+            PosCartSnapshot? cartSnapshot = null)
         {
             AddTenderCallCount++;
             AddTenderStarted?.SetResult();

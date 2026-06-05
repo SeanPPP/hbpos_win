@@ -325,6 +325,45 @@ public sealed class LinklyControllerTests
     }
 
     [Fact]
+    public async Task GetCloudBackendResumableTransaction_UsesAuthenticatedDeviceClaimsOnly()
+    {
+        var expected = CreateBackendResponse("resumable-session", "Completed");
+        var backendService = new CapturingLinklyCloudBackendAsyncService(resumableResponse: expected);
+        await using var factory = new LinklyApiFactory(linklyCloudBackendAsyncService: backendService);
+        using var client = factory.CreateClient();
+        client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Test");
+
+        using var response = await client.GetAsync(
+            "/api/v1/linkly/cloud-backend/transactions/resumable?environment=sandbox&storeCode=S99&deviceCode=POS-99");
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var apiResult = await response.Content.ReadFromJsonAsync<ApiResult<LinklyCloudBackendSessionResponse>>();
+        Assert.NotNull(apiResult);
+        Assert.True(apiResult!.Success);
+        Assert.Equal("S01", backendService.LastResumableStoreCode);
+        Assert.Equal("POS-01", backendService.LastResumableDeviceCode);
+        Assert.Equal("sandbox", backendService.LastResumableEnvironment);
+        Assert.Equal("resumable-session", apiResult.Data?.SessionId);
+    }
+
+    [Fact]
+    public async Task GetCloudBackendResumableTransaction_ReturnsNotFoundWhenNoSession()
+    {
+        var backendService = new CapturingLinklyCloudBackendAsyncService(resumableResponse: null);
+        await using var factory = new LinklyApiFactory(linklyCloudBackendAsyncService: backendService);
+        using var client = factory.CreateClient();
+        client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Test");
+
+        using var response = await client.GetAsync("/api/v1/linkly/cloud-backend/transactions/resumable?environment=Sandbox");
+
+        Assert.Equal(HttpStatusCode.NotFound, response.StatusCode);
+        var apiResult = await response.Content.ReadFromJsonAsync<ApiResult<LinklyCloudBackendSessionResponse>>();
+        Assert.NotNull(apiResult);
+        Assert.False(apiResult!.Success);
+        Assert.Equal("LINKLY_CLOUD_BACKEND_SESSION_NOT_FOUND", apiResult.ErrorCode);
+    }
+
+    [Fact]
     public async Task GetCloudBackendHealth_UsesAuthenticatedDeviceClaimsAndReturnsConfigurationReadiness()
     {
         var expected = new LinklyCloudBackendHealthResponse(
@@ -521,6 +560,53 @@ public sealed class LinklyControllerTests
         Assert.Equal("POS-01", backendService.LastMarkReceiptPrintedDeviceCode);
         Assert.Equal("session-printed", backendService.LastMarkReceiptPrintedSessionId);
         Assert.Equal("Sandbox", backendService.LastMarkReceiptPrintedEnvironment);
+    }
+
+    [Fact]
+    public async Task AcknowledgeCloudBackendTransaction_UsesAuthenticatedDeviceClaimsAndBodyEnvironment()
+    {
+        var expected = CreateBackendResponse("session-ack", "Completed") with
+        {
+            ClientAcknowledgedAt = new DateTimeOffset(2026, 6, 5, 1, 2, 3, TimeSpan.Zero)
+        };
+        var backendService = new CapturingLinklyCloudBackendAsyncService(acknowledgeResponse: expected);
+        await using var factory = new LinklyApiFactory(linklyCloudBackendAsyncService: backendService);
+        using var client = factory.CreateClient();
+        client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Test");
+
+        using var response = await client.PostAsJsonAsync(
+            "/api/v1/linkly/cloud-backend/transactions/session-ack/acknowledge?environment=Production&storeCode=S99&deviceCode=POS-99",
+            new LinklyCloudBackendAcknowledgeRequest("Sandbox"));
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var apiResult = await response.Content.ReadFromJsonAsync<ApiResult<LinklyCloudBackendSessionResponse>>();
+        Assert.NotNull(apiResult);
+        Assert.True(apiResult!.Success);
+        Assert.Equal("S01", backendService.LastAcknowledgeStoreCode);
+        Assert.Equal("POS-01", backendService.LastAcknowledgeDeviceCode);
+        Assert.Equal("session-ack", backendService.LastAcknowledgeSessionId);
+        Assert.Equal("Sandbox", backendService.LastAcknowledgeEnvironment);
+        Assert.NotNull(apiResult.Data?.ClientAcknowledgedAt);
+    }
+
+    [Fact]
+    public async Task AcknowledgeCloudBackendTransaction_ReturnsNotFoundWhenSessionIsMissing()
+    {
+        var backendService = new CapturingLinklyCloudBackendAsyncService(
+            acknowledgeException: new LinklyCloudBackendSessionNotFoundException());
+        await using var factory = new LinklyApiFactory(linklyCloudBackendAsyncService: backendService);
+        using var client = factory.CreateClient();
+        client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Test");
+
+        using var response = await client.PostAsync(
+            "/api/v1/linkly/cloud-backend/transactions/missing-session/acknowledge?environment=Sandbox",
+            content: null);
+
+        Assert.Equal(HttpStatusCode.NotFound, response.StatusCode);
+        var apiResult = await response.Content.ReadFromJsonAsync<ApiResult<LinklyCloudBackendSessionResponse>>();
+        Assert.NotNull(apiResult);
+        Assert.False(apiResult!.Success);
+        Assert.Equal("LINKLY_CLOUD_BACKEND_SESSION_NOT_FOUND", apiResult.ErrorCode);
     }
 
 
@@ -760,14 +846,18 @@ public sealed class LinklyControllerTests
             0,
             null,
             null,
+            null,
             []);
     }
 
     private sealed class CapturingLinklyCloudBackendAsyncService(
         Exception? startException = null,
         LinklyCloudBackendSessionResponse? activeResponse = null,
+        LinklyCloudBackendSessionResponse? resumableResponse = null,
         LinklyCloudBackendHealthResponse? healthResponse = null,
-        LinklyCloudBackendSessionResponse? sendKeyResponse = null) : ILinklyCloudBackendAsyncService
+        LinklyCloudBackendSessionResponse? sendKeyResponse = null,
+        LinklyCloudBackendSessionResponse? acknowledgeResponse = null,
+        Exception? acknowledgeException = null) : ILinklyCloudBackendAsyncService
     {
         public string? LastStoreCode { get; private set; }
 
@@ -778,6 +868,12 @@ public sealed class LinklyControllerTests
         public string? LastActiveDeviceCode { get; private set; }
 
         public string? LastActiveEnvironment { get; private set; }
+
+        public string? LastResumableStoreCode { get; private set; }
+
+        public string? LastResumableDeviceCode { get; private set; }
+
+        public string? LastResumableEnvironment { get; private set; }
 
         public string? LastHealthStoreCode { get; private set; }
 
@@ -819,6 +915,14 @@ public sealed class LinklyControllerTests
 
         public string? LastMarkReceiptPrintedEnvironment { get; private set; }
 
+        public string? LastAcknowledgeStoreCode { get; private set; }
+
+        public string? LastAcknowledgeDeviceCode { get; private set; }
+
+        public string? LastAcknowledgeEnvironment { get; private set; }
+
+        public string? LastAcknowledgeSessionId { get; private set; }
+
         public Task<LinklyCloudBackendSessionResponse> StartTransactionAsync(
             string storeCode,
             string deviceCode,
@@ -856,6 +960,18 @@ public sealed class LinklyControllerTests
             LastActiveDeviceCode = deviceCode;
             LastActiveEnvironment = environment;
             return Task.FromResult(activeResponse);
+        }
+
+        public Task<LinklyCloudBackendSessionResponse?> GetResumableSessionAsync(
+            string storeCode,
+            string deviceCode,
+            string environment,
+            CancellationToken cancellationToken)
+        {
+            LastResumableStoreCode = storeCode;
+            LastResumableDeviceCode = deviceCode;
+            LastResumableEnvironment = environment;
+            return Task.FromResult(resumableResponse);
         }
 
         public Task<LinklyCloudBackendHealthResponse> GetHealthAsync(
@@ -932,6 +1048,25 @@ public sealed class LinklyControllerTests
             LastMarkReceiptPrintedSessionId = sessionId;
             LastMarkReceiptPrintedEnvironment = request.Environment;
             return Task.FromResult(CreateBackendResponse(sessionId, "Completed"));
+        }
+
+        public Task<LinklyCloudBackendSessionResponse> AcknowledgeSessionAsync(
+            string storeCode,
+            string deviceCode,
+            string environment,
+            string sessionId,
+            CancellationToken cancellationToken)
+        {
+            if (acknowledgeException is not null)
+            {
+                throw acknowledgeException;
+            }
+
+            LastAcknowledgeStoreCode = storeCode;
+            LastAcknowledgeDeviceCode = deviceCode;
+            LastAcknowledgeEnvironment = environment;
+            LastAcknowledgeSessionId = sessionId;
+            return Task.FromResult(acknowledgeResponse ?? CreateBackendResponse(sessionId, "Completed"));
         }
 
         public Task ReceiveNotificationAsync(

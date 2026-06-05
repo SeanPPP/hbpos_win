@@ -32,6 +32,25 @@ public interface ILinklyBackendTerminalClient
         CardTerminalSettings settings,
         string? originalReference,
         CancellationToken cancellationToken = default);
+
+    Task<LinklyCloudBackendSessionResponse?> GetResumableSessionAsync(
+        CardTerminalSettings settings,
+        CancellationToken cancellationToken = default);
+
+    Task<LinklyCloudBackendSessionResponse> RecoverSessionAsync(
+        CardTerminalSettings settings,
+        string sessionId,
+        CancellationToken cancellationToken = default);
+
+    Task<LinklyCloudBackendSessionResponse> GetSessionStatusAsync(
+        CardTerminalSettings settings,
+        string sessionId,
+        CancellationToken cancellationToken = default);
+
+    Task AcknowledgeSessionAsync(
+        CardTerminalSettings settings,
+        string sessionId,
+        CancellationToken cancellationToken = default);
 }
 
 public sealed class LinklyBackendTerminalClient(
@@ -126,6 +145,59 @@ public sealed class LinklyBackendTerminalClient(
         return string.IsNullOrWhiteSpace(refundReference)
             ? new PaymentAuthorizationResult(false, null, T("linkly.backend.refundMissingReference", "Linkly Cloud refund requires an original RFN reference."))
             : await RunAsync("R", amount, session, settings, refundReference, cancellationToken);
+    }
+
+    public Task<LinklyCloudBackendSessionResponse?> GetResumableSessionAsync(
+        CardTerminalSettings settings,
+        CancellationToken cancellationToken = default)
+    {
+        return GetResumableSessionCoreAsync(settings, cancellationToken);
+    }
+
+    public Task<LinklyCloudBackendSessionResponse> RecoverSessionAsync(
+        CardTerminalSettings settings,
+        string sessionId,
+        CancellationToken cancellationToken = default)
+    {
+        return RecoverAsync(settings, sessionId, cancellationToken);
+    }
+
+    public Task<LinklyCloudBackendSessionResponse> GetSessionStatusAsync(
+        CardTerminalSettings settings,
+        string sessionId,
+        CancellationToken cancellationToken = default)
+    {
+        return GetStatusAsync(settings, sessionId, cancellationToken);
+    }
+
+    public async Task AcknowledgeSessionAsync(
+        CardTerminalSettings settings,
+        string sessionId,
+        CancellationToken cancellationToken = default)
+    {
+        var stopwatch = Stopwatch.StartNew();
+        var relativeUrl = $"api/v1/linkly/cloud-backend/transactions/{Uri.EscapeDataString(sessionId)}/acknowledge";
+        var request = new LinklyCloudBackendAcknowledgeRequest(settings.Environment.ToString());
+        LogHttpRequest(
+            "acknowledge",
+            HttpMethod.Post,
+            FormatRequestUrl(relativeUrl),
+            txnType: null,
+            txnRef: null,
+            bodyJson: SerializeDebugJson(request));
+        using var response = await httpClient.PostAsJsonAsync(
+            relativeUrl,
+            request,
+            JsonOptions,
+            cancellationToken);
+        _ = await ReadApiResultAsync(
+            response,
+            "acknowledge",
+            HttpMethod.Post,
+            FormatRequestUrl(relativeUrl),
+            txnType: null,
+            stopwatch,
+            cancellationToken);
     }
 
     private async Task<PaymentAuthorizationResult> RunAsync(
@@ -575,6 +647,49 @@ public sealed class LinklyBackendTerminalClient(
         return status;
     }
 
+    private async Task<LinklyCloudBackendSessionResponse?> GetResumableSessionCoreAsync(
+        CardTerminalSettings settings,
+        CancellationToken cancellationToken)
+    {
+        var stopwatch = Stopwatch.StartNew();
+        var relativeUrl = $"api/v1/linkly/cloud-backend/transactions/resumable?environment={Uri.EscapeDataString(settings.Environment.ToString())}";
+        LogHttpRequest(
+            "resumable session",
+            HttpMethod.Get,
+            FormatRequestUrl(relativeUrl),
+            txnType: null,
+            txnRef: null,
+            bodyJson: null);
+        using var response = await httpClient.GetAsync(
+            relativeUrl,
+            cancellationToken);
+        if (response.StatusCode == HttpStatusCode.NotFound)
+        {
+            var body = await response.Content.ReadAsStringAsync(cancellationToken);
+            stopwatch.Stop();
+            LogHttpResponse(
+                "resumable session",
+                HttpMethod.Get,
+                FormatRequestUrl(relativeUrl),
+                response.StatusCode,
+                stopwatch.ElapsedMilliseconds,
+                txnType: null,
+                txnRef: null,
+                body);
+            return null;
+        }
+
+        var status = await ReadApiResultAsync(
+            response,
+            "resumable session",
+            HttpMethod.Get,
+            FormatRequestUrl(relativeUrl),
+            txnType: null,
+            stopwatch,
+            cancellationToken);
+        return status;
+    }
+
     private async Task<LinklyCloudBackendSessionResponse> GetStatusAsync(
         CardTerminalSettings settings,
         string sessionId,
@@ -838,8 +953,34 @@ public sealed class LinklyBackendTerminalClient(
             transactionResult.RefundReference);
 
         return approved
-            ? new PaymentAuthorizationResult(true, reference, "ANZ Linkly Cloud", amount, [transaction])
-            : new PaymentAuthorizationResult(false, reference, FormatResponseMessage(transactionResult.ResponseText, transactionResult.ResponseCode), amount, [transaction]);
+            ? new PaymentAuthorizationResult(
+                true,
+                reference,
+                "ANZ Linkly Cloud",
+                amount,
+                [transaction],
+                ProcessorName,
+                status.Environment,
+                LinklyConnectionMode.CloudBackendAsync.ToString(),
+                null,
+                status.SessionId,
+                transaction.TxnRef,
+                transaction.ResponseCode,
+                transaction.ResponseText)
+            : new PaymentAuthorizationResult(
+                false,
+                reference,
+                FormatResponseMessage(transactionResult.ResponseText, transactionResult.ResponseCode),
+                amount,
+                [transaction],
+                ProcessorName,
+                status.Environment,
+                LinklyConnectionMode.CloudBackendAsync.ToString(),
+                null,
+                status.SessionId,
+                transaction.TxnRef,
+                transaction.ResponseCode,
+                transaction.ResponseText);
     }
 
     private static CardTransactionDto ToCardTransaction(

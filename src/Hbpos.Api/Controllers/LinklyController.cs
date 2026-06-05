@@ -8,6 +8,7 @@ using Hbpos.Contracts.Devices;
 using Hbpos.Contracts.Linkly;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.Mvc.ModelBinding;
 
 namespace Hbpos.Api.Controllers;
 
@@ -261,6 +262,38 @@ public sealed class LinklyController(
         }
     }
 
+    [HttpGet("cloud-backend/transactions/resumable")]
+    public async Task<ActionResult<ApiResult<LinklyCloudBackendSessionResponse>>> GetResumableCloudBackendTransaction(
+        [FromQuery] string? environment,
+        CancellationToken cancellationToken)
+    {
+        var scope = GetAuthenticatedDeviceScope<LinklyCloudBackendSessionResponse>();
+        if (scope.Result is not null)
+        {
+            return scope.Result;
+        }
+
+        try
+        {
+            var response = await linklyCloudBackendAsyncService.GetResumableSessionAsync(
+                scope.StoreCode!,
+                scope.DeviceCode!,
+                environment ?? string.Empty,
+                cancellationToken);
+            return response is null
+                ? NotFound(ApiResult<LinklyCloudBackendSessionResponse>.Fail(
+                    CloudBackendNotFoundCode,
+                    "Linkly Cloud backend session was not found."))
+                : Ok(ApiResult<LinklyCloudBackendSessionResponse>.Ok(response));
+        }
+        catch (LinklyCloudBackendValidationException ex)
+        {
+            return BadRequest(ApiResult<LinklyCloudBackendSessionResponse>.Fail(
+                CloudBackendInvalidCode,
+                ex.Message));
+        }
+    }
+
     [HttpGet("cloud-backend/health")]
     public async Task<ActionResult<ApiResult<LinklyCloudBackendHealthResponse>>> GetCloudBackendHealth(
         [FromQuery] string? environment,
@@ -314,6 +347,43 @@ public sealed class LinklyController(
                     CloudBackendNotFoundCode,
                     "Linkly Cloud backend session was not found."))
                 : Ok(ApiResult<LinklyCloudBackendSessionResponse>.Ok(response));
+        }
+        catch (LinklyCloudBackendValidationException ex)
+        {
+            return BadRequest(ApiResult<LinklyCloudBackendSessionResponse>.Fail(
+                CloudBackendInvalidCode,
+                ex.Message));
+        }
+    }
+
+    [HttpPost("cloud-backend/transactions/{sessionId}/acknowledge")]
+    public async Task<ActionResult<ApiResult<LinklyCloudBackendSessionResponse>>> AcknowledgeCloudBackendTransaction(
+        string sessionId,
+        [FromQuery] string? environment,
+        [FromBody(EmptyBodyBehavior = EmptyBodyBehavior.Allow)] LinklyCloudBackendAcknowledgeRequest? request,
+        CancellationToken cancellationToken)
+    {
+        var scope = GetAuthenticatedDeviceScope<LinklyCloudBackendSessionResponse>();
+        if (scope.Result is not null)
+        {
+            return scope.Result;
+        }
+
+        try
+        {
+            var response = await linklyCloudBackendAsyncService.AcknowledgeSessionAsync(
+                scope.StoreCode!,
+                scope.DeviceCode!,
+                request?.Environment ?? environment ?? string.Empty,
+                sessionId,
+                cancellationToken);
+            return Ok(ApiResult<LinklyCloudBackendSessionResponse>.Ok(response));
+        }
+        catch (LinklyCloudBackendSessionNotFoundException)
+        {
+            return NotFound(ApiResult<LinklyCloudBackendSessionResponse>.Fail(
+                CloudBackendNotFoundCode,
+                "Linkly Cloud backend session was not found."));
         }
         catch (LinklyCloudBackendValidationException ex)
         {

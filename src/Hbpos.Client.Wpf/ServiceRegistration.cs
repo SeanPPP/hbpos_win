@@ -33,6 +33,7 @@ public static class ServiceRegistration
         services.AddSingleton<ILocalDeviceRepository, LocalDeviceRepository>();
         services.AddSingleton<ILocalCatalogRepository, LocalCatalogRepository>();
         services.AddSingleton<ILocalOrderRepository, LocalOrderRepository>();
+        services.AddSingleton<ILocalCardPaymentAttemptRepository, LocalCardPaymentAttemptRepository>();
         services.AddSingleton<ILocalInstallmentOrderRepository, LocalInstallmentOrderRepository>();
         services.AddSingleton<ILocalOrderUploadRepository, LocalOrderUploadRepository>();
         services.AddSingleton<ISuspendedOrderRepository, SuspendedOrderRepository>();
@@ -107,6 +108,7 @@ public static class ServiceRegistration
         services.AddSingleton<IMainShellStartupService, MainShellStartupService>();
         services.AddSingleton<IShellSyncCenterService, ShellSyncCenterService>();
         services.AddSingleton<ICashPaymentWorkflowService, CashPaymentWorkflowService>();
+        services.AddSingleton<ICardPaymentRecoveryService, CardPaymentRecoveryService>();
         services.AddSingleton<ISuspendedOrderService, SuspendedOrderService>();
         services.AddSingleton<IRemoteOrderHistoryService, RemoteOrderHistoryService>();
         services.AddSingleton<IReceiptQueryService, ReceiptQueryService>();
@@ -237,7 +239,8 @@ public static class ServiceRegistration
             confirmationDialogService: sp.GetRequiredService<IConfirmationDialogService>(),
             installmentOrderService: sp.GetRequiredService<IInstallmentOrderService>(),
             testSalesDataResetService: sp.GetRequiredService<ITestSalesDataResetService>(),
-            linklyTerminalDialogPresenter: sp.GetRequiredService<ILinklyTerminalDialogPresenter>()));
+            linklyTerminalDialogPresenter: sp.GetRequiredService<ILinklyTerminalDialogPresenter>(),
+            cardPaymentRecoveryService: sp.GetRequiredService<ICardPaymentRecoveryService>()));
         services.AddSingleton<MainWindow>();
 
         return services;

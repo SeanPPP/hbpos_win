@@ -123,6 +123,9 @@ public sealed record LinklyCloudBackendSendKeyRequest(
 public sealed record LinklyCloudBackendMarkReceiptPrintedRequest(
     string Environment);
 
+public sealed record LinklyCloudBackendAcknowledgeRequest(
+    string? Environment);
+
 public sealed record LinklyCloudBackendTerminalCredentialUpsertRequest(
     string Environment,
     string Secret,
@@ -150,6 +153,7 @@ public sealed record LinklyCloudBackendSessionResponse(
     string? ReceiptText,
     int RecoveryCount,
     DateTimeOffset? ReceiptPrintedAt,
+    DateTimeOffset? ClientAcknowledgedAt,
     int? LastHttpStatus,
     IReadOnlyList<LinklyCloudBackendNotificationDto> Notifications);
 
