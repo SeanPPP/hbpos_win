@@ -2045,6 +2045,124 @@ public sealed class MainViewModelScannerTests
     }
 
     [Fact]
+    public async Task Card_payment_recovery_checking_result_allows_next_recovery_check()
+    {
+        var recovery = new FakeCardPaymentRecoveryService(
+            Task.FromResult(new CardPaymentRecoveryResult(CardPaymentRecoveryOutcome.Checking, "checking")),
+            Task.FromResult(CardPaymentRecoveryResult.None));
+        var viewModel = CreateAuthorizedMainViewModel(
+            new FakeCustomerDisplayWindowService(),
+            cardPaymentRecoveryService: recovery);
+
+        await InvokeRecoverCardPaymentAttemptAsync(viewModel, navigateToPaymentOnDraft: true);
+        await InvokeRecoverCardPaymentAttemptAsync(viewModel, navigateToPaymentOnDraft: true);
+
+        Assert.Equal(2, recovery.CallCount);
+    }
+
+    [Fact]
+    public async Task Card_payment_recovery_concurrent_checks_share_inflight_task()
+    {
+        var recoveryResult = new TaskCompletionSource<CardPaymentRecoveryResult>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var recovery = new FakeCardPaymentRecoveryService(recoveryResult.Task);
+        var viewModel = CreateAuthorizedMainViewModel(
+            new FakeCustomerDisplayWindowService(),
+            cardPaymentRecoveryService: recovery);
+
+        var first = InvokeRecoverCardPaymentAttemptAsync(viewModel, navigateToPaymentOnDraft: true);
+        var second = InvokeRecoverCardPaymentAttemptAsync(viewModel, navigateToPaymentOnDraft: true);
+        while (recovery.CallCount == 0)
+        {
+            await Task.Yield();
+        }
+
+        recoveryResult.SetResult(CardPaymentRecoveryResult.None);
+        await Task.WhenAll(first, second);
+
+        Assert.Equal(1, recovery.CallCount);
+    }
+
+    [Fact]
+    public async Task Card_payment_recovery_check_runs_again_when_opening_payment_with_non_empty_cart()
+    {
+        var cart = new PosCartService();
+        var recovery = new FakeCardPaymentRecoveryService(
+            Task.FromResult(new CardPaymentRecoveryResult(CardPaymentRecoveryOutcome.Checking, "checking")),
+            Task.FromResult(CardPaymentRecoveryResult.None));
+        var viewModel = CreateAuthorizedMainViewModel(
+            new FakeCustomerDisplayWindowService(),
+            cart: cart,
+            cardPaymentRecoveryService: recovery);
+
+        await InvokeRecoverCardPaymentAttemptAsync(viewModel, navigateToPaymentOnDraft: true);
+        cart.AddItem(CreateItem("1042", "SKU-CURRENT", "930CURRENT"));
+
+        viewModel.ShowCashPaymentCommand.Execute(null);
+
+        Assert.Equal(2, recovery.CallCount);
+        Assert.Equal("Payment", viewModel.ActivePageTitleText);
+    }
+
+    [Fact]
+    public async Task Card_payment_recovery_draft_restored_during_startup_keeps_pos_screen_and_surfaces_status()
+    {
+        var cart = new PosCartService();
+        var recovery = new FakeCardPaymentRecoveryService((recoveredCart, _, _) =>
+        {
+            // 模拟恢复服务在返回结果前已经把草稿购物车恢复到当前会话。
+            recoveredCart.AddItem(CreateItem("1042", "SKU-RECOVER-STARTUP", "930RECOVERSTARTUP"));
+            return Task.FromResult(new CardPaymentRecoveryResult(
+                CardPaymentRecoveryOutcome.DraftRestored,
+                "Recovered draft during startup."));
+        });
+        var viewModel = CreateAuthorizedMainViewModel(
+            new FakeCustomerDisplayWindowService(),
+            cardPaymentRecoveryService: recovery,
+            cart: cart);
+
+        await viewModel.InitializeAsync(new AppStartupOptions([], false, null, null));
+        var recovered = await InvokeRecoverCardPaymentAttemptAsync(viewModel, navigateToPaymentOnDraft: false);
+
+        Assert.True(recovered);
+        Assert.Equal(1, recovery.CallCount);
+        Assert.Same(viewModel.PosTerminal, viewModel.CurrentScreen);
+        Assert.True(viewModel.IsPosTerminalScreenActive);
+        Assert.False(viewModel.IsCashPaymentScreenActive);
+        Assert.Equal("Recovered draft during startup.", viewModel.StatusMessage);
+        Assert.Single(cart.Lines);
+    }
+
+    [Fact]
+    public async Task Card_payment_recovery_draft_restored_when_opening_payment_navigates_to_payment_screen()
+    {
+        var cart = new PosCartService();
+        var recovery = new FakeCardPaymentRecoveryService((recoveredCart, _, _) =>
+        {
+            // 模拟恢复服务把待继续支付的购物车恢复回来，界面应直接收口到支付页。
+            recoveredCart.AddItem(CreateItem("1042", "SKU-RECOVER-PAYMENT", "930RECOVERPAYMENT"));
+            return Task.FromResult(new CardPaymentRecoveryResult(
+                CardPaymentRecoveryOutcome.DraftRestored,
+                "Recovered draft for payment."));
+        });
+        var viewModel = CreateAuthorizedMainViewModel(
+            new FakeCustomerDisplayWindowService(),
+            cardPaymentRecoveryService: recovery,
+            cart: cart);
+
+        await viewModel.InitializeAsync(new AppStartupOptions([], false, null, null));
+
+        viewModel.ShowCashPaymentCommand.Execute(null);
+        await WaitUntilAsync(() => recovery.CallCount == 1 && ReferenceEquals(viewModel.CashPayment, viewModel.CurrentScreen));
+
+        Assert.Same(viewModel.CashPayment, viewModel.CurrentScreen);
+        Assert.True(viewModel.IsCashPaymentScreenActive);
+        Assert.False(viewModel.IsPosTerminalScreenActive);
+        Assert.Equal("Recovered draft for payment.", viewModel.StatusMessage);
+        Assert.Equal("Payment", viewModel.ActivePageTitleText);
+        Assert.Single(cart.Lines);
+    }
+
+    [Fact]
     public async Task ReregisterDevice_SubmitSuccess_ClearsAuthorizationAndShowsRegistration()
     {
         var authorizationState = new DeviceAuthorizationState();
@@ -2145,10 +2263,12 @@ public sealed class MainViewModelScannerTests
         IApplicationExitService? applicationExitService = null,
         IConfirmationDialogService? confirmationDialogService = null,
         IConnectivityApiClient? connectivityApiClient = null,
-        ISpecialProductsWorkflowService? specialProductsWorkflowService = null)
+        ISpecialProductsWorkflowService? specialProductsWorkflowService = null,
+        ICardPaymentRecoveryService? cardPaymentRecoveryService = null,
+        PosCartService? cart = null)
     {
         var priceIndex = new LocalSellableItemIndex();
-        var cart = new PosCartService();
+        var effectiveCart = cart ?? new PosCartService();
         var checkout = new CashCheckoutService();
         var catalogRepository = new FakeCatalogRepository();
         var syncQueue = syncQueueRepository ?? new FakeSyncQueueRepository();
@@ -2158,7 +2278,7 @@ public sealed class MainViewModelScannerTests
         var fingerprintService = new FakeDeviceFingerprintService();
         return new MainViewModel(
             priceIndex,
-            cart,
+            effectiveCart,
             checkout,
             new FakeLocalSchemaService(),
             new ShellCultureService(localization, new FakeSettingsRepository()),
@@ -2176,17 +2296,33 @@ public sealed class MainViewModelScannerTests
             new ReceiptQueryService(orderRepository),
             new CashPaymentWorkflowService(checkout, orderRepository, syncQueue),
             new DeviceRegistrationWorkflowService(new FakeDeviceApiClient(), deviceRepository, fingerprintService),
-            specialProductsWorkflowService ?? new SpecialProductsWorkflowService(priceIndex, cart, catalogRepository, new FakeSpecialProductService()),
+            specialProductsWorkflowService ?? new SpecialProductsWorkflowService(priceIndex, effectiveCart, catalogRepository, new FakeSpecialProductService()),
             (remoteLookupRefreshAsync, reloadCatalogAsync) => new PosTerminalWorkflowService(
                 priceIndex,
-                cart,
+                effectiveCart,
                 remoteLookupRefreshAsync,
                 reloadCatalogAsync),
             receiptPrintService: receiptPrintService,
             orderUploadExecutionService: orderUploadExecutionService,
             cashDrawerService: cashDrawerService,
             applicationExitService: applicationExitService,
-            confirmationDialogService: confirmationDialogService);
+            confirmationDialogService: confirmationDialogService,
+            cardPaymentRecoveryService: cardPaymentRecoveryService);
+    }
+
+    private static async Task<bool> InvokeRecoverCardPaymentAttemptAsync(
+        MainViewModel viewModel,
+        bool navigateToPaymentOnDraft)
+    {
+        var method = typeof(MainViewModel).GetMethod(
+            "RecoverCardPaymentAttemptAsync",
+            BindingFlags.Instance | BindingFlags.NonPublic,
+            binder: null,
+            [typeof(bool)],
+            modifiers: null);
+        Assert.NotNull(method);
+        var task = (Task<bool>)method!.Invoke(viewModel, [navigateToPaymentOnDraft])!;
+        return await task;
     }
 
     private static async Task<bool> InvokeRefreshOnlineStateAsync(MainViewModel viewModel)
@@ -2660,6 +2796,13 @@ public sealed class MainViewModelScannerTests
         }
 
         public Task<LinklyConnectionTestResult> TestLinklyCloudBackendConnectionAsync(
+            CardTerminalEnvironment environment,
+            CancellationToken cancellationToken = default)
+        {
+            return Task.FromResult(new LinklyConnectionTestResult(false, "not tested"));
+        }
+
+        public Task<LinklyConnectionTestResult> TestLinklyCloudBackendTransactionStatusAsync(
             CardTerminalEnvironment environment,
             CancellationToken cancellationToken = default)
         {
@@ -3327,6 +3470,36 @@ public sealed class MainViewModelScannerTests
             CancellationToken cancellationToken = default)
         {
             return Task.FromResult<SpecialProductsReorderWorkflowResult?>(null);
+        }
+    }
+
+    private sealed class FakeCardPaymentRecoveryService : ICardPaymentRecoveryService
+    {
+        private readonly Queue<Func<PosCartService, PosSessionState, CancellationToken, Task<CardPaymentRecoveryResult>>> _results;
+
+        public FakeCardPaymentRecoveryService(params Task<CardPaymentRecoveryResult>[] results)
+        {
+            _results = new Queue<Func<PosCartService, PosSessionState, CancellationToken, Task<CardPaymentRecoveryResult>>>(
+                results.Select(result => new Func<PosCartService, PosSessionState, CancellationToken, Task<CardPaymentRecoveryResult>>(
+                    (PosCartService cart, PosSessionState session, CancellationToken cancellationToken) => result)));
+        }
+
+        public FakeCardPaymentRecoveryService(params Func<PosCartService, PosSessionState, CancellationToken, Task<CardPaymentRecoveryResult>>[] results)
+        {
+            _results = new Queue<Func<PosCartService, PosSessionState, CancellationToken, Task<CardPaymentRecoveryResult>>>(results);
+        }
+
+        public int CallCount { get; private set; }
+
+        public Task<CardPaymentRecoveryResult> RecoverLatestAsync(
+            PosCartService cart,
+            PosSessionState session,
+            CancellationToken cancellationToken = default)
+        {
+            CallCount++;
+            return _results.Count > 0
+                ? _results.Dequeue()(cart, session, cancellationToken)
+                : Task.FromResult(CardPaymentRecoveryResult.None);
         }
     }
 

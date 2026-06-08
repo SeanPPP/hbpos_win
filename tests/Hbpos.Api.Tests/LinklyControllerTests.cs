@@ -229,6 +229,28 @@ public sealed class LinklyControllerTests
     }
 
     [Fact]
+    public void CloudBackendStatusTestEndpoint_KeepsExpectedRouteAndAuthorization()
+    {
+        Assert.Equal("cloud-backend/status-test", typeof(LinklyController)
+            .GetMethod(nameof(LinklyController.RunCloudBackendStatusTest))?
+            .GetCustomAttributes(typeof(HttpPostAttribute), inherit: false)
+            .Cast<HttpPostAttribute>()
+            .Single()
+            .Template);
+    }
+
+    [Fact]
+    public void CloudBackendLogonTestEndpoint_KeepsExpectedRouteAndAuthorization()
+    {
+        Assert.Equal("cloud-backend/logon-test", typeof(LinklyController)
+            .GetMethod(nameof(LinklyController.RunCloudBackendLogonTest))?
+            .GetCustomAttributes(typeof(HttpPostAttribute), inherit: false)
+            .Cast<HttpPostAttribute>()
+            .Single()
+            .Template);
+    }
+
+    [Fact]
     public void CloudBackendTerminalCredentialEndpoint_KeepsExpectedRouteAndAuthorization()
     {
         Assert.Equal("cloud-backend/terminal", typeof(LinklyController)
@@ -396,6 +418,56 @@ public sealed class LinklyControllerTests
         Assert.Equal("sandbox", backendService.LastHealthEnvironment);
         Assert.True(apiResult.Data?.IsReady);
         Assert.Contains(apiResult.Data!.Checks, check => check.Code == "PUBLIC_CALLBACK_URL" && check.IsReady);
+    }
+
+    [Fact]
+    public async Task RunCloudBackendStatusTest_UsesAuthenticatedDeviceClaimsOnly()
+    {
+        var backendService = new CapturingLinklyCloudBackendAsyncService();
+        await using var factory = new LinklyApiFactory(linklyCloudBackendAsyncService: backendService);
+        using var client = factory.CreateClient();
+        client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Test");
+
+        using var response = await client.PostAsync(
+            "/api/v1/linkly/cloud-backend/status-test?environment=sandbox&storeCode=S99&deviceCode=POS-99",
+            content: null);
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var apiResult = await response.Content.ReadFromJsonAsync<ApiResult<LinklyCloudBackendStatusTestResponse>>();
+        Assert.NotNull(apiResult);
+        Assert.True(apiResult!.Success);
+        Assert.Equal("S01", backendService.LastStatusTestStoreCode);
+        Assert.Equal("POS-01", backendService.LastStatusTestDeviceCode);
+        Assert.Equal("sandbox", backendService.LastStatusTestEnvironment);
+        Assert.True(apiResult.Data?.Succeeded);
+        Assert.Equal("S01", apiResult.Data?.StoreCode);
+        Assert.Equal("POS-01", apiResult.Data?.DeviceCode);
+        Assert.Equal("status-session-1", apiResult.Data?.TransactionReference);
+    }
+
+    [Fact]
+    public async Task RunCloudBackendLogonTest_UsesAuthenticatedDeviceClaimsOnly()
+    {
+        var backendService = new CapturingLinklyCloudBackendAsyncService();
+        await using var factory = new LinklyApiFactory(linklyCloudBackendAsyncService: backendService);
+        using var client = factory.CreateClient();
+        client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Test");
+
+        using var response = await client.PostAsync(
+            "/api/v1/linkly/cloud-backend/logon-test?environment=sandbox&storeCode=S99&deviceCode=POS-99",
+            content: null);
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var apiResult = await response.Content.ReadFromJsonAsync<ApiResult<LinklyCloudBackendLogonTestResponse>>();
+        Assert.NotNull(apiResult);
+        Assert.True(apiResult!.Success);
+        Assert.Equal("S01", backendService.LastLogonTestStoreCode);
+        Assert.Equal("POS-01", backendService.LastLogonTestDeviceCode);
+        Assert.Equal("sandbox", backendService.LastLogonTestEnvironment);
+        Assert.True(apiResult.Data?.Succeeded);
+        Assert.Equal("S01", apiResult.Data?.StoreCode);
+        Assert.Equal("POS-01", apiResult.Data?.DeviceCode);
+        Assert.Equal("logon-session-1", apiResult.Data?.TransactionReference);
     }
 
     [Fact]
@@ -881,6 +953,18 @@ public sealed class LinklyControllerTests
 
         public string? LastHealthEnvironment { get; private set; }
 
+        public string? LastStatusTestStoreCode { get; private set; }
+
+        public string? LastStatusTestDeviceCode { get; private set; }
+
+        public string? LastStatusTestEnvironment { get; private set; }
+
+        public string? LastLogonTestStoreCode { get; private set; }
+
+        public string? LastLogonTestDeviceCode { get; private set; }
+
+        public string? LastLogonTestEnvironment { get; private set; }
+
         public string? LastTerminalUpsertStoreCode { get; private set; }
 
         public string? LastTerminalUpsertDeviceCode { get; private set; }
@@ -990,6 +1074,56 @@ public sealed class LinklyControllerTests
                 false,
                 null,
                 [new LinklyCloudBackendHealthCheckDto("STORE_CREDENTIAL", false, "missing")]));
+        }
+
+        public Task<LinklyCloudBackendStatusTestResponse> RunStatusTestAsync(
+            string storeCode,
+            string deviceCode,
+            string environment,
+            CancellationToken cancellationToken)
+        {
+            LastStatusTestStoreCode = storeCode;
+            LastStatusTestDeviceCode = deviceCode;
+            LastStatusTestEnvironment = environment;
+            return Task.FromResult(new LinklyCloudBackendStatusTestResponse(
+                "Sandbox",
+                storeCode,
+                deviceCode,
+                "status-session-1",
+                new DateTimeOffset(2026, 6, 5, 4, 0, 0, TimeSpan.Zero),
+                200,
+                true,
+                "00",
+                "APPROVED",
+                null,
+                "050626",
+                "140000",
+                "ANZ Linkly Cloud transaction status test succeeded."));
+        }
+
+        public Task<LinklyCloudBackendLogonTestResponse> RunLogonTestAsync(
+            string storeCode,
+            string deviceCode,
+            string environment,
+            CancellationToken cancellationToken)
+        {
+            LastLogonTestStoreCode = storeCode;
+            LastLogonTestDeviceCode = deviceCode;
+            LastLogonTestEnvironment = environment;
+            return Task.FromResult(new LinklyCloudBackendLogonTestResponse(
+                "Sandbox",
+                storeCode,
+                deviceCode,
+                "logon-session-1",
+                new DateTimeOffset(2026, 6, 5, 4, 0, 0, TimeSpan.Zero),
+                200,
+                true,
+                "00",
+                "APPROVED",
+                "12345678",
+                "123456789012345",
+                "1.8.6.0",
+                "ANZ Linkly Cloud logon succeeded."));
         }
 
         public Task<LinklyCloudBackendTerminalCredentialResponse> UpsertTerminalCredentialAsync(

@@ -1498,19 +1498,16 @@ public sealed partial class MainViewModel : ObservableObject
 
     private async void ShowCashPayment()
     {
+        var recovered = await RecoverCardPaymentAttemptAsync(navigateToPaymentOnDraft: true);
+        if (recovered)
+        {
+            return;
+        }
+
         if (_cart.IsEmpty)
         {
-            var recovered = await RecoverCardPaymentAttemptAsync(navigateToPaymentOnDraft: true);
-            if (recovered)
-            {
-                return;
-            }
-
-            if (!recovered && _cart.IsEmpty)
-            {
-                ShowPos();
-                return;
-            }
+            ShowPos();
+            return;
         }
 
         PrepareCachedCashPaymentScreen();
@@ -1531,8 +1528,34 @@ public sealed partial class MainViewModel : ObservableObject
             return false;
         }
 
-        _cardPaymentRecoveryTask ??= _cardPaymentRecoveryService.RecoverLatestAsync(_cart, Session, CancellationToken.None);
-        var result = await _cardPaymentRecoveryTask;
+        var recoveryTask = _cardPaymentRecoveryTask;
+        if (recoveryTask is null)
+        {
+            recoveryTask = _cardPaymentRecoveryService.RecoverLatestAsync(_cart, Session, CancellationToken.None);
+            _cardPaymentRecoveryTask = recoveryTask;
+        }
+
+        CardPaymentRecoveryResult result;
+        try
+        {
+            result = await recoveryTask;
+        }
+        catch
+        {
+            if (ReferenceEquals(_cardPaymentRecoveryTask, recoveryTask))
+            {
+                _cardPaymentRecoveryTask = null;
+            }
+
+            throw;
+        }
+
+        if (ShouldRetryCardPaymentRecovery(result.Outcome) &&
+            ReferenceEquals(_cardPaymentRecoveryTask, recoveryTask))
+        {
+            _cardPaymentRecoveryTask = null;
+        }
+
         if (result.Outcome == CardPaymentRecoveryOutcome.None)
         {
             return false;
@@ -1569,7 +1592,14 @@ public sealed partial class MainViewModel : ObservableObject
             return true;
         }
 
-        return true;
+        return false;
+    }
+
+    private static bool ShouldRetryCardPaymentRecovery(CardPaymentRecoveryOutcome outcome)
+    {
+        return outcome is CardPaymentRecoveryOutcome.None or
+            CardPaymentRecoveryOutcome.Checking or
+            CardPaymentRecoveryOutcome.Unknown;
     }
 
     private void ShowInstallmentCenter()

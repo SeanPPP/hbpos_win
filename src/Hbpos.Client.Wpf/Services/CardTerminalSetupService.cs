@@ -80,6 +80,10 @@ public interface ICardTerminalSetupService
         CardTerminalEnvironment environment,
         CancellationToken cancellationToken = default);
 
+    Task<LinklyConnectionTestResult> TestLinklyCloudBackendTransactionStatusAsync(
+        CardTerminalEnvironment environment,
+        CancellationToken cancellationToken = default);
+
     Task<bool> HasLinklyCloudSecretAsync(
         CardTerminalEnvironment environment,
         CancellationToken cancellationToken = default);
@@ -425,6 +429,22 @@ public sealed class CardTerminalSetupService(
         LogLinklyCloudSetup($"backend test start environment={environment}");
         var result = await linklyBackendTerminalClient.TestConnectionAsync(environment, cancellationToken);
         LogLinklyCloudSetup($"backend test completed environment={environment} success={result.Succeeded}");
+        return result;
+    }
+
+    public async Task<LinklyConnectionTestResult> TestLinklyCloudBackendTransactionStatusAsync(
+        CardTerminalEnvironment environment,
+        CancellationToken cancellationToken = default)
+    {
+        if (linklyBackendTerminalClient is null)
+        {
+            LogLinklyCloudSetup($"backend status test blocked environment={environment} reason=missing-backend-client");
+            return new LinklyConnectionTestResult(false, T("settings.linklyCloud.unavailable", "Linkly Cloud setup is unavailable."));
+        }
+
+        LogLinklyCloudSetup($"backend status test start environment={environment}");
+        var result = await linklyBackendTerminalClient.TestTransactionStatusAsync(environment, cancellationToken);
+        LogLinklyCloudSetup($"backend status test completed environment={environment} success={result.Succeeded}");
         return result;
     }
 

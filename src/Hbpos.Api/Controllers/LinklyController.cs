@@ -322,6 +322,62 @@ public sealed class LinklyController(
         }
     }
 
+    [HttpPost("cloud-backend/status-test")]
+    public async Task<ActionResult<ApiResult<LinklyCloudBackendStatusTestResponse>>> RunCloudBackendStatusTest(
+        [FromQuery] string? environment,
+        CancellationToken cancellationToken)
+    {
+        var scope = GetAuthenticatedDeviceScope<LinklyCloudBackendStatusTestResponse>();
+        if (scope.Result is not null)
+        {
+            return scope.Result;
+        }
+
+        try
+        {
+            var response = await linklyCloudBackendAsyncService.RunStatusTestAsync(
+                scope.StoreCode!,
+                scope.DeviceCode!,
+                environment ?? string.Empty,
+                cancellationToken);
+            return Ok(ApiResult<LinklyCloudBackendStatusTestResponse>.Ok(response));
+        }
+        catch (LinklyCloudBackendValidationException ex)
+        {
+            return BadRequest(ApiResult<LinklyCloudBackendStatusTestResponse>.Fail(
+                CloudBackendInvalidCode,
+                ex.Message));
+        }
+    }
+
+    [HttpPost("cloud-backend/logon-test")]
+    public async Task<ActionResult<ApiResult<LinklyCloudBackendLogonTestResponse>>> RunCloudBackendLogonTest(
+        [FromQuery] string? environment,
+        CancellationToken cancellationToken)
+    {
+        var scope = GetAuthenticatedDeviceScope<LinklyCloudBackendLogonTestResponse>();
+        if (scope.Result is not null)
+        {
+            return scope.Result;
+        }
+
+        try
+        {
+            var response = await linklyCloudBackendAsyncService.RunLogonTestAsync(
+                scope.StoreCode!,
+                scope.DeviceCode!,
+                environment ?? string.Empty,
+                cancellationToken);
+            return Ok(ApiResult<LinklyCloudBackendLogonTestResponse>.Ok(response));
+        }
+        catch (LinklyCloudBackendValidationException ex)
+        {
+            return BadRequest(ApiResult<LinklyCloudBackendLogonTestResponse>.Fail(
+                CloudBackendInvalidCode,
+                ex.Message));
+        }
+    }
+
     [HttpGet("cloud-backend/transactions/{sessionId}/status")]
     public async Task<ActionResult<ApiResult<LinklyCloudBackendSessionResponse>>> GetCloudBackendTransactionStatus(
         string sessionId,

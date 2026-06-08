@@ -175,6 +175,36 @@ public sealed record LinklyCloudBackendHealthCheckDto(
     bool IsReady,
     string Message);
 
+public sealed record LinklyCloudBackendLogonTestResponse(
+    string Environment,
+    string StoreCode,
+    string DeviceCode,
+    string TransactionReference,
+    DateTimeOffset RequestedAt,
+    int HttpStatus,
+    bool Succeeded,
+    string? ResponseCode,
+    string? ResponseText,
+    string? Catid,
+    string? Caid,
+    string? PinPadVersion,
+    string Message);
+
+public sealed record LinklyCloudBackendStatusTestResponse(
+    string Environment,
+    string StoreCode,
+    string DeviceCode,
+    string TransactionReference,
+    DateTimeOffset RequestedAt,
+    int HttpStatus,
+    bool Succeeded,
+    string? ResponseCode,
+    string? ResponseText,
+    string? ResponseTxnRef,
+    string? ResponseDate,
+    string? ResponseTime,
+    string Message);
+
 public sealed record LinklyCloudBackendTerminalCredentialResponse(
     string Environment,
     string StoreCode,

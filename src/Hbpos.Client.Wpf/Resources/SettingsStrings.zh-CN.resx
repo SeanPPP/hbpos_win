@@ -67,7 +67,8 @@
   <data name="settings.linkly.cloudDirect.description" xml:space="preserve"><value>在本机保存 Cloud API 测试账号，完成刷卡机配对后测试直连 Cloud。该模式仅返回交易状态结果。</value></data>
   <data name="settings.linkly.cloudBackend.title" xml:space="preserve"><value>Cloud 后端异步</value></data>
   <data name="settings.linkly.cloudBackend.description" xml:space="preserve"><value>使用后端 Linkly 流程处理异步 Cloud 交易。该模式支持 display、receipt、sendkey 和签名授权。启用前先用当前门店和设备测试后端入口。</value></data>
-  <data name="settings.linkly.cloudBackend.test" xml:space="preserve"><value>测试后端</value></data>
+  <data name="settings.linkly.cloudBackend.test" xml:space="preserve"><value>测试 Logon</value></data>
+  <data name="settings.linkly.cloudBackend.testStatus" xml:space="preserve"><value>测试交易状态</value></data>
   <data name="settings.linkly.cloud.secret" xml:space="preserve"><value>Cloud &#x914D;&#x5BF9;&#x5BC6;&#x94A5;</value></data>
   <data name="settings.linkly.cloud.secretStatus.cached" xml:space="preserve"><value>&#x8BE5; POS &#x5DF2;&#x5B89;&#x5168;&#x4FDD;&#x5B58;&#x914D;&#x5BF9;&#x5BC6;&#x94A5;&#x3002;</value></data>
   <data name="settings.linkly.cloud.secretStatus.missing" xml:space="preserve"><value>&#x8BE5; POS &#x5C1A;&#x672A;&#x4FDD;&#x5B58;&#x914D;&#x5BF9;&#x5BC6;&#x94A5;&#x3002;</value></data>

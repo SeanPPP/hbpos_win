@@ -67,7 +67,8 @@
   <data name="settings.linkly.cloudDirect.description" xml:space="preserve"><value>Save the Cloud API test account on this POS, pair the terminal, then test the direct Cloud connection. This mode only exposes transaction status results.</value></data>
   <data name="settings.linkly.cloudBackend.title" xml:space="preserve"><value>Cloud backend async</value></data>
   <data name="settings.linkly.cloudBackend.description" xml:space="preserve"><value>Use the backend Linkly workflow for asynchronous Cloud processing. This mode supports display, receipt, sendkey, and signature authorization. Test this store and device against the backend before enabling Linkly.</value></data>
-  <data name="settings.linkly.cloudBackend.test" xml:space="preserve"><value>Test Backend</value></data>
+  <data name="settings.linkly.cloudBackend.test" xml:space="preserve"><value>Test Logon</value></data>
+  <data name="settings.linkly.cloudBackend.testStatus" xml:space="preserve"><value>Test TXN Status</value></data>
   <data name="settings.linkly.cloud.secret" xml:space="preserve"><value>Cloud Pairing Secret</value></data>
   <data name="settings.linkly.cloud.secretStatus.cached" xml:space="preserve"><value>Paired secret is saved securely on this POS.</value></data>
   <data name="settings.linkly.cloud.secretStatus.missing" xml:space="preserve"><value>No paired secret saved for this POS.</value></data>

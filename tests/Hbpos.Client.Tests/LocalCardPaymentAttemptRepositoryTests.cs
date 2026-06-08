@@ -29,6 +29,7 @@ public sealed class LocalCardPaymentAttemptRepositoryTests
                     "SessionStarted",
                     "Recovering",
                     "Approved",
+                    "RequiresReview",
                     "Declined",
                     "TimedOut",
                     "Cancelled",
@@ -296,6 +297,104 @@ public sealed class LocalCardPaymentAttemptRepositoryTests
         }
     }
 
+    [Fact]
+    public async Task GetLatestOpenAttemptAsync_returns_requires_review_attempt()
+    {
+        var databasePath = CreateTempDatabasePath();
+
+        try
+        {
+            var store = new LocalSqliteStore(databasePath);
+            var schema = new LocalSchemaService(store);
+            var repository = new LocalCardPaymentAttemptRepository(store);
+            var attempt = CreateAttempt(status: LocalCardPaymentAttemptStatus.RequiresReview);
+
+            await schema.InitializeAsync();
+            await repository.CreateAsync(attempt);
+
+            var saved = await repository.GetLatestOpenAttemptAsync("S001", "POS-01", "C001", "sandbox");
+
+            Assert.NotNull(saved);
+            Assert.Equal(attempt.AttemptGuid, saved.AttemptGuid);
+            Assert.Equal(LocalCardPaymentAttemptStatus.RequiresReview, saved.Status);
+        }
+        finally
+        {
+            DeleteTempDatabase(databasePath);
+        }
+    }
+
+    [Fact]
+    public async Task GetLatestOpenAttemptAsync_returns_unacknowledged_order_completed_attempt_with_session()
+    {
+        var databasePath = CreateTempDatabasePath();
+
+        try
+        {
+            var store = new LocalSqliteStore(databasePath);
+            var schema = new LocalSchemaService(store);
+            var repository = new LocalCardPaymentAttemptRepository(store);
+            var attempt = CreateAttempt(
+                status: LocalCardPaymentAttemptStatus.OrderCompleted,
+                sessionId: "SESSION-ACK",
+                txnRef: "TXN-ACK");
+
+            await schema.InitializeAsync();
+            await repository.CreateAsync(attempt);
+
+            var saved = await repository.GetLatestOpenAttemptAsync("S001", "POS-01", "C001", "sandbox");
+
+            Assert.NotNull(saved);
+            Assert.Equal(attempt.AttemptGuid, saved.AttemptGuid);
+            Assert.Equal(LocalCardPaymentAttemptStatus.OrderCompleted, saved.Status);
+            Assert.Equal("SESSION-ACK", saved.SessionId);
+            Assert.Null(saved.AcknowledgedAt);
+        }
+        finally
+        {
+            DeleteTempDatabase(databasePath);
+        }
+    }
+
+    [Fact]
+    public async Task GetLatestOpenAttemptAsync_ignores_acknowledged_or_unbound_order_completed_attempts()
+    {
+        var databasePath = CreateTempDatabasePath();
+
+        try
+        {
+            var store = new LocalSqliteStore(databasePath);
+            var schema = new LocalSchemaService(store);
+            var repository = new LocalCardPaymentAttemptRepository(store);
+            var baseTime = DateTimeOffset.Parse("2026-06-05T09:00:00+10:00");
+            var acknowledged = CreateAttempt(
+                attemptGuid: Guid.Parse("66666666-6666-6666-6666-666666666666"),
+                status: LocalCardPaymentAttemptStatus.OrderCompleted,
+                sessionId: "SESSION-DONE",
+                txnRef: "TXN-DONE",
+                updatedAt: baseTime.AddMinutes(1),
+                acknowledgedAt: baseTime.AddMinutes(2));
+            var unbound = CreateAttempt(
+                attemptGuid: Guid.Parse("77777777-7777-7777-7777-777777777777"),
+                status: LocalCardPaymentAttemptStatus.OrderCompleted,
+                sessionId: null,
+                txnRef: "TXN-NO-SESSION",
+                updatedAt: baseTime.AddMinutes(3));
+
+            await schema.InitializeAsync();
+            await repository.CreateAsync(acknowledged);
+            await repository.CreateAsync(unbound);
+
+            var saved = await repository.GetLatestOpenAttemptAsync("S001", "POS-01", "C001", "sandbox");
+
+            Assert.Null(saved);
+        }
+        finally
+        {
+            DeleteTempDatabase(databasePath);
+        }
+    }
+
     private static LocalCardPaymentAttempt CreateAttempt(
         Guid? attemptGuid = null,
         string storeCode = "S001",
@@ -304,14 +403,17 @@ public sealed class LocalCardPaymentAttemptRepositoryTests
         string environment = "sandbox",
         LocalCardPaymentAttemptStatus status = LocalCardPaymentAttemptStatus.Pending,
         DateTimeOffset? updatedAt = null,
-        string orderDraftJson = "{}")
+        string orderDraftJson = "{}",
+        string? sessionId = null,
+        string? txnRef = null,
+        DateTimeOffset? acknowledgedAt = null)
     {
         var effectiveUpdatedAt = updatedAt ?? DateTimeOffset.Parse("2026-06-05T10:00:00+10:00");
 
         return new LocalCardPaymentAttempt(
             attemptGuid ?? Guid.Parse("99999999-8888-7777-6666-555555555555"),
-            null,
-            null,
+            sessionId,
+            txnRef,
             "Linkly",
             environment,
             "Cloud",
@@ -327,8 +429,8 @@ public sealed class LocalCardPaymentAttemptRepositoryTests
             null,
             effectiveUpdatedAt.AddMinutes(-1),
             effectiveUpdatedAt,
-            null,
-            null);
+            status == LocalCardPaymentAttemptStatus.OrderCompleted ? effectiveUpdatedAt : null,
+            acknowledgedAt);
     }
 
     private static LocalSquarePaymentAttempt CreateSquareAttempt(

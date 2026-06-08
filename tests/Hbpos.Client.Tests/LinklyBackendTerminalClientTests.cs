@@ -27,8 +27,9 @@ public sealed class LinklyBackendTerminalClientTests
     }
 
     [Fact]
-    public async Task TestConnectionAsync_uses_backend_health_config_endpoint_without_local_linkly_token()
+    public async Task TestConnectionAsync_uses_backend_logon_test_endpoint_without_local_linkly_token()
     {
+        using var logs = new ConsoleLogCapture();
         var requests = new List<HttpRequestMessage>();
         var handler = new StubHttpMessageHandler(request =>
         {
@@ -41,9 +42,16 @@ public sealed class LinklyBackendTerminalClientTests
                     "environment": "Sandbox",
                     "storeCode": "S01",
                     "deviceCode": "TERM-1",
-                    "isReady": true,
-                    "publicNotificationBaseUrl": "https://public.example/callback/",
-                    "checks": []
+                    "transactionReference": "logon-session-1",
+                    "requestedAt": "2026-06-05T04:00:00Z",
+                    "httpStatus": 200,
+                    "succeeded": true,
+                    "responseCode": "00",
+                    "responseText": "APPROVED",
+                    "catid": "12345678",
+                    "caid": "123456789012345",
+                    "pinPadVersion": "1.8.6.0",
+                    "message": "ANZ Linkly Cloud logon succeeded."
                   }
                 }
                 """);
@@ -53,16 +61,76 @@ public sealed class LinklyBackendTerminalClientTests
         var result = await client.TestConnectionAsync(CardTerminalEnvironment.Sandbox);
 
         Assert.True(result.Succeeded);
-        Assert.Contains("backend", result.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("logon", result.Message, StringComparison.OrdinalIgnoreCase);
         var request = Assert.Single(requests);
-        Assert.Equal(HttpMethod.Get, request.Method);
+        Assert.Equal(HttpMethod.Post, request.Method);
         Assert.Equal(
-            "https://api.example/api/v1/linkly/cloud-backend/health?environment=Sandbox",
+            "https://api.example/api/v1/linkly/cloud-backend/logon-test?environment=Sandbox",
             request.RequestUri!.AbsoluteUri);
+        Assert.Null(request.Content);
+
+        using var requestLog = FindLinklyLog(logs.Lines, "logon-test", "request");
+        Assert.Equal("POST", requestLog.RootElement.GetProperty("request").GetProperty("method").GetString());
+        using var responseLog = FindLinklyLog(logs.Lines, "logon-test", "response");
+        Assert.Equal("00", responseLog.RootElement.GetProperty("response").GetProperty("body").GetProperty("data").GetProperty("responseCode").GetString());
     }
 
     [Fact]
-    public async Task TestConnectionAsync_returns_failed_when_backend_health_is_not_ready()
+    public async Task TestTransactionStatusAsync_posts_status_test_endpoint_and_logs_request_response()
+    {
+        using var logs = new ConsoleLogCapture();
+        var requests = new List<HttpRequestMessage>();
+        var handler = new StubHttpMessageHandler(request =>
+        {
+            requests.Add(CloneRequestWithBody(request));
+            return JsonResponse(
+                """
+                {
+                  "success": true,
+                  "data": {
+                    "environment": "Sandbox",
+                    "storeCode": "S01",
+                    "deviceCode": "TERM-1",
+                    "transactionReference": "status-session-1",
+                    "requestedAt": "2026-06-05T04:00:00Z",
+                    "httpStatus": 200,
+                    "succeeded": false,
+                    "responseCode": "05",
+                    "responseText": "DECLINED",
+                    "responseTxnRef": "LAST-TXN-1",
+                    "responseDate": "050626",
+                    "responseTime": "143000",
+                    "message": "DECLINED"
+                  }
+                }
+                """);
+        });
+        var client = CreateClient(handler, new FakeLinklyTerminalDialogService());
+
+        var result = await client.TestTransactionStatusAsync(CardTerminalEnvironment.Sandbox);
+
+        Assert.False(result.Succeeded);
+        Assert.Equal("DECLINED", result.Message);
+        var request = Assert.Single(requests);
+        Assert.Equal(HttpMethod.Post, request.Method);
+        Assert.Equal(
+            "https://api.example/api/v1/linkly/cloud-backend/status-test?environment=Sandbox",
+            request.RequestUri!.AbsoluteUri);
+        Assert.Null(request.Content);
+
+        using var requestLog = FindLinklyLog(logs.Lines, "transaction-status-test", "request");
+        Assert.Equal("POST", requestLog.RootElement.GetProperty("request").GetProperty("method").GetString());
+        Assert.Equal("https://api.example/api/v1/linkly/cloud-backend/status-test?environment=Sandbox", requestLog.RootElement.GetProperty("request").GetProperty("url").GetString());
+        Assert.Equal(JsonValueKind.Null, requestLog.RootElement.GetProperty("request").GetProperty("body").ValueKind);
+
+        using var responseLog = FindLinklyLog(logs.Lines, "transaction-status-test", "response");
+        Assert.Equal(200, responseLog.RootElement.GetProperty("httpStatus").GetInt32());
+        Assert.Equal("LAST-TXN-1", responseLog.RootElement.GetProperty("details").GetProperty("txnRef").GetString());
+        Assert.Equal("DECLINED", responseLog.RootElement.GetProperty("response").GetProperty("body").GetProperty("data").GetProperty("responseText").GetString());
+    }
+
+    [Fact]
+    public async Task TestConnectionAsync_returns_failed_when_backend_logon_is_declined()
     {
         var handler = new StubHttpMessageHandler(_ => JsonResponse(
             """
@@ -72,14 +140,16 @@ public sealed class LinklyBackendTerminalClientTests
                 "environment": "Sandbox",
                 "storeCode": "S01",
                 "deviceCode": "TERM-1",
-                "isReady": false,
-                "checks": [
-                  {
-                    "code": "TERMINAL_SECRET",
-                    "isReady": false,
-                    "message": "Linkly Cloud terminal secret is missing for this terminal."
-                  }
-                ]
+                "transactionReference": "logon-session-1",
+                "requestedAt": "2026-06-05T04:00:00Z",
+                "httpStatus": 200,
+                "succeeded": false,
+                "responseCode": "99",
+                "responseText": "LOGON REQUIRED",
+                "catid": null,
+                "caid": null,
+                "pinPadVersion": null,
+                "message": "LOGON REQUIRED"
               }
             }
             """));
@@ -88,11 +158,11 @@ public sealed class LinklyBackendTerminalClientTests
         var result = await client.TestConnectionAsync(CardTerminalEnvironment.Sandbox);
 
         Assert.False(result.Succeeded);
-        Assert.Equal("Linkly Cloud terminal secret is missing for this terminal.", result.Message);
+        Assert.Equal("LOGON REQUIRED", result.Message);
     }
 
     [Fact]
-    public async Task TestConnectionAsync_combines_multiple_backend_health_failures_and_logs_failed_codes()
+    public async Task TestConnectionAsync_logs_failed_backend_logon_response()
     {
         using var logs = new ConsoleLogCapture();
         var handler = new StubHttpMessageHandler(_ => JsonResponse(
@@ -103,40 +173,32 @@ public sealed class LinklyBackendTerminalClientTests
                 "environment": "Sandbox",
                 "storeCode": "S01",
                 "deviceCode": "TERM-1",
-                "isReady": false,
-                "checks": [
-                  {
-                    "code": "STORE_CREDENTIAL",
-                    "isReady": false,
-                    "message": "Linkly Cloud store credential is missing for this store."
-                  },
-                  {
-                    "code": "TERMINAL_SECRET",
-                    "isReady": false,
-                    "message": "Linkly Cloud terminal secret is missing for this terminal."
-                  }
-                ]
+                "transactionReference": "logon-session-1",
+                "requestedAt": "2026-06-05T04:00:00Z",
+                "httpStatus": 200,
+                "succeeded": false,
+                "responseCode": "99",
+                "responseText": "LOGON REQUIRED",
+                "catid": null,
+                "caid": null,
+                "pinPadVersion": null,
+                "message": "LOGON REQUIRED"
               }
             }
             """));
-        var client = CreateClient(handler, new FakeLinklyTerminalDialogService());
+        var dialog = new FakeLinklyTerminalDialogService();
+        var client = CreateClient(handler, dialog);
 
         var result = await client.TestConnectionAsync(CardTerminalEnvironment.Sandbox);
 
         Assert.False(result.Succeeded);
-        Assert.Equal(
-            string.Join(
-                Environment.NewLine,
-                "Linkly Cloud store credential is missing for this store.",
-                "Linkly Cloud terminal secret is missing for this terminal."),
-            result.Message);
-        Assert.Contains(
-            logs.Lines,
-            line => line.Contains("failedChecks=STORE_CREDENTIAL,TERMINAL_SECRET", StringComparison.Ordinal));
+        Assert.Equal("LOGON REQUIRED", result.Message);
+        using var responseLog = FindLinklyLog(logs.Lines, "logon-test", "response");
+        Assert.Equal("99", responseLog.RootElement.GetProperty("response").GetProperty("body").GetProperty("data").GetProperty("responseCode").GetString());
     }
 
     [Fact]
-    public async Task TestConnectionAsync_does_not_treat_missing_health_config_endpoint_as_success()
+    public async Task TestConnectionAsync_does_not_treat_missing_logon_test_endpoint_as_success()
     {
         var requests = new List<HttpRequestMessage>();
         var handler = new StubHttpMessageHandler(request =>
@@ -151,7 +213,7 @@ public sealed class LinklyBackendTerminalClientTests
         Assert.False(result.Succeeded);
         Assert.Contains("404", result.Message, StringComparison.Ordinal);
         Assert.Equal(
-            "https://api.example/api/v1/linkly/cloud-backend/health?environment=Sandbox",
+            "https://api.example/api/v1/linkly/cloud-backend/logon-test?environment=Sandbox",
             Assert.Single(requests).RequestUri!.AbsoluteUri);
     }
 
@@ -275,6 +337,82 @@ public sealed class LinklyBackendTerminalClientTests
     }
 
     [Fact]
+    public async Task PurchaseAsync_binds_local_attempt_when_backend_returns_session_before_final_status()
+    {
+        var bindCount = 0;
+        string? boundSessionId = null;
+        string? boundTxnRef = null;
+        var accessor = new LinklyPaymentAttemptContextAccessor();
+        var handler = new StubHttpMessageHandler(request =>
+        {
+            return request.RequestUri!.AbsolutePath switch
+            {
+                "/api/v1/linkly/cloud-backend/transactions/active" => new HttpResponseMessage(HttpStatusCode.NotFound),
+                "/api/v1/linkly/cloud-backend/transactions" => JsonResponse(
+                    """
+                    {
+                      "success": true,
+                      "data": {
+                        "environment": "Sandbox",
+                        "storeCode": "S01",
+                        "deviceCode": "TERM-1",
+                        "sessionId": "backend-session-early",
+                        "status": "Pending",
+                        "txnRef": "260601120099",
+                        "displayText": "PRESENT CARD",
+                        "receiptText": null,
+                        "recoveryCount": 0,
+                        "receiptPrintedAt": null,
+                        "lastHttpStatus": 200,
+                        "notifications": []
+                      }
+                    }
+                    """),
+                _ => JsonResponse(
+                    """
+                    {
+                      "success": true,
+                      "data": {
+                        "environment": "Sandbox",
+                        "storeCode": "S01",
+                        "deviceCode": "TERM-1",
+                        "sessionId": "backend-session-early",
+                        "status": "Completed",
+                        "txnRef": "260601120099",
+                        "responseCode": "00",
+                        "responseText": "APPROVED",
+                        "displayText": "APPROVED",
+                        "receiptText": "APPROVED RECEIPT",
+                        "recoveryCount": 0,
+                        "receiptPrintedAt": "2026-06-01T02:00:00Z",
+                        "lastHttpStatus": 200,
+                        "notifications": []
+                      }
+                    }
+                    """)
+            };
+        });
+        var dialog = new FakeLinklyTerminalDialogService();
+        var client = CreateClient(handler, dialog, TimeSpan.Zero, null, null, accessor);
+        using var scope = accessor.Begin(new LinklyPaymentAttemptContext(
+            Guid.Parse("aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"),
+            (sessionId, txnRef, _, _) =>
+            {
+                bindCount++;
+                boundSessionId = sessionId;
+                boundTxnRef = txnRef;
+                return Task.CompletedTask;
+            }));
+
+        var result = await client.PurchaseAsync(10m, CreateSession(), CreateSettings());
+
+        Assert.True(result.Approved);
+        Assert.Equal(1, bindCount);
+        Assert.Equal("backend-session-early", boundSessionId);
+        Assert.Equal("260601120099", boundTxnRef);
+    }
+
+    [Fact]
     public async Task PurchaseAsync_keeps_final_dialog_open_when_backend_declines()
     {
         var handler = new StubHttpMessageHandler(request =>
@@ -379,7 +517,8 @@ public sealed class LinklyBackendTerminalClientTests
                 _ => throw new InvalidOperationException($"Unexpected request: {request.RequestUri}")
             };
         });
-        var client = CreateClient(handler, new FakeLinklyTerminalDialogService());
+        var dialog = new FakeLinklyTerminalDialogService();
+        var client = CreateClient(handler, dialog);
 
         var result = await client.RefundAsync(
             2m,
@@ -733,9 +872,11 @@ public sealed class LinklyBackendTerminalClientTests
     }
 
     [Fact]
-    public async Task PurchaseAsync_recovers_existing_active_session_before_starting_new_transaction()
+    public async Task PurchaseAsync_rejects_existing_active_session_before_starting_new_transaction()
     {
         var requests = new List<HttpRequestMessage>();
+        var bindCount = 0;
+        var accessor = new LinklyPaymentAttemptContextAccessor();
         var handler = new StubHttpMessageHandler(request =>
         {
             requests.Add(CloneRequestWithBody(request));
@@ -761,75 +902,37 @@ public sealed class LinklyBackendTerminalClientTests
                       }
                     }
                     """),
-                2 => JsonResponse(
-                    """
-                    {
-                      "success": true,
-                      "data": {
-                        "environment": "Sandbox",
-                        "storeCode": "S01",
-                        "deviceCode": "TERM-1",
-                        "sessionId": "active-session-1",
-                        "status": "Pending",
-                        "txnRef": "260601120010",
-                        "displayText": "PROCESSING",
-                        "receiptText": null,
-                        "recoveryCount": 2,
-                        "receiptPrintedAt": null,
-                        "lastHttpStatus": 200,
-                        "notifications": []
-                      }
-                    }
-                    """),
-                _ => JsonResponse(
-                    """
-                    {
-                      "success": true,
-                      "data": {
-                        "environment": "Sandbox",
-                        "storeCode": "S01",
-                        "deviceCode": "TERM-1",
-                        "sessionId": "active-session-1",
-                        "status": "Completed",
-                        "txnRef": "260601120010",
-                        "responseCode": "00",
-                        "responseText": "APPROVED",
-                        "displayText": "APPROVED",
-                        "receiptText": "ACTIVE RECEIPT",
-                        "recoveryCount": 2,
-                        "receiptPrintedAt": "2026-06-01T02:00:02Z",
-                        "lastHttpStatus": 200,
-                        "notifications": []
-                      }
-                    }
-                    """)
+                _ => throw new InvalidOperationException($"Unexpected request: {request.RequestUri}")
             };
         });
         var dialog = new FakeLinklyTerminalDialogService();
-        var client = CreateClient(handler, dialog);
+        var client = CreateClient(handler, dialog, TimeSpan.Zero, null, null, accessor);
+        using var scope = accessor.Begin(new LinklyPaymentAttemptContext(
+            Guid.Parse("bbbbbbbb-cccc-dddd-eeee-ffffffffffff"),
+            (_, _, _, _) =>
+            {
+                bindCount++;
+                return Task.CompletedTask;
+            }));
 
         var result = await client.PurchaseAsync(10m, CreateSession(), CreateSettings());
 
-        Assert.True(result.Approved);
+        Assert.False(result.Approved);
+        Assert.Contains("unfinished card transaction", result.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Equal(0, bindCount);
         Assert.DoesNotContain(requests, request =>
             request.Method == HttpMethod.Post &&
             request.RequestUri!.AbsolutePath.EndsWith("/transactions", StringComparison.Ordinal));
-        Assert.Collection(
-            requests,
-            active => Assert.Equal("https://api.example/api/v1/linkly/cloud-backend/transactions/active?environment=Sandbox", active.RequestUri!.AbsoluteUri),
-            recover => Assert.Equal("https://api.example/api/v1/linkly/cloud-backend/transactions/active-session-1/recover", recover.RequestUri!.AbsoluteUri),
-            status => Assert.Equal("https://api.example/api/v1/linkly/cloud-backend/transactions/active-session-1/status?environment=Sandbox", status.RequestUri!.AbsoluteUri));
-        var recoverBody = await requests[1].Content!.ReadAsStringAsync();
-        Assert.Equal("Sandbox", ReadJsonString(recoverBody, "environment"));
-        Assert.Null(TryReadJsonString(recoverBody, "accessToken"));
-        Assert.Null(TryReadJsonString(recoverBody, "restBaseUrl"));
-        Assert.Contains(dialog.States, state =>
-            state.Message?.Contains("unfinished card transaction", StringComparison.Ordinal) == true &&
-            state.SessionId == "active-session-1");
+        var activeRequest = Assert.Single(requests);
+        Assert.Equal("https://api.example/api/v1/linkly/cloud-backend/transactions/active?environment=Sandbox", activeRequest.RequestUri!.AbsoluteUri);
+        var finalState = Assert.Single(dialog.States);
+        Assert.Equal("active-session-1", finalState.SessionId);
+        Assert.True(finalState.IsFinal);
+        Assert.Contains("unfinished card transaction", finalState.DisplayText, StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact]
-    public async Task PurchaseAsync_recovers_active_session_after_conflict_without_generic_backend_failure()
+    public async Task PurchaseAsync_rejects_active_session_after_conflict_without_generic_backend_failure()
     {
         var requests = new List<HttpRequestMessage>();
         var handler = new StubHttpMessageHandler(request =>
@@ -866,28 +969,7 @@ public sealed class LinklyBackendTerminalClientTests
                       }
                     }
                     """),
-                _ => JsonResponse(
-                    """
-                    {
-                      "success": true,
-                      "data": {
-                        "environment": "Sandbox",
-                        "storeCode": "S01",
-                        "deviceCode": "TERM-1",
-                        "sessionId": "conflict-session-1",
-                        "status": "Completed",
-                        "txnRef": "260601120020",
-                        "responseCode": "00",
-                        "responseText": "APPROVED",
-                        "displayText": "APPROVED",
-                        "receiptText": "CONFLICT RECEIPT",
-                        "recoveryCount": 1,
-                        "receiptPrintedAt": "2026-06-01T02:00:03Z",
-                        "lastHttpStatus": 200,
-                        "notifications": []
-                      }
-                    }
-                    """)
+                _ => throw new InvalidOperationException($"Unexpected request: {request.RequestUri}")
             };
         });
         var dialog = new FakeLinklyTerminalDialogService();
@@ -895,17 +977,18 @@ public sealed class LinklyBackendTerminalClientTests
 
         var result = await client.PurchaseAsync(10m, CreateSession(), CreateSettings());
 
-        Assert.True(result.Approved);
+        Assert.False(result.Approved);
         Assert.NotEqual("ANZ Linkly Cloud backend communication failed.", result.Message);
+        Assert.Contains("unfinished card transaction", result.Message, StringComparison.OrdinalIgnoreCase);
         Assert.Collection(
             requests,
             activeBeforeStart => Assert.Equal(HttpMethod.Get, activeBeforeStart.Method),
             start => Assert.Equal(HttpMethod.Post, start.Method),
-            activeAfterConflict => Assert.Equal("https://api.example/api/v1/linkly/cloud-backend/transactions/active?environment=Sandbox", activeAfterConflict.RequestUri!.AbsoluteUri),
-            recover => Assert.Equal("https://api.example/api/v1/linkly/cloud-backend/transactions/conflict-session-1/recover", recover.RequestUri!.AbsoluteUri));
-        Assert.Contains(dialog.States, state =>
-            state.Message?.Contains("unfinished card transaction", StringComparison.Ordinal) == true &&
-            state.SessionId == "conflict-session-1");
+            activeAfterConflict => Assert.Equal("https://api.example/api/v1/linkly/cloud-backend/transactions/active?environment=Sandbox", activeAfterConflict.RequestUri!.AbsoluteUri));
+        var finalState = Assert.Single(dialog.States);
+        Assert.Equal("conflict-session-1", finalState.SessionId);
+        Assert.True(finalState.IsFinal);
+        Assert.Contains("unfinished card transaction", finalState.DisplayText, StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact]
@@ -1798,7 +1881,7 @@ public sealed class LinklyBackendTerminalClientTests
     }
 
     [Fact]
-    public async Task PurchaseAsync_suppresses_receipt_text_when_restored_session_was_already_printed()
+    public async Task PurchaseAsync_rejects_printed_active_session_without_returning_receipt_text()
     {
         var requests = new List<HttpRequestMessage>();
         var handler = new StubHttpMessageHandler(request =>
@@ -1827,13 +1910,17 @@ public sealed class LinklyBackendTerminalClientTests
                 }
                 """);
         });
-        var client = CreateClient(handler, new FakeLinklyTerminalDialogService());
+        var dialog = new FakeLinklyTerminalDialogService();
+        var client = CreateClient(handler, dialog);
 
         var result = await client.PurchaseAsync(10m, CreateSession(), CreateSettings());
 
-        Assert.True(result.Approved);
-        Assert.Null(Assert.Single(result.CardTransactions!).ReceiptText);
+        Assert.False(result.Approved);
+        Assert.Null(result.CardTransactions);
         Assert.Single(requests);
+        var finalState = Assert.Single(dialog.States);
+        Assert.Equal("printed-session", finalState.SessionId);
+        Assert.True(finalState.IsFinal);
     }
 
     private static LinklyBackendTerminalClient CreateClient(
@@ -1865,14 +1952,16 @@ public sealed class LinklyBackendTerminalClientTests
         FakeLinklyTerminalDialogService dialog,
         TimeSpan pollInterval,
         Func<TimeSpan, CancellationToken, Task>? delayAsync,
-        ILocalizationService? localization)
+        ILocalizationService? localization,
+        ILinklyPaymentAttemptContextAccessor? paymentAttemptContextAccessor = null)
     {
         return new LinklyBackendTerminalClient(
             new HttpClient(handler) { BaseAddress = new Uri("https://api.example/") },
             dialog,
             pollInterval,
             delayAsync,
-            localization);
+            localization,
+            paymentAttemptContextAccessor);
     }
 
     private static PosSessionState CreateSession()

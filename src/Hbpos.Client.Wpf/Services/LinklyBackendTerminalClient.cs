@@ -20,6 +20,10 @@ public interface ILinklyBackendTerminalClient
         CardTerminalEnvironment environment,
         CancellationToken cancellationToken = default);
 
+    Task<LinklyConnectionTestResult> TestTransactionStatusAsync(
+        CardTerminalEnvironment environment,
+        CancellationToken cancellationToken = default);
+
     Task<PaymentAuthorizationResult> PurchaseAsync(
         decimal amount,
         PosSessionState session,
@@ -42,6 +46,11 @@ public interface ILinklyBackendTerminalClient
         string sessionId,
         CancellationToken cancellationToken = default);
 
+    Task<LinklyCloudBackendSessionResponse> ResumeSessionUntilFinalAsync(
+        CardTerminalSettings settings,
+        LinklyCloudBackendSessionResponse activeStatus,
+        CancellationToken cancellationToken = default);
+
     Task<LinklyCloudBackendSessionResponse> GetSessionStatusAsync(
         CardTerminalSettings settings,
         string sessionId,
@@ -58,7 +67,8 @@ public sealed class LinklyBackendTerminalClient(
     ILinklyTerminalDialogService dialogService,
     TimeSpan? pollInterval = null,
     Func<TimeSpan, CancellationToken, Task>? delayAsync = null,
-    ILocalizationService? localization = null) : ILinklyBackendTerminalClient
+    ILocalizationService? localization = null,
+    ILinklyPaymentAttemptContextAccessor? paymentAttemptContextAccessor = null) : ILinklyBackendTerminalClient
 {
     private const string ProcessorName = "ANZ";
     private const string StatusCompleted = "Completed";
@@ -81,38 +91,98 @@ public sealed class LinklyBackendTerminalClient(
         CardTerminalEnvironment environment,
         CancellationToken cancellationToken = default)
     {
+        var relativeUrl = $"api/v1/linkly/cloud-backend/logon-test?environment={Uri.EscapeDataString(environment.ToString())}";
+        var url = FormatRequestUrl(relativeUrl);
+        var stopwatch = Stopwatch.StartNew();
         try
         {
-            Log($"health request start environment={environment} componentVersion={GetComponentVersion()}");
-            using var response = await httpClient.GetAsync(
-                $"api/v1/linkly/cloud-backend/health?environment={Uri.EscapeDataString(environment.ToString())}",
-                cancellationToken);
+            Log($"logon test start environment={environment} componentVersion={GetComponentVersion()}");
+            LogHttpRequest(
+                "logon-test",
+                HttpMethod.Post,
+                url,
+                txnType: null,
+                txnRef: null,
+                bodyJson: null);
+            using var response = await httpClient.PostAsync(relativeUrl, content: null, cancellationToken);
             var content = await response.Content.ReadAsStringAsync(cancellationToken);
+            stopwatch.Stop();
+            LogHttpResponse(
+                "logon-test",
+                HttpMethod.Post,
+                url,
+                response.StatusCode,
+                stopwatch.ElapsedMilliseconds,
+                txnType: null,
+                txnRef: null,
+                bodyJson: content);
             if (response.IsSuccessStatusCode)
             {
-                var health = ReadHealthResult(content);
-                var failedCodes = GetFailedHealthChecks(health)
-                    .Select(check => check.Code)
-                    .Where(code => !string.IsNullOrWhiteSpace(code))
-                    .ToArray();
-                Log(
-                    $"health request completed environment={environment} ready={health.IsReady} failedChecks={(failedCodes.Length == 0 ? "<none>" : string.Join(",", failedCodes))}");
-                return health.IsReady
-                    ? new LinklyConnectionTestResult(true, T("linkly.backend.configValid", "ANZ Linkly Cloud backend configuration is valid."))
-                    : new LinklyConnectionTestResult(false, FormatHealthFailure(health));
+                var result = ReadLogonTestResult(content);
+                Log($"logon test completed environment={environment} success={result.Succeeded} responseCode={LogValue(result.ResponseCode)}");
+                return new LinklyConnectionTestResult(result.Succeeded, result.Message);
             }
 
-            var message = TryReadApiMessage(content) ??
+            var message = TryReadLogonTestMessage(content) ??
                 string.Format(
                     CultureInfo.InvariantCulture,
-                    T("linkly.backend.configTestHttpFailed", "ANZ Linkly Cloud backend configuration test failed with HTTP {0}."),
+                    T("linkly.backend.logonTestHttpFailed", "ANZ Linkly Cloud logon test failed with HTTP {0}."),
                     (int)response.StatusCode);
-            Log($"health request failed environment={environment} http={(int)response.StatusCode}");
+            Log($"logon test failed environment={environment} http={(int)response.StatusCode}");
             return new LinklyConnectionTestResult(false, message);
         }
         catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException)
         {
-            Log($"health request failed environment={environment} error={ex.GetType().Name}");
+            Log($"logon test failed environment={environment} error={ex.GetType().Name}");
+            return new LinklyConnectionTestResult(false, T("linkly.backend.communicationFailed", "ANZ Linkly Cloud backend communication failed."));
+        }
+    }
+
+    public async Task<LinklyConnectionTestResult> TestTransactionStatusAsync(
+        CardTerminalEnvironment environment,
+        CancellationToken cancellationToken = default)
+    {
+        var relativeUrl = $"api/v1/linkly/cloud-backend/status-test?environment={Uri.EscapeDataString(environment.ToString())}";
+        var url = FormatRequestUrl(relativeUrl);
+        var stopwatch = Stopwatch.StartNew();
+        try
+        {
+            LogHttpRequest(
+                "transaction-status-test",
+                HttpMethod.Post,
+                url,
+                txnType: null,
+                txnRef: null,
+                bodyJson: null);
+            using var response = await httpClient.PostAsync(relativeUrl, content: null, cancellationToken);
+            var content = await response.Content.ReadAsStringAsync(cancellationToken);
+            stopwatch.Stop();
+            LogHttpResponse(
+                "transaction-status-test",
+                HttpMethod.Post,
+                url,
+                response.StatusCode,
+                stopwatch.ElapsedMilliseconds,
+                txnType: null,
+                txnRef: ReadStatusTestTxnRef(content),
+                bodyJson: content);
+
+            if (!response.IsSuccessStatusCode)
+            {
+                var message = TryReadStatusTestMessage(content) ??
+                    string.Format(
+                        CultureInfo.InvariantCulture,
+                        T("linkly.backend.statusTestHttpFailed", "ANZ Linkly Cloud transaction status test failed with HTTP {0}."),
+                        (int)response.StatusCode);
+                return new LinklyConnectionTestResult(false, message);
+            }
+
+            var result = ReadStatusTestResult(content);
+            return new LinklyConnectionTestResult(result.Succeeded, result.Message);
+        }
+        catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException)
+        {
+            Log($"transaction status test failed environment={environment} error={ex.GetType().Name}");
             return new LinklyConnectionTestResult(false, T("linkly.backend.communicationFailed", "ANZ Linkly Cloud backend communication failed."));
         }
     }
@@ -224,10 +294,8 @@ public sealed class LinklyBackendTerminalClient(
             var activeStatus = await GetActiveSessionAsync(settings, timeoutCts.Token);
             if (activeStatus is not null)
             {
-                var recoveredStatus = await ResumeActiveSessionAsync(settings, activeStatus, timeoutCts.Token);
-                var recoveredResult = ToAuthorizationResult(recoveredStatus, amount, fallbackTxnRef, suppressPrintedReceipt: true);
-                keepDialogOpen = !recoveredResult.Approved;
-                return recoveredResult;
+                keepDialogOpen = true;
+                return await RejectActiveSessionForNewPaymentAsync(activeStatus, CancellationToken.None);
             }
 
             var request = new LinklyCloudBackendTransactionRequest(
@@ -240,6 +308,7 @@ public sealed class LinklyBackendTerminalClient(
             try
             {
                 status = await StartTransactionAsync(request, timeoutCts.Token);
+                await NotifyPaymentAttemptSessionStartedAsync(status, CancellationToken.None);
             }
             catch (LinklyBackendHttpException ex) when (ex.HttpStatus == HttpStatusCode.Conflict)
             {
@@ -253,10 +322,8 @@ public sealed class LinklyBackendTerminalClient(
                     return new PaymentAuthorizationResult(false, null, message);
                 }
 
-                var recoveredStatus = await ResumeActiveSessionAsync(settings, activeStatus, timeoutCts.Token);
-                var recoveredResult = ToAuthorizationResult(recoveredStatus, amount, fallbackTxnRef, suppressPrintedReceipt: true);
-                keepDialogOpen = !recoveredResult.Approved;
-                return recoveredResult;
+                keepDialogOpen = true;
+                return await RejectActiveSessionForNewPaymentAsync(activeStatus, CancellationToken.None);
             }
 
             status = await PollUntilFinalAsync(settings, status, timeoutCts.Token);
@@ -295,6 +362,14 @@ public sealed class LinklyBackendTerminalClient(
         }
     }
 
+    public Task<LinklyCloudBackendSessionResponse> ResumeSessionUntilFinalAsync(
+        CardTerminalSettings settings,
+        LinklyCloudBackendSessionResponse activeStatus,
+        CancellationToken cancellationToken = default)
+    {
+        return ResumeActiveSessionAsync(settings, activeStatus, cancellationToken);
+    }
+
     private async Task<LinklyCloudBackendSessionResponse> ResumeActiveSessionAsync(
         CardTerminalSettings settings,
         LinklyCloudBackendSessionResponse activeStatus,
@@ -311,6 +386,20 @@ public sealed class LinklyBackendTerminalClient(
         }
 
         return await PollUntilFinalAsync(settings, status, cancellationToken);
+    }
+
+    private async Task<PaymentAuthorizationResult> RejectActiveSessionForNewPaymentAsync(
+        LinklyCloudBackendSessionResponse activeStatus,
+        CancellationToken cancellationToken)
+    {
+        var message = T(
+            "linkly.backend.activeSessionRequiresRecovery",
+            "Current terminal already has an unfinished card transaction. Recover the previous transaction or ask a supervisor to confirm Linkly before starting a new payment.");
+        Log(
+            $"active session rejected for new payment sessionId={activeStatus.SessionId} " +
+            $"txnRef={LogValue(activeStatus.TxnRef)} status={activeStatus.Status}");
+        await PresentFinalFailureAsync(activeStatus.SessionId, message, cancellationToken);
+        return new PaymentAuthorizationResult(false, null, message);
     }
 
     private async Task<LinklyCloudBackendSessionResponse> PollUntilFinalAsync(
@@ -352,6 +441,77 @@ public sealed class LinklyBackendTerminalClient(
         }
 
         return status;
+    }
+
+    private async Task NotifyPaymentAttemptSessionStartedAsync(
+        LinklyCloudBackendSessionResponse status,
+        CancellationToken cancellationToken)
+    {
+        var context = paymentAttemptContextAccessor?.Current;
+        if (context is null)
+        {
+            return;
+        }
+
+        try
+        {
+            await context.BindSessionAsync(
+                status.SessionId,
+                status.TxnRef,
+                DateTimeOffset.UtcNow,
+                cancellationToken);
+            Log(
+                $"payment attempt session bound attemptGuid={context.AttemptGuid} " +
+                $"sessionId={status.SessionId} txnRef={LogValue(status.TxnRef)} status={status.Status}");
+            LinklyJsonLog.Write(
+                "CardRecovery",
+                "card-recovery",
+                "payment-attempt",
+                "session-bound",
+                sessionId: status.SessionId,
+                success: true,
+                details: new
+                {
+                    timestamp = DateTimeOffset.Now,
+                    attemptGuid = context.AttemptGuid,
+                    sessionId = status.SessionId,
+                    txnRef = NormalizeOptional(status.TxnRef),
+                    remoteStatus = status.Status,
+                    responseCode = status.ResponseCode,
+                    responseText = status.ResponseText,
+                    environment = status.Environment,
+                    storeCode = status.StoreCode,
+                    deviceCode = status.DeviceCode
+                });
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            // session 绑定失败不能中断正在进行的刷卡，但必须留下恢复诊断线索。
+            Log(
+                $"payment attempt session bind failed attemptGuid={context.AttemptGuid} " +
+                $"sessionId={status.SessionId} txnRef={LogValue(status.TxnRef)} error={ex.GetType().Name}");
+            LinklyJsonLog.Write(
+                "CardRecovery",
+                "card-recovery",
+                "payment-attempt",
+                "session-bind-failed",
+                sessionId: status.SessionId,
+                success: false,
+                reason: ex.GetType().Name,
+                details: new
+                {
+                    timestamp = DateTimeOffset.Now,
+                    attemptGuid = context.AttemptGuid,
+                    sessionId = status.SessionId,
+                    txnRef = NormalizeOptional(status.TxnRef),
+                    remoteStatus = status.Status,
+                    responseCode = status.ResponseCode,
+                    responseText = status.ResponseText,
+                    environment = status.Environment,
+                    storeCode = status.StoreCode,
+                    deviceCode = status.DeviceCode
+                });
+        }
     }
 
     private async Task<LinklyCloudBackendSessionResponse> PresentStatusAsync(
@@ -890,6 +1050,86 @@ public sealed class LinklyBackendTerminalClient(
         {
             var result = JsonSerializer.Deserialize<ApiResult<LinklyCloudBackendSessionResponse>>(content, JsonOptions);
             return NormalizeOptional(result?.Message);
+        }
+        catch (JsonException)
+        {
+            return null;
+        }
+    }
+
+    private static LinklyCloudBackendStatusTestResponse ReadStatusTestResult(string content)
+    {
+        var result = JsonSerializer.Deserialize<ApiResult<LinklyCloudBackendStatusTestResponse>>(content, JsonOptions);
+        if (result?.Success != true || result.Data is null)
+        {
+            throw new LinklyBackendHttpException(
+                result?.Message ?? "Linkly backend returned a failure response.",
+                HttpStatusCode.OK);
+        }
+
+        return result.Data;
+    }
+
+    private static LinklyCloudBackendLogonTestResponse ReadLogonTestResult(string content)
+    {
+        var result = JsonSerializer.Deserialize<ApiResult<LinklyCloudBackendLogonTestResponse>>(content, JsonOptions);
+        if (result?.Success != true || result.Data is null)
+        {
+            throw new LinklyBackendHttpException(
+                result?.Message ?? "Linkly backend returned a failure response.",
+                HttpStatusCode.OK);
+        }
+
+        return result.Data;
+    }
+
+    private static string? TryReadLogonTestMessage(string? content)
+    {
+        if (string.IsNullOrWhiteSpace(content))
+        {
+            return null;
+        }
+
+        try
+        {
+            var result = JsonSerializer.Deserialize<ApiResult<LinklyCloudBackendLogonTestResponse>>(content, JsonOptions);
+            return NormalizeOptional(result?.Message ?? result?.Data?.Message);
+        }
+        catch (JsonException)
+        {
+            return null;
+        }
+    }
+
+    private static string? TryReadStatusTestMessage(string? content)
+    {
+        if (string.IsNullOrWhiteSpace(content))
+        {
+            return null;
+        }
+
+        try
+        {
+            var result = JsonSerializer.Deserialize<ApiResult<LinklyCloudBackendStatusTestResponse>>(content, JsonOptions);
+            return NormalizeOptional(result?.Message ?? result?.Data?.Message);
+        }
+        catch (JsonException)
+        {
+            return null;
+        }
+    }
+
+    private static string? ReadStatusTestTxnRef(string? content)
+    {
+        if (string.IsNullOrWhiteSpace(content))
+        {
+            return null;
+        }
+
+        try
+        {
+            var result = JsonSerializer.Deserialize<ApiResult<LinklyCloudBackendStatusTestResponse>>(content, JsonOptions);
+            return NormalizeOptional(result?.Data?.ResponseTxnRef);
         }
         catch (JsonException)
         {

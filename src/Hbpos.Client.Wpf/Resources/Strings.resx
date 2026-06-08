@@ -586,6 +586,7 @@
   <data name="linkly.backend.invalidResponse" xml:space="preserve"><value>ANZ Linkly Cloud backend returned an invalid response.</value></data>
   <data name="linkly.backend.activeSessionResume" xml:space="preserve"><value>Current terminal has an unfinished card transaction. Continuing to poll/recover that session.</value></data>
   <data name="linkly.backend.activeSessionUnavailable" xml:space="preserve"><value>Current terminal has an unfinished card transaction, but no recoverable active session was returned. Try again later.</value></data>
+  <data name="linkly.backend.activeSessionRequiresRecovery" xml:space="preserve"><value>Current terminal already has an unfinished card transaction. Recover the previous transaction or ask a supervisor to confirm Linkly before starting a new payment.</value></data>
   <data name="linkly.backend.sendKeyFailed" xml:space="preserve"><value>Card terminal action failed. Try again or recover the transaction.</value></data>
   <data name="linkly.backend.notSubmitted" xml:space="preserve"><value>Linkly Cloud transaction was not submitted. Retry the payment.</value></data>
   <data name="linkly.backend.declined" xml:space="preserve"><value>ANZ Linkly Cloud transaction was declined.</value></data>

@@ -633,6 +633,36 @@ public sealed class SettingsViewModelTests
     }
 
     [Fact]
+    public async Task CloudBackendAsync_status_test_command_runs_backend_status_and_updates_status_bar()
+    {
+        var service = new FakeCardTerminalSetupService
+        {
+            LinklyCloudBackendStatusTestResult = new LinklyConnectionTestResult(false, "DECLINED")
+        };
+        var viewModel = new SettingsViewModel(service)
+        {
+            SelectedLinklyMode = LinklySettingsMode.CloudBackendAsync,
+            IsSandbox = true
+        };
+        service.BlockNextLinklyCloudBackendStatusTest();
+
+        Assert.True(viewModel.TestLinklyTransactionStatusCommand.CanExecute(null));
+
+        var execution = viewModel.TestLinklyTransactionStatusCommand.ExecuteAsync(null);
+
+        Assert.False(viewModel.TestLinklyTransactionStatusCommand.CanExecute(null));
+        Assert.False(viewModel.TestLinklyCommand.CanExecute(null));
+
+        service.ReleaseLinklyCloudBackendStatusTest();
+        await execution;
+
+        Assert.Equal(1, service.LinklyCloudBackendStatusTestCallCount);
+        Assert.Equal("DECLINED", viewModel.LinklyTestStatusMessage);
+        Assert.Equal("DECLINED", viewModel.StatusMessage);
+        Assert.False(viewModel.LinklyConnectionSucceeded);
+    }
+
+    [Fact]
     public async Task CloudBackendAsync_mode_reuses_credential_save_and_pair_commands()
     {
         var service = new FakeCardTerminalSetupService
@@ -1095,9 +1125,13 @@ public sealed class SettingsViewModelTests
 
         public LinklyConnectionTestResult LinklyCloudBackendTestResult { get; init; } = new(false, "backend failed");
 
+        public LinklyConnectionTestResult LinklyCloudBackendStatusTestResult { get; init; } = new(false, "status failed");
+
         public int LinklyCloudTestCallCount { get; private set; }
 
         public int LinklyCloudBackendTestCallCount { get; private set; }
+
+        public int LinklyCloudBackendStatusTestCallCount { get; private set; }
 
         public int SaveLinklyCallCount { get; private set; }
 
@@ -1114,6 +1148,8 @@ public sealed class SettingsViewModelTests
         private TaskCompletionSource<bool>? _pendingLinklyCloudCredentialSave;
 
         private TaskCompletionSource<bool>? _pendingLinklyCloudPair;
+
+        private TaskCompletionSource<bool>? _pendingLinklyCloudBackendStatusTest;
 
         public (CardTerminalEnvironment Environment, string Username, string Password)? SavedLinklyCloudCredential { get; private set; }
 
@@ -1330,6 +1366,19 @@ public sealed class SettingsViewModelTests
             return Task.FromResult(LinklyCloudBackendTestResult);
         }
 
+        public async Task<LinklyConnectionTestResult> TestLinklyCloudBackendTransactionStatusAsync(
+            CardTerminalEnvironment environment,
+            CancellationToken cancellationToken = default)
+        {
+            LinklyCloudBackendStatusTestCallCount++;
+            if (_pendingLinklyCloudBackendStatusTest is not null)
+            {
+                await _pendingLinklyCloudBackendStatusTest.Task.WaitAsync(cancellationToken);
+            }
+
+            return LinklyCloudBackendStatusTestResult;
+        }
+
         public Task<bool> HasLinklyCloudSecretAsync(
             CardTerminalEnvironment environment,
             CancellationToken cancellationToken = default)
@@ -1375,6 +1424,16 @@ public sealed class SettingsViewModelTests
         public void ReleaseLinklyCloudPair()
         {
             _pendingLinklyCloudPair?.TrySetResult(true);
+        }
+
+        public void BlockNextLinklyCloudBackendStatusTest()
+        {
+            _pendingLinklyCloudBackendStatusTest = CreatePendingOperation();
+        }
+
+        public void ReleaseLinklyCloudBackendStatusTest()
+        {
+            _pendingLinklyCloudBackendStatusTest?.TrySetResult(true);
         }
 
         private async Task<LinklyCloudCredentialSettings> WaitForLinklyCloudCredentialLoadAsync(

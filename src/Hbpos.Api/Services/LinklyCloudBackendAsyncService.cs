@@ -48,6 +48,18 @@ public interface ILinklyCloudBackendAsyncService
         string environment,
         CancellationToken cancellationToken);
 
+    Task<LinklyCloudBackendLogonTestResponse> RunLogonTestAsync(
+        string storeCode,
+        string deviceCode,
+        string environment,
+        CancellationToken cancellationToken);
+
+    Task<LinklyCloudBackendStatusTestResponse> RunStatusTestAsync(
+        string storeCode,
+        string deviceCode,
+        string environment,
+        CancellationToken cancellationToken);
+
     Task<LinklyCloudBackendTerminalCredentialResponse> UpsertTerminalCredentialAsync(
         string storeCode,
         string deviceCode,
@@ -567,6 +579,160 @@ public class LinklyCloudBackendAsyncService(
                 }).ToArray()
             });
         return response;
+    }
+
+    public async Task<LinklyCloudBackendStatusTestResponse> RunStatusTestAsync(
+        string storeCode,
+        string deviceCode,
+        string environment,
+        CancellationToken cancellationToken)
+    {
+        var normalizedEnvironment = NormalizeEnvironment(environment);
+        var normalizedStoreCode = NormalizeRequired(storeCode, "storeCode");
+        var normalizedDeviceCode = NormalizeRequired(deviceCode, "deviceCode");
+        var token = await tokenProvider.GetTokenAsync(
+            normalizedEnvironment,
+            normalizedStoreCode,
+            normalizedDeviceCode,
+            cancellationToken);
+        var requestedAt = DateTimeOffset.UtcNow;
+        var sessionId = Guid.NewGuid().ToString("D");
+        var transportRequest = new LinklyCloudBackendTransportStatusRequest(
+            normalizedEnvironment,
+            token.RestBaseUrl,
+            token.AccessToken,
+            sessionId);
+
+        var transportResponse = await SendWithRecoverableFailureAsync(
+            () => transport.SendStatusAsync(transportRequest, cancellationToken));
+        var status = ParseStatusTestResponse(
+            transportResponse.Body,
+            out var responseCode,
+            out var responseText,
+            out var responseTxnRef,
+            out var responseDate,
+            out var responseTime);
+        var succeeded = transportResponse.StatusCode == HttpStatusCode.OK &&
+            status &&
+            string.Equals(responseCode, "00", StringComparison.OrdinalIgnoreCase);
+        var message = BuildStatusTestMessage(transportResponse.StatusCode, succeeded, responseCode, responseText);
+        var result = new LinklyCloudBackendStatusTestResponse(
+            normalizedEnvironment,
+            normalizedStoreCode,
+            normalizedDeviceCode,
+            sessionId,
+            requestedAt,
+            (int)transportResponse.StatusCode,
+            succeeded,
+            responseCode,
+            responseText,
+            responseTxnRef,
+            responseDate,
+            responseTime,
+            message);
+
+        LogServiceJson(
+            operation: "transaction-status-test",
+            phase: "response",
+            direction: "response",
+            environment: normalizedEnvironment,
+            storeCode: normalizedStoreCode,
+            deviceCode: normalizedDeviceCode,
+            success: succeeded,
+            reason: succeeded ? null : "status-test-failed",
+            request: null,
+            response: new
+            {
+                result.TransactionReference,
+                result.HttpStatus,
+                result.ResponseCode,
+                result.ResponseText,
+                result.ResponseTxnRef,
+                result.ResponseDate,
+                result.ResponseTime
+            },
+            details: new
+            {
+                result.RequestedAt
+            });
+        return result;
+    }
+
+    public async Task<LinklyCloudBackendLogonTestResponse> RunLogonTestAsync(
+        string storeCode,
+        string deviceCode,
+        string environment,
+        CancellationToken cancellationToken)
+    {
+        var normalizedEnvironment = NormalizeEnvironment(environment);
+        var normalizedStoreCode = NormalizeRequired(storeCode, "storeCode");
+        var normalizedDeviceCode = NormalizeRequired(deviceCode, "deviceCode");
+        var token = await tokenProvider.GetTokenAsync(
+            normalizedEnvironment,
+            normalizedStoreCode,
+            normalizedDeviceCode,
+            cancellationToken);
+        var requestedAt = DateTimeOffset.UtcNow;
+        var sessionId = Guid.NewGuid().ToString("D");
+        var transportRequest = new LinklyCloudBackendTransportSessionRequest(
+            normalizedEnvironment,
+            token.RestBaseUrl,
+            token.AccessToken,
+            sessionId);
+
+        var transportResponse = await SendWithRecoverableFailureAsync(
+            () => transport.SendLogonAsync(transportRequest, cancellationToken));
+        var logon = ParseLogonTestResponse(
+            transportResponse.Body,
+            out var responseCode,
+            out var responseText,
+            out var catid,
+            out var caid,
+            out var pinPadVersion);
+        var succeeded = transportResponse.StatusCode == HttpStatusCode.OK &&
+            logon &&
+            string.Equals(responseCode, "00", StringComparison.OrdinalIgnoreCase);
+        var message = BuildLogonTestMessage(transportResponse.StatusCode, succeeded, responseCode, responseText);
+        var result = new LinklyCloudBackendLogonTestResponse(
+            normalizedEnvironment,
+            normalizedStoreCode,
+            normalizedDeviceCode,
+            sessionId,
+            requestedAt,
+            (int)transportResponse.StatusCode,
+            succeeded,
+            responseCode,
+            responseText,
+            catid,
+            caid,
+            pinPadVersion,
+            message);
+
+        LogServiceJson(
+            operation: "logon-test",
+            phase: "response",
+            direction: "response",
+            environment: normalizedEnvironment,
+            storeCode: normalizedStoreCode,
+            deviceCode: normalizedDeviceCode,
+            success: succeeded,
+            reason: succeeded ? null : "logon-test-failed",
+            request: null,
+            response: new
+            {
+                result.TransactionReference,
+                result.HttpStatus,
+                result.ResponseCode,
+                result.ResponseText,
+                result.Catid,
+                result.Caid,
+                result.PinPadVersion
+            },
+            details: new
+            {
+                result.RequestedAt
+            });
+        return result;
     }
 
     public async Task<LinklyCloudBackendTerminalCredentialResponse> UpsertTerminalCredentialAsync(
@@ -1201,6 +1367,124 @@ public class LinklyCloudBackendAsyncService(
         return TryGetProperty(root, "Response", out var response) && response.ValueKind == JsonValueKind.Object
             ? response
             : root;
+    }
+
+    private static bool ParseStatusTestResponse(
+        string? bodyJson,
+        out string? responseCode,
+        out string? responseText,
+        out string? responseTxnRef,
+        out string? responseDate,
+        out string? responseTime)
+    {
+        responseCode = null;
+        responseText = null;
+        responseTxnRef = null;
+        responseDate = null;
+        responseTime = null;
+        if (string.IsNullOrWhiteSpace(bodyJson))
+        {
+            return false;
+        }
+
+        try
+        {
+            using var document = JsonDocument.Parse(bodyJson);
+            var response = ReadResponse(document.RootElement);
+            responseCode = ReadString(response, "ResponseCode");
+            responseText = ReadString(response, "ResponseText");
+            responseTxnRef = ReadString(response, "TxnRef");
+            responseDate = ReadString(response, "Date");
+            responseTime = ReadString(response, "Time");
+            return ReadBool(response, "Success") != false;
+        }
+        catch (JsonException)
+        {
+            return false;
+        }
+    }
+
+    private static bool ParseLogonTestResponse(
+        string? bodyJson,
+        out string? responseCode,
+        out string? responseText,
+        out string? catid,
+        out string? caid,
+        out string? pinPadVersion)
+    {
+        responseCode = null;
+        responseText = null;
+        catid = null;
+        caid = null;
+        pinPadVersion = null;
+        if (string.IsNullOrWhiteSpace(bodyJson))
+        {
+            return false;
+        }
+
+        try
+        {
+            using var document = JsonDocument.Parse(bodyJson);
+            var response = ReadResponse(document.RootElement);
+            responseCode = ReadString(response, "ResponseCode");
+            responseText = ReadString(response, "ResponseText");
+            catid = ReadString(response, "Catid");
+            caid = ReadString(response, "Caid");
+            pinPadVersion = ReadString(response, "PinPadVersion");
+            return ReadBool(response, "Success") == true;
+        }
+        catch (JsonException)
+        {
+            return false;
+        }
+    }
+
+    private static string BuildStatusTestMessage(
+        HttpStatusCode httpStatus,
+        bool succeeded,
+        string? responseCode,
+        string? responseText)
+    {
+        if (succeeded)
+        {
+            return "ANZ Linkly Cloud transaction status test succeeded.";
+        }
+
+        if (!string.IsNullOrWhiteSpace(responseText))
+        {
+            return responseText.Trim();
+        }
+
+        if (!string.IsNullOrWhiteSpace(responseCode))
+        {
+            return $"ANZ Linkly Cloud transaction status test failed with response code {responseCode.Trim()}.";
+        }
+
+        return $"ANZ Linkly Cloud transaction status test failed with HTTP {(int)httpStatus}.";
+    }
+
+    private static string BuildLogonTestMessage(
+        HttpStatusCode httpStatus,
+        bool succeeded,
+        string? responseCode,
+        string? responseText)
+    {
+        if (succeeded)
+        {
+            return "ANZ Linkly Cloud logon succeeded.";
+        }
+
+        if (!string.IsNullOrWhiteSpace(responseText))
+        {
+            return responseText.Trim();
+        }
+
+        if (!string.IsNullOrWhiteSpace(responseCode))
+        {
+            return $"ANZ Linkly Cloud logon failed with response code {responseCode.Trim()}.";
+        }
+
+        return $"ANZ Linkly Cloud logon failed with HTTP {(int)httpStatus}.";
     }
 
     private static string? ReadString(JsonElement element, string propertyName)
@@ -2137,6 +2421,14 @@ public interface ILinklyCloudBackendAsyncTransport
         LinklyCloudBackendTransportSessionRequest request,
         CancellationToken cancellationToken);
 
+    Task<LinklyCloudBackendTransportResponse> SendLogonAsync(
+        LinklyCloudBackendTransportSessionRequest request,
+        CancellationToken cancellationToken);
+
+    Task<LinklyCloudBackendTransportResponse> SendStatusAsync(
+        LinklyCloudBackendTransportStatusRequest request,
+        CancellationToken cancellationToken);
+
     Task<LinklyCloudBackendTransportResponse> SendKeyAsync(
         LinklyCloudBackendTransportSendKeyRequest request,
         CancellationToken cancellationToken);
@@ -2167,6 +2459,12 @@ public sealed record LinklyCloudBackendTransportSessionRequest(
     string AccessToken,
     string SessionId);
 
+public sealed record LinklyCloudBackendTransportStatusRequest(
+    string Environment,
+    string RestBaseUrl,
+    string AccessToken,
+    string SessionId);
+
 public sealed record LinklyCloudBackendTransportSendKeyRequest(
     string Environment,
     string RestBaseUrl,
@@ -2182,6 +2480,10 @@ public sealed class HttpLinklyCloudBackendAsyncTransport(
     private static readonly JsonSerializerOptions JsonOptions = new()
     {
         DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull
+    };
+    private static readonly JsonSerializerOptions LogJsonOptions = new()
+    {
+        DefaultIgnoreCondition = JsonIgnoreCondition.Never
     };
 
     public Task<LinklyCloudBackendTransportResponse> StartTransactionAsync(
@@ -2211,9 +2513,11 @@ public sealed class HttpLinklyCloudBackendAsyncTransport(
             request.SessionId,
             request.TxnType,
             request.TxnRef,
-            "transaction",
-            HttpMethod.Post,
-            new LinklyCloudBackendApiRequest(
+            operation: "transaction",
+            endpointSegment: "transaction",
+            asyncMode: true,
+            method: HttpMethod.Post,
+            body: new LinklyCloudBackendApiRequest(
                 fields,
                 new LinklyCloudBackendApiNotification(
                     request.Notification.Uri,
@@ -2232,9 +2536,65 @@ public sealed class HttpLinklyCloudBackendAsyncTransport(
             request.SessionId,
             txnType: null,
             txnRef: null,
-            "transaction",
-            HttpMethod.Get,
+            operation: "transaction",
+            endpointSegment: "transaction",
+            asyncMode: true,
+            method: HttpMethod.Get,
             body: null,
+            cancellationToken);
+    }
+
+    public Task<LinklyCloudBackendTransportResponse> SendLogonAsync(
+        LinklyCloudBackendTransportSessionRequest request,
+        CancellationToken cancellationToken)
+    {
+        var fields = new Dictionary<string, object?>
+        {
+            ["Merchant"] = "00",
+            ["LogonType"] = " ",
+            ["Application"] = "00",
+            ["ReceiptAutoPrint"] = "0",
+            ["CutReceipt"] = "0"
+        };
+
+        return SendAsync(
+            request.Environment,
+            request.RestBaseUrl,
+            request.AccessToken,
+            request.SessionId,
+            txnType: null,
+            txnRef: null,
+            operation: "logon-test",
+            endpointSegment: "logon",
+            asyncMode: false,
+            method: HttpMethod.Post,
+            body: new LinklyCloudBackendApiRequest(fields, Notification: null),
+            cancellationToken);
+    }
+
+    public Task<LinklyCloudBackendTransportResponse> SendStatusAsync(
+        LinklyCloudBackendTransportStatusRequest request,
+        CancellationToken cancellationToken)
+    {
+        var fields = new Dictionary<string, object?>
+        {
+            ["Merchant"] = "00",
+            ["Application"] = "00",
+            ["StatusType"] = "0"
+        };
+
+        return SendAsync(
+            request.Environment,
+            request.RestBaseUrl,
+            request.AccessToken,
+            request.SessionId,
+            txnType: null,
+            txnRef: null,
+            operation: "transaction-status-test",
+            endpointSegment: "status",
+            asyncMode: false,
+            method: HttpMethod.Post,
+            body: new LinklyCloudBackendApiRequest(fields, Notification: null),
             cancellationToken);
     }
 
@@ -2258,9 +2618,11 @@ public sealed class HttpLinklyCloudBackendAsyncTransport(
             request.SessionId,
             txnType: null,
             txnRef: null,
-            "sendkey",
-            HttpMethod.Post,
-            new LinklyCloudBackendApiRequest(fields, Notification: null),
+            operation: "sendkey",
+            endpointSegment: "sendkey",
+            asyncMode: true,
+            method: HttpMethod.Post,
+            body: new LinklyCloudBackendApiRequest(fields, Notification: null),
             cancellationToken);
     }
 
@@ -2271,7 +2633,9 @@ public sealed class HttpLinklyCloudBackendAsyncTransport(
         string sessionId,
         string? txnType,
         string? txnRef,
-        string requestType,
+        string operation,
+        string endpointSegment,
+        bool asyncMode,
         HttpMethod method,
         LinklyCloudBackendApiRequest? body,
         CancellationToken cancellationToken)
@@ -2279,7 +2643,7 @@ public sealed class HttpLinklyCloudBackendAsyncTransport(
         var requestBodyJson = body is null ? null : SerializeDebugJson(body);
         using var request = new HttpRequestMessage(
             method,
-            new Uri(GetBaseUri(restBaseUrl), $"sessions/{Uri.EscapeDataString(sessionId)}/{requestType}?async=true"));
+            new Uri(GetBaseUri(restBaseUrl), $"sessions/{Uri.EscapeDataString(sessionId)}/{endpointSegment}?async={asyncMode.ToString().ToLowerInvariant()}"));
         request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", accessToken);
         request.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("application/json"));
         if (body is not null)
@@ -2290,7 +2654,7 @@ public sealed class HttpLinklyCloudBackendAsyncTransport(
         LogLinklyHttpRequest(
             environment,
             sessionId,
-            requestType,
+            operation,
             method,
             request.RequestUri!,
             txnType,
@@ -2303,7 +2667,7 @@ public sealed class HttpLinklyCloudBackendAsyncTransport(
         LogLinklyHttpResponse(
             environment,
             sessionId,
-            requestType,
+            operation,
             method,
             request.RequestUri!,
             response.StatusCode,
@@ -2328,7 +2692,7 @@ public sealed class HttpLinklyCloudBackendAsyncTransport(
     private void LogLinklyHttpRequest(
         string environment,
         string sessionId,
-        string requestType,
+        string operation,
         HttpMethod method,
         Uri url,
         string? txnType,
@@ -2338,7 +2702,7 @@ public sealed class HttpLinklyCloudBackendAsyncTransport(
         logger?.LogInformation(
             "{LinklyJson}",
             BuildTransportJsonLog(
-                requestType,
+                operation,
                 "request",
                 "request",
                 environment,
@@ -2349,6 +2713,10 @@ public sealed class HttpLinklyCloudBackendAsyncTransport(
                 elapsedMs: null,
                 txnType,
                 txnRef,
+                transactionReference: sessionId,
+                txnRefSpecified: !string.IsNullOrWhiteSpace(txnRef),
+                requestJson: bodyJson,
+                responseJson: null,
                 request: RawJsonBody(bodyJson),
                 response: null));
     }
@@ -2356,7 +2724,7 @@ public sealed class HttpLinklyCloudBackendAsyncTransport(
     private void LogLinklyHttpResponse(
         string environment,
         string sessionId,
-        string requestType,
+        string operation,
         HttpMethod method,
         Uri url,
         HttpStatusCode statusCode,
@@ -2368,7 +2736,7 @@ public sealed class HttpLinklyCloudBackendAsyncTransport(
         logger?.LogInformation(
             "{LinklyJson}",
             BuildTransportJsonLog(
-                requestType,
+                operation,
                 "response",
                 "response",
                 environment,
@@ -2379,6 +2747,10 @@ public sealed class HttpLinklyCloudBackendAsyncTransport(
                 elapsedMs,
                 txnType,
                 txnRef,
+                transactionReference: sessionId,
+                txnRefSpecified: !string.IsNullOrWhiteSpace(txnRef),
+                requestJson: null,
+                responseJson: bodyJson,
                 request: null,
                 response: RawJsonBody(bodyJson)));
     }
@@ -2405,9 +2777,14 @@ public sealed class HttpLinklyCloudBackendAsyncTransport(
         long? elapsedMs,
         string? txnType,
         string? txnRef,
+        string transactionReference,
+        bool txnRefSpecified,
+        string? requestJson,
+        string? responseJson,
         object? request,
         object? response)
     {
+        var responseDetails = ReadTransportResponseDetails(responseJson);
         return JsonSerializer.Serialize(
             new
             {
@@ -2428,11 +2805,84 @@ public sealed class HttpLinklyCloudBackendAsyncTransport(
                     timestamp = DateTimeOffset.Now.ToString("O", CultureInfo.InvariantCulture),
                     method = method.Method,
                     url = url.ToString(),
+                    transactionReference,
                     txnType,
-                    txnRef
+                    txnRef,
+                    txnRefSpecified,
+                    requestJson,
+                    responseJson,
+                    responseTxnRef = responseDetails.TxnRef,
+                    responseDate = responseDetails.Date,
+                    responseTime = responseDetails.Time,
+                    responseCode = responseDetails.ResponseCode,
+                    responseText = responseDetails.ResponseText
                 }
             },
-            JsonOptions);
+            LogJsonOptions);
+    }
+
+    private static LinklyTransportResponseDetails ReadTransportResponseDetails(string? responseJson)
+    {
+        if (string.IsNullOrWhiteSpace(responseJson))
+        {
+            return LinklyTransportResponseDetails.Empty;
+        }
+
+        try
+        {
+            using var document = JsonDocument.Parse(responseJson);
+            var response = TryGetProperty(document.RootElement, "Response", out var nested) &&
+                nested.ValueKind == JsonValueKind.Object
+                ? nested
+                : document.RootElement;
+            return new LinklyTransportResponseDetails(
+                ReadString(response, "TxnRef"),
+                ReadString(response, "Date"),
+                ReadString(response, "Time"),
+                ReadString(response, "ResponseCode"),
+                ReadString(response, "ResponseText"));
+        }
+        catch (JsonException)
+        {
+            return LinklyTransportResponseDetails.Empty;
+        }
+    }
+
+    private static bool TryGetProperty(JsonElement element, string propertyName, out JsonElement value)
+    {
+        value = default;
+        if (element.ValueKind != JsonValueKind.Object)
+        {
+            return false;
+        }
+
+        foreach (var property in element.EnumerateObject())
+        {
+            if (string.Equals(property.Name, propertyName, StringComparison.OrdinalIgnoreCase))
+            {
+                value = property.Value;
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private static string? ReadString(JsonElement element, string propertyName)
+    {
+        if (!TryGetProperty(element, propertyName, out var value))
+        {
+            return null;
+        }
+
+        return value.ValueKind switch
+        {
+            JsonValueKind.String => value.GetString(),
+            JsonValueKind.Number => value.GetRawText(),
+            JsonValueKind.True => bool.TrueString,
+            JsonValueKind.False => bool.FalseString,
+            _ => null
+        };
     }
 
     private static object? RawJsonBody(string? bodyJson)
@@ -2460,6 +2910,16 @@ public sealed class HttpLinklyCloudBackendAsyncTransport(
     private sealed record LinklyCloudBackendApiNotification(
         [property: JsonPropertyName("Uri")] string Uri,
         [property: JsonPropertyName("AuthorizationHeader")] string AuthorizationHeader);
+
+    private sealed record LinklyTransportResponseDetails(
+        string? TxnRef,
+        string? Date,
+        string? Time,
+        string? ResponseCode,
+        string? ResponseText)
+    {
+        public static LinklyTransportResponseDetails Empty { get; } = new(null, null, null, null, null);
+    }
 }
 
 public interface ILinklyCloudBackendAsyncRepository
@@ -2638,7 +3098,7 @@ public sealed class InMemoryLinklyCloudBackendAsyncRepository : ILinklyCloudBack
                 .Where(existing =>
                     SameTerminal(existing, environment, storeCode, deviceCode) &&
                     (existing.IsActive ||
-                        IsCompleted(existing) && existing.ClientAcknowledgedAt is null))
+                        IsFinalForClientRecovery(existing) && existing.ClientAcknowledgedAt is null))
                 .OrderBy(existing => existing.IsActive ? 0 : 1)
                 .ThenByDescending(existing => existing.UpdatedAt)
                 .ThenByDescending(existing => existing.Id)
@@ -2734,6 +3194,13 @@ public sealed class InMemoryLinklyCloudBackendAsyncRepository : ILinklyCloudBack
     private static bool IsCompleted(LinklyCloudBackendSessionRecord session)
     {
         return string.Equals(session.Status, "Completed", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static bool IsFinalForClientRecovery(LinklyCloudBackendSessionRecord session)
+    {
+        return string.Equals(session.Status, "Completed", StringComparison.OrdinalIgnoreCase) ||
+            string.Equals(session.Status, "Failed", StringComparison.OrdinalIgnoreCase) ||
+            string.Equals(session.Status, "NotSubmitted", StringComparison.OrdinalIgnoreCase);
     }
 
     private static string CreateTxnRef()
@@ -3039,7 +3506,7 @@ public sealed class SqlSugarLinklyCloudBackendAsyncRepository(
               AND [DeviceCode] = @DeviceCode
               AND (
                     [IsActive] = 1
-                    OR ([Status] = N'Completed' AND [ClientAcknowledgedAt] IS NULL)
+                    OR ([Status] IN (N'Completed', N'Failed', N'NotSubmitted') AND [ClientAcknowledgedAt] IS NULL)
                   )
             ORDER BY
                 CASE WHEN [IsActive] = 1 THEN 0 ELSE 1 END,

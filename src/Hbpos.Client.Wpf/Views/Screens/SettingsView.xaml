@@ -1013,12 +1013,12 @@
                                                            TextWrapping="Wrap" />
                                             </Border>
 
-                                            <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
+                                            <StackPanel>
                                                 <Button Command="{Binding CancelLinklyCloudPairingCommand}"
                                                         Style="{StaticResource PosSecondaryButtonStyle}"
                                                         Height="42"
-                                                        MinWidth="118"
-                                                        Margin="0,0,12,0">
+                                                        HorizontalAlignment="Stretch"
+                                                        Margin="0,0,0,10">
                                                     <StackPanel Orientation="Horizontal">
                                                         <materialDesign:PackIcon Kind="Close" Width="18" Height="18" Margin="0,0,8,0" />
                                                         <TextBlock Text="{loc:Loc settings.linkly.cloud.cancelPairing}" />
@@ -1027,17 +1027,27 @@
                                                 <Button Command="{Binding TestLinklyCommand}"
                                                         Style="{StaticResource PosSecondaryButtonStyle}"
                                                         Height="42"
-                                                        MinWidth="168"
-                                                        Margin="0,0,12,0">
+                                                        HorizontalAlignment="Stretch"
+                                                        Margin="0,0,0,10">
                                                     <StackPanel Orientation="Horizontal">
                                                         <materialDesign:PackIcon Kind="LanConnect" Width="18" Height="18" Margin="0,0,8,0" />
                                                         <TextBlock Text="{loc:Loc settings.linkly.cloudBackend.test}" />
                                                     </StackPanel>
                                                 </Button>
+                                                <Button Command="{Binding TestLinklyTransactionStatusCommand}"
+                                                        Style="{StaticResource PosSecondaryButtonStyle}"
+                                                        Height="42"
+                                                        HorizontalAlignment="Stretch"
+                                                        Margin="0,0,0,10">
+                                                    <StackPanel Orientation="Horizontal">
+                                                        <materialDesign:PackIcon Kind="LanConnect" Width="18" Height="18" Margin="0,0,8,0" />
+                                                        <TextBlock Text="{loc:Loc settings.linkly.cloudBackend.testStatus}" />
+                                                    </StackPanel>
+                                                </Button>
                                                 <Button Command="{Binding SaveLinklyCommand}"
                                                         Style="{StaticResource PosPrimaryButtonStyle}"
                                                         Height="42"
-                                                        MinWidth="138">
+                                                        HorizontalAlignment="Stretch">
                                                     <StackPanel Orientation="Horizontal">
                                                         <materialDesign:PackIcon Kind="ContentSave" Width="18" Height="18" Margin="0,0,8,0" Foreground="White" />
                                                         <TextBlock Text="{loc:Loc settings.linkly.enable}" Foreground="White" />

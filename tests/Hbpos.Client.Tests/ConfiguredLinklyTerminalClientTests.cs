@@ -138,6 +138,13 @@ public sealed class ConfiguredLinklyTerminalClientTests
             return Task.FromResult(new LinklyConnectionTestResult(true, "backend ready"));
         }
 
+        public Task<LinklyConnectionTestResult> TestTransactionStatusAsync(
+            CardTerminalEnvironment environment,
+            CancellationToken cancellationToken = default)
+        {
+            return Task.FromResult(new LinklyConnectionTestResult(true, "status ready"));
+        }
+
         public Task<PaymentAuthorizationResult> PurchaseAsync(
             decimal amount,
             PosSessionState session,
@@ -168,6 +175,14 @@ public sealed class ConfiguredLinklyTerminalClientTests
         public Task<LinklyCloudBackendSessionResponse> RecoverSessionAsync(
             CardTerminalSettings settings,
             string sessionId,
+            CancellationToken cancellationToken = default)
+        {
+            throw new NotSupportedException();
+        }
+
+        public Task<LinklyCloudBackendSessionResponse> ResumeSessionUntilFinalAsync(
+            CardTerminalSettings settings,
+            LinklyCloudBackendSessionResponse activeStatus,
             CancellationToken cancellationToken = default)
         {
             throw new NotSupportedException();

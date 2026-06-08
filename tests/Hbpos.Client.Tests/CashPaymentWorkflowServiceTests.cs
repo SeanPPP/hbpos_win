@@ -94,25 +94,230 @@ public sealed class CashPaymentWorkflowServiceTests
     }
 
     [Fact]
-    public async Task Card_tender_creates_local_attempt_before_terminal_request_and_marks_order_completed_after_save()
+    public async Task Card_tender_persists_linkly_backend_session_and_txn_ref_immediately_after_authorization()
     {
         var cart = new PosCartService();
-        cart.AddItem(CreateItem("SKU-399", "Recoverable Card Tea", "930399", 10m));
+        cart.AddItem(CreateItem("SKU-397", "Recoverable Card Latte", "930397", 10m));
         var orders = new RecordingOrderRepository();
         var attempts = new RecordingCardPaymentAttemptRepository();
-        var terminal = new ObservingCardTerminalClient(() =>
-        {
-            var attempt = Assert.Single(attempts.Attempts);
-            Assert.Equal(LocalCardPaymentAttemptStatus.Pending, attempt.Status);
-            Assert.Contains("\"cardAmount\":10", attempt.OrderDraftJson, StringComparison.OrdinalIgnoreCase);
-        });
+        var linklyAttemptContextAccessor = new LinklyPaymentAttemptContextAccessor();
+        var authorization = new PaymentAuthorizationResult(
+            true,
+            "ANZBACKEND:TXN-EARLY:session=backend-session-early:environment=Sandbox",
+            "APPROVED",
+            10m,
+            [
+                new CardTransactionDto(
+                    "ANZ",
+                    "TXN-EARLY",
+                    null,
+                    null,
+                    null,
+                    null,
+                    null,
+                    "00",
+                    "APPROVED",
+                    null,
+                    DateTimeOffset.UtcNow,
+                    10m,
+                    null)
+            ],
+            "ANZ",
+            "Sandbox",
+            LinklyConnectionMode.CloudBackendAsync.ToString(),
+            "P",
+            "backend-session-early",
+            "TXN-EARLY",
+            "00",
+            "APPROVED");
+        var terminal = new BindingCardTerminalClient(
+            linklyAttemptContextAccessor,
+            authorization,
+            beforeBind: () =>
+            {
+                var attempt = Assert.Single(attempts.Attempts);
+                Assert.Equal(LocalCardPaymentAttemptStatus.Pending, attempt.Status);
+                Assert.Null(attempt.SessionId);
+                Assert.Null(attempt.TxnRef);
+            },
+            afterBind: () =>
+            {
+                var attempt = Assert.Single(attempts.Attempts);
+                Assert.Equal("backend-session-early", attempt.SessionId);
+                Assert.Equal("TXN-EARLY", attempt.TxnRef);
+                Assert.Equal(LocalCardPaymentAttemptStatus.SessionStarted, attempt.Status);
+            });
         var workflow = new CashPaymentWorkflowService(
             new CashCheckoutService(),
             orders,
             new StubSyncQueueRepository(pendingCount: 1),
             cardTerminalClient: terminal,
             cardPaymentAttemptRepository: attempts,
-            cardTerminalSettingsProvider: new StaticCardTerminalSettingsProvider(CreateBackendLinklySettings()));
+            cardTerminalSettingsProvider: new StaticCardTerminalSettingsProvider(CreateBackendLinklySettings()),
+            linklyPaymentAttemptContextAccessor: linklyAttemptContextAccessor);
+        var session = new PosSessionState("HB POS", "S001", "Main Store", "POS-01", "C001", "Alice", true, 0);
+
+        var tenderResult = await workflow.AddTenderAsync(
+            PaymentMethodKind.Card,
+            session,
+            10m,
+            [],
+            "10.00",
+            cancellationToken: CancellationToken.None,
+            cartSnapshot: cart.CreateSnapshot());
+
+        Assert.True(tenderResult.Succeeded);
+        var attempt = Assert.Single(attempts.Attempts);
+        Assert.Equal("backend-session-early", attempt.SessionId);
+        Assert.Equal("TXN-EARLY", attempt.TxnRef);
+        Assert.Equal(LocalCardPaymentAttemptStatus.Approved, attempt.Status);
+        Assert.Equal("ANZBACKEND:TXN-EARLY:session=backend-session-early:environment=Sandbox", attempt.PaymentReference);
+        Assert.Empty(orders.SavedOrders);
+    }
+
+    [Fact]
+    public async Task Card_tender_authorized_amount_mismatch_marks_local_attempt_requires_review()
+    {
+        var cart = new PosCartService();
+        cart.AddItem(CreateItem("SKU-398", "Mismatch Card Latte", "930398", 10m));
+        var orders = new RecordingOrderRepository();
+        var attempts = new RecordingCardPaymentAttemptRepository();
+        var linklyAttemptContextAccessor = new LinklyPaymentAttemptContextAccessor();
+        var authorization = new PaymentAuthorizationResult(
+            true,
+            "ANZBACKEND:TXN-MISMATCH:session=backend-session-mismatch:environment=Sandbox",
+            "APPROVED",
+            5m,
+            [
+                new CardTransactionDto(
+                    "ANZ",
+                    "TXN-MISMATCH",
+                    null,
+                    null,
+                    null,
+                    null,
+                    null,
+                    "00",
+                    "APPROVED",
+                    null,
+                    DateTimeOffset.UtcNow,
+                    5m,
+                    null)
+            ],
+            "ANZ",
+            "Sandbox",
+            LinklyConnectionMode.CloudBackendAsync.ToString(),
+            "P",
+            "backend-session-mismatch",
+            "TXN-MISMATCH",
+            "00",
+            "APPROVED");
+        var terminal = new BindingCardTerminalClient(
+            linklyAttemptContextAccessor,
+            authorization,
+            beforeBind: () =>
+            {
+                var attempt = Assert.Single(attempts.Attempts);
+                Assert.Equal(LocalCardPaymentAttemptStatus.Pending, attempt.Status);
+                Assert.Null(attempt.SessionId);
+                Assert.Null(attempt.TxnRef);
+            },
+            afterBind: () =>
+            {
+                var attempt = Assert.Single(attempts.Attempts);
+                Assert.Equal("backend-session-mismatch", attempt.SessionId);
+                Assert.Equal("TXN-MISMATCH", attempt.TxnRef);
+                Assert.Equal(LocalCardPaymentAttemptStatus.SessionStarted, attempt.Status);
+            });
+        var workflow = new CashPaymentWorkflowService(
+            new CashCheckoutService(),
+            orders,
+            new StubSyncQueueRepository(pendingCount: 1),
+            cardTerminalClient: terminal,
+            cardPaymentAttemptRepository: attempts,
+            cardTerminalSettingsProvider: new StaticCardTerminalSettingsProvider(CreateBackendLinklySettings()),
+            linklyPaymentAttemptContextAccessor: linklyAttemptContextAccessor);
+        var session = new PosSessionState("HB POS", "S001", "Main Store", "POS-01", "C001", "Alice", true, 0);
+
+        var tenderResult = await workflow.AddTenderAsync(
+            PaymentMethodKind.Card,
+            session,
+            10m,
+            [],
+            "10.00",
+            cancellationToken: CancellationToken.None,
+            cartSnapshot: cart.CreateSnapshot());
+
+        Assert.False(tenderResult.Succeeded);
+        Assert.Equal("Card terminal authorized amount did not match the requested amount.", tenderResult.StatusMessage);
+        var attempt = Assert.Single(attempts.Attempts);
+        Assert.Equal("backend-session-mismatch", attempt.SessionId);
+        Assert.Equal("TXN-MISMATCH", attempt.TxnRef);
+        Assert.Equal(LocalCardPaymentAttemptStatus.RequiresReview, attempt.Status);
+        Assert.Equal("Card terminal authorized amount did not match the requested amount.", attempt.ResponseText);
+        Assert.Empty(orders.SavedOrders);
+    }
+
+    [Fact]
+    public async Task Card_tender_creates_local_attempt_before_terminal_request_and_marks_order_completed_after_save()
+    {
+        var cart = new PosCartService();
+        cart.AddItem(CreateItem("SKU-399", "Recoverable Card Tea", "930399", 10m));
+        var orders = new RecordingOrderRepository();
+        var attempts = new RecordingCardPaymentAttemptRepository();
+        var linklyAttemptContextAccessor = new LinklyPaymentAttemptContextAccessor();
+        var terminal = new BindingCardTerminalClient(
+            linklyAttemptContextAccessor,
+            new PaymentAuthorizationResult(
+                true,
+                "ANZBACKEND:TXN-1:session=backend-session-1:environment=Sandbox",
+                "APPROVED",
+                10m,
+                [
+                    new CardTransactionDto(
+                        "ANZ",
+                        "TXN-1",
+                        null,
+                        null,
+                        null,
+                        null,
+                        null,
+                        "00",
+                        "APPROVED",
+                        null,
+                        DateTimeOffset.UtcNow,
+                        10m,
+                        null)
+                ],
+                "ANZ",
+                "Sandbox",
+                LinklyConnectionMode.CloudBackendAsync.ToString(),
+                "P",
+                "backend-session-1",
+                "TXN-1",
+                "00",
+                "APPROVED"),
+            beforeBind: () =>
+            {
+                var attempt = Assert.Single(attempts.Attempts);
+                Assert.Equal(LocalCardPaymentAttemptStatus.Pending, attempt.Status);
+                Assert.Contains("\"cardAmount\":10", attempt.OrderDraftJson, StringComparison.OrdinalIgnoreCase);
+            },
+            afterBind: () =>
+            {
+                var attempt = Assert.Single(attempts.Attempts);
+                Assert.Equal("backend-session-1", attempt.SessionId);
+                Assert.Equal("TXN-1", attempt.TxnRef);
+                Assert.Equal(LocalCardPaymentAttemptStatus.SessionStarted, attempt.Status);
+            });
+        var workflow = new CashPaymentWorkflowService(
+            new CashCheckoutService(),
+            orders,
+            new StubSyncQueueRepository(pendingCount: 1),
+            cardTerminalClient: terminal,
+            cardPaymentAttemptRepository: attempts,
+            cardTerminalSettingsProvider: new StaticCardTerminalSettingsProvider(CreateBackendLinklySettings()),
+            linklyPaymentAttemptContextAccessor: linklyAttemptContextAccessor);
         var session = new PosSessionState("HB POS", "S001", "Main Store", "POS-01", "C001", "Alice", true, 0);
 
         var tenderResult = await workflow.AddTenderAsync(
@@ -131,6 +336,7 @@ public sealed class CashPaymentWorkflowServiceTests
 
         Assert.True(tenderResult.Succeeded);
         Assert.Equal("backend-session-1", attempts.Attempts.Single().SessionId);
+        Assert.Equal("TXN-1", attempts.Attempts.Single().TxnRef);
         Assert.Equal(LocalCardPaymentAttemptStatus.OrderCompleted, attempts.Attempts.Single().Status);
         var draft = JsonSerializer.Deserialize<CardPaymentOrderDraft>(
             attempts.Attempts.Single().OrderDraftJson,
@@ -1249,6 +1455,39 @@ public sealed class CashPaymentWorkflowServiceTests
                 "TXN-1",
                 "00",
                 "APPROVED"));
+        }
+
+        public Task<PaymentAuthorizationResult> RefundAsync(
+            decimal amount,
+            PosSessionState session,
+            string? originalReference,
+            CancellationToken cancellationToken = default)
+        {
+            throw new NotSupportedException();
+        }
+    }
+
+    private sealed class BindingCardTerminalClient(
+        ILinklyPaymentAttemptContextAccessor accessor,
+        PaymentAuthorizationResult result,
+        Action beforeBind,
+        Action afterBind) : ICardTerminalClient
+    {
+        public async Task<PaymentAuthorizationResult> AuthorizeAsync(
+            decimal amount,
+            PosSessionState session,
+            CancellationToken cancellationToken = default)
+        {
+            beforeBind();
+            var context = accessor.Current;
+            Assert.NotNull(context);
+            await context!.BindSessionAsync(
+                result.SessionId ?? throw new InvalidOperationException("Expected a session id."),
+                result.TxnRef,
+                DateTimeOffset.UtcNow,
+                cancellationToken);
+            afterBind();
+            return result;
         }
 
         public Task<PaymentAuthorizationResult> RefundAsync(

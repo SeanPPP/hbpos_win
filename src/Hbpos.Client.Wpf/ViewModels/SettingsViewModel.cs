@@ -185,6 +185,7 @@ public sealed partial class SettingsViewModel : ObservableObject
         ResetCatalogCommand = new AsyncRelayCommand(ResetCatalogAsync, CanResetCatalog);
         ResetTestSalesDataCommand = new AsyncRelayCommand(ResetTestSalesDataAsync, CanResetTestSalesData);
         ReregisterDeviceCommand = new AsyncRelayCommand(ReregisterDeviceAsync, CanReregisterDevice);
+        TestLinklyTransactionStatusCommand = new AsyncRelayCommand(TestLinklyTransactionStatusAsync, CanTestLinklyTransactionStatus);
         BackCommand = new RelayCommand(ReturnToPos, () => _returnToPos is not null);
         RefreshLocalizedMessages();
     }
@@ -216,6 +217,8 @@ public sealed partial class SettingsViewModel : ObservableObject
     public IRelayCommand CancelLinklyCloudPairingCommand { get; }
 
     public IAsyncRelayCommand TestLinklyCommand { get; }
+
+    public IAsyncRelayCommand TestLinklyTransactionStatusCommand { get; }
 
     public IAsyncRelayCommand SaveLinklyCommand { get; }
 
@@ -629,6 +632,37 @@ public sealed partial class SettingsViewModel : ObservableObject
         });
     }
 
+    private async Task TestLinklyTransactionStatusAsync()
+    {
+        await RunBusyAsync(async () =>
+        {
+            try
+            {
+                ClearLinklyTestStatus();
+                var result = await _setupService.TestLinklyCloudBackendTransactionStatusAsync(SelectedEnvironment);
+                if (string.IsNullOrWhiteSpace(result.Message))
+                {
+                    var key = result.Succeeded
+                        ? "settings.status.linklyTestSuccess"
+                        : "settings.status.linklyTestFailed";
+                    SetLinklyTestStatus(key);
+                    SetStatus(key);
+                }
+                else
+                {
+                    SetLinklyTestStatusOverride(result.Message);
+                    SetStatusOverride(result.Message);
+                }
+            }
+            catch (Exception ex)
+            {
+                SetLinklyTestStatusOverride(ex.Message);
+                SetStatusOverride(ex.Message);
+                throw;
+            }
+        });
+    }
+
     private async Task PairLinklyCloudAsync()
     {
         var pairingEnvironment = SelectedEnvironment;
@@ -954,6 +988,11 @@ public sealed partial class SettingsViewModel : ObservableObject
     private bool CanTestLinkly()
     {
         return !IsBusy && (!IsLinklyCloudDirectSyncMode || HasSavedLinklyCloudSecret);
+    }
+
+    private bool CanTestLinklyTransactionStatus()
+    {
+        return !IsBusy && IsLinklyCloudBackendAsyncMode;
     }
 
     private bool CanSaveLinkly()
@@ -1348,6 +1387,7 @@ public sealed partial class SettingsViewModel : ObservableObject
         SaveLinklyCloudCredentialCommand.NotifyCanExecuteChanged();
         CancelLinklyCloudPairingCommand.NotifyCanExecuteChanged();
         TestLinklyCommand.NotifyCanExecuteChanged();
+        TestLinklyTransactionStatusCommand.NotifyCanExecuteChanged();
         SaveLinklyCommand.NotifyCanExecuteChanged();
         SaveReceiptPrinterCommand.NotifyCanExecuteChanged();
         TestReceiptPrinterCommand.NotifyCanExecuteChanged();

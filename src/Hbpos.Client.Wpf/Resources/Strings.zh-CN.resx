@@ -1716,6 +1716,9 @@
   <data name="linkly.backend.activeSessionUnavailable" xml:space="preserve">
     <value>当前终端有未完成刷卡交易，但没有取得可恢复的 active session，请稍后重试。</value>
   </data>
+  <data name="linkly.backend.activeSessionRequiresRecovery" xml:space="preserve">
+    <value>当前终端已有未完成刷卡交易。请先恢复上一笔交易，或请主管确认 Linkly 后台后再开始新的支付。</value>
+  </data>
   <data name="linkly.backend.sendKeyFailed" xml:space="preserve">
     <value>刷卡机操作发送失败，请重试或恢复交易。</value>
   </data>

@@ -430,6 +430,27 @@ public sealed class CardTerminalSetupServiceTests
         Assert.Null(cloudTerminal.LastSettings);
     }
 
+    [Fact]
+    public async Task TestLinklyCloudBackendTransactionStatusAsync_calls_backend_client()
+    {
+        var backendClient = new FakeLinklyBackendTerminalClient
+        {
+            StatusTestResult = new LinklyConnectionTestResult(true, "status accepted")
+        };
+        var service = new CardTerminalSetupService(
+            new FakeCardTerminalSettingsStore(),
+            new FakeSquareTerminalSetupClient(),
+            new FakeLinklyTerminalClient(),
+            linklyBackendTerminalClient: backendClient);
+
+        var result = await service.TestLinklyCloudBackendTransactionStatusAsync(CardTerminalEnvironment.Sandbox);
+
+        Assert.True(result.Succeeded);
+        Assert.Equal("status accepted", result.Message);
+        Assert.Equal(CardTerminalEnvironment.Sandbox, backendClient.LastStatusTestEnvironment);
+        Assert.Equal(1, backendClient.StatusTestCallCount);
+    }
+
     private sealed class FakeCardTerminalSettingsStore : ICardTerminalSettingsStore
     {
         public int ForceRefreshCount { get; private set; }
@@ -597,6 +618,89 @@ public sealed class CardTerminalSetupServiceTests
             Hbpos.Client.Wpf.Models.PosSessionState session,
             CardTerminalSettings settings,
             string? originalReference,
+            CancellationToken cancellationToken = default)
+        {
+            throw new NotSupportedException();
+        }
+    }
+
+    private sealed class FakeLinklyBackendTerminalClient : ILinklyBackendTerminalClient
+    {
+        public LinklyConnectionTestResult StatusTestResult { get; init; } = new(false, "status failed");
+
+        public CardTerminalEnvironment? LastStatusTestEnvironment { get; private set; }
+
+        public int StatusTestCallCount { get; private set; }
+
+        public Task<LinklyConnectionTestResult> TestConnectionAsync(
+            CardTerminalEnvironment environment,
+            CancellationToken cancellationToken = default)
+        {
+            throw new NotSupportedException();
+        }
+
+        public Task<LinklyConnectionTestResult> TestTransactionStatusAsync(
+            CardTerminalEnvironment environment,
+            CancellationToken cancellationToken = default)
+        {
+            LastStatusTestEnvironment = environment;
+            StatusTestCallCount++;
+            return Task.FromResult(StatusTestResult);
+        }
+
+        public Task<PaymentAuthorizationResult> PurchaseAsync(
+            decimal amount,
+            Hbpos.Client.Wpf.Models.PosSessionState session,
+            CardTerminalSettings settings,
+            CancellationToken cancellationToken = default)
+        {
+            throw new NotSupportedException();
+        }
+
+        public Task<PaymentAuthorizationResult> RefundAsync(
+            decimal amount,
+            Hbpos.Client.Wpf.Models.PosSessionState session,
+            CardTerminalSettings settings,
+            string? originalReference,
+            CancellationToken cancellationToken = default)
+        {
+            throw new NotSupportedException();
+        }
+
+        public Task<LinklyCloudBackendSessionResponse?> GetResumableSessionAsync(
+            CardTerminalSettings settings,
+            CancellationToken cancellationToken = default)
+        {
+            throw new NotSupportedException();
+        }
+
+        public Task<LinklyCloudBackendSessionResponse> RecoverSessionAsync(
+            CardTerminalSettings settings,
+            string sessionId,
+            CancellationToken cancellationToken = default)
+        {
+            throw new NotSupportedException();
+        }
+
+        public Task<LinklyCloudBackendSessionResponse> ResumeSessionUntilFinalAsync(
+            CardTerminalSettings settings,
+            LinklyCloudBackendSessionResponse activeStatus,
+            CancellationToken cancellationToken = default)
+        {
+            throw new NotSupportedException();
+        }
+
+        public Task<LinklyCloudBackendSessionResponse> GetSessionStatusAsync(
+            CardTerminalSettings settings,
+            string sessionId,
+            CancellationToken cancellationToken = default)
+        {
+            throw new NotSupportedException();
+        }
+
+        public Task AcknowledgeSessionAsync(
+            CardTerminalSettings settings,
+            string sessionId,
             CancellationToken cancellationToken = default)
         {
             throw new NotSupportedException();

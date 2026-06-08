@@ -9,6 +9,7 @@ public enum LocalCardPaymentAttemptStatus
     SessionStarted,
     Recovering,
     Approved,
+    RequiresReview,
     Declined,
     TimedOut,
     Cancelled,
@@ -38,6 +39,41 @@ public sealed record LocalCardPaymentAttempt(
     DateTimeOffset UpdatedAt,
     DateTimeOffset? CompletedAt,
     DateTimeOffset? AcknowledgedAt);
+
+public sealed record LinklyPaymentAttemptContext(
+    Guid AttemptGuid,
+    Func<string, string?, DateTimeOffset, CancellationToken, Task> BindSessionAsync);
+
+public interface ILinklyPaymentAttemptContextAccessor
+{
+    LinklyPaymentAttemptContext? Current { get; }
+
+    IDisposable Begin(LinklyPaymentAttemptContext context);
+}
+
+public sealed class LinklyPaymentAttemptContextAccessor : ILinklyPaymentAttemptContextAccessor
+{
+    private readonly AsyncLocal<LinklyPaymentAttemptContext?> _current = new();
+
+    public LinklyPaymentAttemptContext? Current => _current.Value;
+
+    public IDisposable Begin(LinklyPaymentAttemptContext context)
+    {
+        var previous = _current.Value;
+        _current.Value = context;
+        return new Scope(this, previous);
+    }
+
+    private sealed class Scope(
+        LinklyPaymentAttemptContextAccessor owner,
+        LinklyPaymentAttemptContext? previous) : IDisposable
+    {
+        public void Dispose()
+        {
+            owner._current.Value = previous;
+        }
+    }
+}
 
 public interface ILocalCardPaymentAttemptRepository
 {
@@ -306,7 +342,10 @@ public sealed class LocalCardPaymentAttemptRepository(LocalSqliteStore store) : 
               AND DeviceCode = $DeviceCode
               AND CashierId = $CashierId
               AND Environment = $Environment
-              AND Status NOT IN ($TerminalStatus1, $TerminalStatus2, $TerminalStatus3, $TerminalStatus4, $TerminalStatus5, $TerminalStatus6)
+              AND (
+                    Status NOT IN ($TerminalStatus1, $TerminalStatus2, $TerminalStatus3, $TerminalStatus4, $TerminalStatus5, $TerminalStatus6)
+                    OR (Status = $OrderCompletedStatus AND AcknowledgedAt IS NULL AND SessionId IS NOT NULL)
+                  )
             ORDER BY UpdatedAt DESC, CreatedAt DESC
             LIMIT 1;
             """;
@@ -318,6 +357,7 @@ public sealed class LocalCardPaymentAttemptRepository(LocalSqliteStore store) : 
         {
             command.Parameters.AddWithValue($"$TerminalStatus{i + 1}", TerminalStatuses[i]);
         }
+        command.Parameters.AddWithValue("$OrderCompletedStatus", LocalCardPaymentAttemptStatus.OrderCompleted.ToString());
 
         await using var reader = await command.ExecuteReaderAsync(cancellationToken);
         return await reader.ReadAsync(cancellationToken)

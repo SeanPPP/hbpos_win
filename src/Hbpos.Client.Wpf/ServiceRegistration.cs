@@ -34,6 +34,7 @@ public static class ServiceRegistration
         services.AddSingleton<ILocalCatalogRepository, LocalCatalogRepository>();
         services.AddSingleton<ILocalOrderRepository, LocalOrderRepository>();
         services.AddSingleton<ILocalCardPaymentAttemptRepository, LocalCardPaymentAttemptRepository>();
+        services.AddSingleton<ILinklyPaymentAttemptContextAccessor, LinklyPaymentAttemptContextAccessor>();
         services.AddSingleton<ILocalSquarePaymentAttemptRepository, LocalSquarePaymentAttemptRepository>();
         services.AddSingleton<ISquarePaymentAttemptContextAccessor, SquarePaymentAttemptContextAccessor>();
         services.AddSingleton<ILocalInstallmentOrderRepository, LocalInstallmentOrderRepository>();

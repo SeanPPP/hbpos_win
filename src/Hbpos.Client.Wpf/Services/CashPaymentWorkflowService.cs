@@ -60,6 +60,7 @@ public sealed class CashPaymentWorkflowService(
     ILocalCardPaymentAttemptRepository? cardPaymentAttemptRepository = null,
     ICardTerminalSettingsProvider? cardTerminalSettingsProvider = null,
     ILocalSquarePaymentAttemptRepository? squarePaymentAttemptRepository = null,
+    ILinklyPaymentAttemptContextAccessor? linklyPaymentAttemptContextAccessor = null,
     ISquarePaymentAttemptContextAccessor? squarePaymentAttemptContextAccessor = null) : ICashPaymentWorkflowService
 {
     private static readonly JsonSerializerOptions CardAttemptJsonOptions = new(JsonSerializerDefaults.Web)
@@ -455,6 +456,17 @@ public sealed class CashPaymentWorkflowService(
             cancellationToken);
 
         PaymentAuthorizationResult authorization;
+        using var linklyAttemptScope = attempt is null || linklyPaymentAttemptContextAccessor is null
+            ? null
+            : linklyPaymentAttemptContextAccessor.Begin(new LinklyPaymentAttemptContext(
+                attempt.AttemptGuid,
+                (sessionId, txnRef, updatedAt, bindCancellationToken) =>
+                    cardPaymentAttemptRepository!.UpdateSessionAsync(
+                        attempt.AttemptGuid,
+                        sessionId,
+                        txnRef,
+                        updatedAt,
+                        bindCancellationToken)));
         using var squareAttemptScope = squareAttempt is null || squarePaymentAttemptContextAccessor is null
             ? null
             : squarePaymentAttemptContextAccessor.Begin(new SquarePaymentAttemptContext(squareAttempt.AttemptGuid, squareAttempt.IdempotencyKey));
@@ -494,11 +506,6 @@ public sealed class CashPaymentWorkflowService(
             throw;
         }
 
-        if (attempt is not null)
-        {
-            await UpdateCardPaymentAttemptAfterAuthorizationAsync(attempt.AttemptGuid, authorization, cancellationToken);
-        }
-
         if (squareAttempt is not null && !authorization.Approved)
         {
             await squarePaymentAttemptRepository!.MarkFailedAsync(
@@ -520,6 +527,11 @@ public sealed class CashPaymentWorkflowService(
 
         if (!authorization.Approved)
         {
+            if (attempt is not null)
+            {
+                await UpdateCardPaymentAttemptAfterAuthorizationAsync(attempt.AttemptGuid, authorization, cancellationToken);
+            }
+
             return PaymentTenderAttemptResult.Fail(
                 declinedStatusKey,
                 authorization.Message);
@@ -531,19 +543,55 @@ public sealed class CashPaymentWorkflowService(
             MidpointRounding.AwayFromZero);
         if (authorizedAmount <= 0m)
         {
+            if (attempt is not null)
+            {
+                await UpdateCardPaymentAttemptAfterAuthorizationAsync(
+                    attempt.AttemptGuid,
+                    authorization,
+                    cancellationToken,
+                    LocalCardPaymentAttemptStatus.RequiresReview,
+                    "Card terminal approved a non-positive amount. Supervisor review is required.");
+            }
+
             return PaymentTenderAttemptResult.Fail(declinedStatusKey, authorization.Message);
         }
 
         if (authorizedAmount > remainingAmount)
         {
+            if (attempt is not null)
+            {
+                await UpdateCardPaymentAttemptAfterAuthorizationAsync(
+                    attempt.AttemptGuid,
+                    authorization,
+                    cancellationToken,
+                    LocalCardPaymentAttemptStatus.RequiresReview,
+                    "Card terminal authorized amount exceeded the remaining amount.");
+            }
+
             return PaymentTenderAttemptResult.Fail(exceedsRemainingStatusKey);
         }
 
         if (authorizedAmount != amount)
         {
+            const string amountMismatchMessage = "Card terminal authorized amount did not match the requested amount.";
+            if (attempt is not null)
+            {
+                await UpdateCardPaymentAttemptAfterAuthorizationAsync(
+                    attempt.AttemptGuid,
+                    authorization,
+                    cancellationToken,
+                    LocalCardPaymentAttemptStatus.RequiresReview,
+                    amountMismatchMessage);
+            }
+
             return PaymentTenderAttemptResult.Fail(
                 declinedStatusKey,
-                "Card terminal authorized amount did not match the requested amount.");
+                amountMismatchMessage);
+        }
+
+        if (attempt is not null)
+        {
+            await UpdateCardPaymentAttemptAfterAuthorizationAsync(attempt.AttemptGuid, authorization, cancellationToken);
         }
 
         var reference = isRefund
@@ -619,6 +667,27 @@ public sealed class CashPaymentWorkflowService(
             null);
 
         await cardPaymentAttemptRepository.CreateAsync(attempt, cancellationToken);
+        LinklyJsonLog.Write(
+            "CardRecovery",
+            "card-recovery",
+            "payment-attempt",
+            "created",
+            environment: settings.Environment,
+            details: new
+            {
+                timestamp = DateTimeOffset.Now,
+                attemptGuid = attempt.AttemptGuid,
+                localStatus = attempt.Status.ToString(),
+                txnType = attempt.TxnType,
+                amount = attempt.Amount,
+                processor = attempt.Processor,
+                connectionMode = attempt.ConnectionMode,
+                storeCode = attempt.StoreCode,
+                deviceCode = attempt.DeviceCode,
+                cashierId = attempt.CashierId,
+                createdAt = attempt.CreatedAt,
+                updatedAt = attempt.UpdatedAt
+            });
         return attempt;
     }
 
@@ -693,7 +762,9 @@ public sealed class CashPaymentWorkflowService(
     private async Task UpdateCardPaymentAttemptAfterAuthorizationAsync(
         Guid attemptGuid,
         PaymentAuthorizationResult authorization,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        LocalCardPaymentAttemptStatus? statusOverride = null,
+        string? responseTextOverride = null)
     {
         var now = DateTimeOffset.UtcNow;
         if (!string.IsNullOrWhiteSpace(authorization.SessionId))
@@ -707,14 +778,14 @@ public sealed class CashPaymentWorkflowService(
         }
 
         var firstTransaction = authorization.CardTransactions?.FirstOrDefault();
-        var status = authorization.Approved
+        var status = statusOverride ?? (authorization.Approved
             ? LocalCardPaymentAttemptStatus.Approved
-            : MapCardAttemptFailureStatus(authorization.Message, firstTransaction?.ResponseText);
+            : MapCardAttemptFailureStatus(authorization.Message, firstTransaction?.ResponseText));
         await cardPaymentAttemptRepository!.UpdateOutcomeAsync(
             attemptGuid,
             status,
             firstTransaction?.ResponseCode ?? authorization.ResponseCode,
-            firstTransaction?.ResponseText ?? authorization.ResponseText ?? authorization.Message,
+            responseTextOverride ?? firstTransaction?.ResponseText ?? authorization.ResponseText ?? authorization.Message,
             authorization.Reference,
             now,
             cancellationToken);
