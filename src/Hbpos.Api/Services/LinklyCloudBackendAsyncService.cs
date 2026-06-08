@@ -432,10 +432,6 @@ public class LinklyCloudBackendAsyncService(
         if (string.Equals(normalizedType, "transaction", StringComparison.OrdinalIgnoreCase))
         {
             LogTransactionNotificationSnapshot(normalizedSessionId, payloadJson);
-        }
-
-        if (string.Equals(normalizedType, "transaction", StringComparison.OrdinalIgnoreCase))
-        {
             if (!IsCompleted(session) || string.IsNullOrWhiteSpace(session.ResponseCode))
             {
                 ApplyCompletedPayload(session, payloadJson);
