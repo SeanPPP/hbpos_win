@@ -10,6 +10,7 @@ using Hbpos.Client.Wpf.Localization;
 using Hbpos.Client.Wpf.Models;
 using Hbpos.Contracts.Common;
 using Hbpos.Contracts.Linkly;
+using static Hbpos.Contracts.Linkly.LinklyCloudBackendStatusConstants;
 using Hbpos.Contracts.Orders;
 
 namespace Hbpos.Client.Wpf.Services;
@@ -71,12 +72,6 @@ public sealed class LinklyBackendTerminalClient(
     ILinklyPaymentAttemptContextAccessor? paymentAttemptContextAccessor = null) : ILinklyBackendTerminalClient
 {
     private const string ProcessorName = "ANZ";
-    private const string StatusCompleted = "Completed";
-    private const string StatusFailed = "Failed";
-    private const string StatusNotSubmitted = "NotSubmitted";
-    private const string StatusTokenRefreshRequired = "TokenRefreshRequired";
-    private const string RecoveryRetry = "Retry";
-    private const string RecoveryRefreshToken = "RefreshToken";
     private static readonly TimeSpan DefaultPollInterval = TimeSpan.FromSeconds(1);
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web)
     {
@@ -295,7 +290,7 @@ public sealed class LinklyBackendTerminalClient(
             if (activeStatus is not null)
             {
                 keepDialogOpen = true;
-                return await RejectActiveSessionForNewPaymentAsync(activeStatus, CancellationToken.None);
+                return await RejectActiveSessionForNewPaymentAsync(activeStatus, cancellationToken);
             }
 
             var request = new LinklyCloudBackendTransactionRequest(
@@ -308,7 +303,7 @@ public sealed class LinklyBackendTerminalClient(
             try
             {
                 status = await StartTransactionAsync(request, timeoutCts.Token);
-                await NotifyPaymentAttemptSessionStartedAsync(status, CancellationToken.None);
+                await NotifyPaymentAttemptSessionStartedAsync(status, cancellationToken);
             }
             catch (LinklyBackendHttpException ex) when (ex.HttpStatus == HttpStatusCode.Conflict)
             {
@@ -317,13 +312,13 @@ public sealed class LinklyBackendTerminalClient(
                 if (activeStatus is null)
                 {
                     var message = T("linkly.backend.activeSessionUnavailable", "Current terminal has an unfinished card transaction, but no recoverable active session was returned. Try again later.");
-                    await PresentFinalFailureAsync("backend-active-unavailable", message, CancellationToken.None);
+                    await PresentFinalFailureAsync("backend-active-unavailable", message, cancellationToken);
                     keepDialogOpen = true;
                     return new PaymentAuthorizationResult(false, null, message);
                 }
 
                 keepDialogOpen = true;
-                return await RejectActiveSessionForNewPaymentAsync(activeStatus, CancellationToken.None);
+                return await RejectActiveSessionForNewPaymentAsync(activeStatus, cancellationToken);
             }
 
             status = await PollUntilFinalAsync(settings, status, timeoutCts.Token);
@@ -334,21 +329,21 @@ public sealed class LinklyBackendTerminalClient(
         catch (OperationCanceledException) when (timeoutCts.IsCancellationRequested && !cancellationToken.IsCancellationRequested)
         {
             var message = T("linkly.backend.timeout", "ANZ Linkly Cloud transaction timed out.");
-            await PresentFinalFailureAsync("backend-timeout", message, CancellationToken.None);
+            await PresentFinalFailureAsync("backend-timeout", message, cancellationToken);
             keepDialogOpen = true;
             return new PaymentAuthorizationResult(false, null, message);
         }
         catch (HttpRequestException)
         {
             var message = T("linkly.backend.communicationFailed", "ANZ Linkly Cloud backend communication failed.");
-            await PresentFinalFailureAsync("backend-http-error", message, CancellationToken.None);
+            await PresentFinalFailureAsync("backend-http-error", message, cancellationToken);
             keepDialogOpen = true;
             return new PaymentAuthorizationResult(false, null, message);
         }
         catch (JsonException)
         {
             var message = T("linkly.backend.invalidResponse", "ANZ Linkly Cloud backend returned an invalid response.");
-            await PresentFinalFailureAsync("backend-json-error", message, CancellationToken.None);
+            await PresentFinalFailureAsync("backend-json-error", message, cancellationToken);
             keepDialogOpen = true;
             return new PaymentAuthorizationResult(false, null, message);
         }
@@ -357,7 +352,7 @@ public sealed class LinklyBackendTerminalClient(
             // 成功交易自动收起页面弹窗；失败最终状态保留给收银员确认。
             if (!keepDialogOpen)
             {
-                await dialogService.CloseAsync(CancellationToken.None);
+                await dialogService.CloseAsync(cancellationToken);
             }
         }
     }

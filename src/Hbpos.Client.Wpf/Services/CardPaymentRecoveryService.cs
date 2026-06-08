@@ -2,6 +2,7 @@ using System.Text.Json;
 using Hbpos.Client.Wpf.Models;
 using Hbpos.Contracts.Linkly;
 using Hbpos.Contracts.Orders;
+using static Hbpos.Contracts.Linkly.LinklyCloudBackendStatusConstants;
 
 namespace Hbpos.Client.Wpf.Services;
 
@@ -41,9 +42,6 @@ public sealed class CardPaymentRecoveryService(
     ILocalOrderRepository orderRepository,
     ISyncQueueRepository syncQueueRepository) : ICardPaymentRecoveryService
 {
-    private const string StatusCompleted = "Completed";
-    private const string StatusFailed = "Failed";
-    private const string StatusNotSubmitted = "NotSubmitted";
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
 
     public async Task<CardPaymentRecoveryResult> RecoverLatestAsync(
