@@ -102,6 +102,15 @@ public sealed class CardPaymentRecoveryService(
                 ? await backendTerminalClient.GetSessionStatusAsync(settings, attempt.SessionId!, cancellationToken)
                 : await backendTerminalClient.GetResumableSessionAsync(settings, cancellationToken);
 
+            // 有 SessionId 但后端 session 已过期/清理，兜底尝试 Resumable
+            if (!statusFromResumable && status is null)
+            {
+                ConsoleLog.Write(
+                    "CardRecovery",
+                    $"recover session-status-null retrying-resumable attemptGuid={attempt.AttemptGuid} sessionId={LogValue(attempt.SessionId)}");
+                status = await backendTerminalClient.GetResumableSessionAsync(settings, cancellationToken);
+            }
+
             if (status is not null)
             {
                 attempt = await BindRecoveredSessionAsync(attempt, status, cancellationToken);
