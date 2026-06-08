@@ -343,12 +343,21 @@ public sealed class LinklyController(
             return Ok(ApiResult<LinklyCloudBackendStatusTestResponse>.Ok(response));
         }
         catch (LinklyCloudBackendValidationException ex)
-        {
-            return BadRequest(ApiResult<LinklyCloudBackendStatusTestResponse>.Fail(
-                CloudBackendInvalidCode,
-                ex.Message));
+            {
+                return BadRequest(ApiResult<LinklyCloudBackendStatusTestResponse>.Fail(
+                    CloudBackendInvalidCode,
+                    ex.Message));
+            }
+            catch (Exception ex)
+            {
+                Log($"cloud-backend status-test error={ex.GetType().Name} message={ex.Message}");
+                return StatusCode(
+                    StatusCodes.Status500InternalServerError,
+                    ApiResult<LinklyCloudBackendStatusTestResponse>.Fail(
+                        CloudBackendFailedCode,
+                        "An unexpected error occurred."));
+            }
         }
-    }
 
     [HttpPost("cloud-backend/logon-test")]
     public async Task<ActionResult<ApiResult<LinklyCloudBackendLogonTestResponse>>> RunCloudBackendLogonTest(
@@ -371,14 +380,23 @@ public sealed class LinklyController(
             return Ok(ApiResult<LinklyCloudBackendLogonTestResponse>.Ok(response));
         }
         catch (LinklyCloudBackendValidationException ex)
-        {
-            return BadRequest(ApiResult<LinklyCloudBackendLogonTestResponse>.Fail(
-                CloudBackendInvalidCode,
-                ex.Message));
+            {
+                return BadRequest(ApiResult<LinklyCloudBackendLogonTestResponse>.Fail(
+                    CloudBackendInvalidCode,
+                    ex.Message));
+            }
+            catch (Exception ex)
+            {
+                Log($"cloud-backend logon-test error={ex.GetType().Name} message={ex.Message}");
+                return StatusCode(
+                    StatusCodes.Status500InternalServerError,
+                    ApiResult<LinklyCloudBackendLogonTestResponse>.Fail(
+                        CloudBackendFailedCode,
+                        "An unexpected error occurred."));
+            }
         }
-    }
 
-    [HttpGet("cloud-backend/transactions/{sessionId}/status")]
+    [HttpGet("cloud-backend/transactions[HttpGet("cloud-backend/transactions/{sessionId}/status")]
     public async Task<ActionResult<ApiResult<LinklyCloudBackendSessionResponse>>> GetCloudBackendTransactionStatus(
         string sessionId,
         [FromQuery] string? environment,
@@ -652,7 +670,7 @@ public sealed class LinklyController(
                 "Device store and terminal scope are unavailable."));
         }
 
-        // CloudBackendAsync 所有设备 scope 只信任认证 claim，忽略 query/body 中任何门店或设备字段。
+        // CloudBackendAsync 所有设�?scope 只信任认�?claim，忽�?query/body 中任何门店或设备字段�?
         return (storeCode.Trim(), deviceCode.Trim(), null);
     }
 

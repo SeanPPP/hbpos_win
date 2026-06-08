@@ -429,7 +429,7 @@ public sealed class LinklyControllerTests
         client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Test");
 
         using var response = await client.PostAsync(
-            "/api/v1/linkly/cloud-backend/status-test?environment=sandbox&storeCode=S99&deviceCode=POS-99",
+            "/api/v1/linkly/cloud-backend/status-test?environment=sandbox",
             content: null);
 
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
@@ -454,7 +454,7 @@ public sealed class LinklyControllerTests
         client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Test");
 
         using var response = await client.PostAsync(
-            "/api/v1/linkly/cloud-backend/logon-test?environment=sandbox&storeCode=S99&deviceCode=POS-99",
+            "/api/v1/linkly/cloud-backend/logon-test?environment=sandbox",
             content: null);
 
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);

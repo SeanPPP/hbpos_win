@@ -1040,7 +1040,7 @@
                                                         HorizontalAlignment="Stretch"
                                                         Margin="0,0,0,10">
                                                     <StackPanel Orientation="Horizontal">
-                                                        <materialDesign:PackIcon Kind="LanConnect" Width="18" Height="18" Margin="0,0,8,0" />
+                                                        <materialDesign:PackIcon Kind="LanPending" Width="18" Height="18" Margin="0,0,8,0" />
                                                         <TextBlock Text="{loc:Loc settings.linkly.cloudBackend.testStatus}" />
                                                     </StackPanel>
                                                 </Button>

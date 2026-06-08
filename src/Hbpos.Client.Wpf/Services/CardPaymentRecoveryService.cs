@@ -87,7 +87,8 @@ public sealed class CardPaymentRecoveryService(
             !string.IsNullOrWhiteSpace(attempt.SessionId))
         {
             await RetryCompletedAttemptAcknowledgeAsync(settings, attempt, cancellationToken);
-            return CardPaymentRecoveryResult.None;
+            LogRecoveryResult(settings, attempt, null, CardPaymentRecoveryOutcome.OrderCompleted, "order-completed-ack-retry");
+            return new CardPaymentRecoveryResult(CardPaymentRecoveryOutcome.OrderCompleted, string.Empty);
         }
 
         var draft = DeserializeDraft(attempt);
