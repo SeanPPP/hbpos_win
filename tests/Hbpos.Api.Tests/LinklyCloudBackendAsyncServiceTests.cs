@@ -432,6 +432,64 @@ namespace Hbpos.Api.Tests;
     }
 
     [Fact]
+    public async Task Recovery_service_operations_write_certification_evidence_json()
+    {
+        var logger = new RecordingLogger<LinklyCloudBackendAsyncService>();
+        var service = CreateService(
+            new CapturingLinklyCloudBackendAsyncTransport(
+                HttpStatusCode.OK,
+                """
+                {
+                  "Response": {
+                    "Success": true,
+                    "TxnRef": "TXN-RECOVER",
+                    "ResponseCode": "00",
+                    "ResponseText": "APPROVED"
+                  }
+                }
+                """),
+            logger: logger);
+        await service.Repository.UpsertSessionAsync(new LinklyCloudBackendSessionRecord
+        {
+            Environment = "Sandbox",
+            StoreCode = "S01",
+            DeviceCode = "POS-01",
+            SessionId = "recover-session",
+            Status = "Pending",
+            TxnRef = "TXN-RECOVER",
+            IsActive = true,
+            UpdatedAt = DateTimeOffset.UtcNow
+        }, CancellationToken.None);
+
+        await service.GetResumableSessionAsync("S01", "POS-01", "Sandbox", CancellationToken.None);
+        await service.GetStatusAsync("S01", "POS-01", "Sandbox", "recover-session", CancellationToken.None);
+        await service.RecoverAsync(
+            "S01",
+            "POS-01",
+            "recover-session",
+            new LinklyCloudBackendRecoverRequest("Sandbox"),
+            CancellationToken.None);
+        await service.AcknowledgeSessionAsync("S01", "POS-01", "Sandbox", "recover-session", CancellationToken.None);
+        await service.MarkReceiptPrintedAsync(
+            "S01",
+            "POS-01",
+            "recover-session",
+            new LinklyCloudBackendMarkReceiptPrintedRequest("Sandbox"),
+            CancellationToken.None);
+
+        AssertServiceEvidenceLog(logger.Lines, "resumable session", "request", "GET", "4.1.2", expectRequestJson: false, expectResponseJson: false);
+        AssertServiceEvidenceLog(logger.Lines, "resumable session", "response", "GET", "4.1.2", expectRequestJson: false, expectResponseJson: true);
+        AssertServiceEvidenceLog(logger.Lines, "status", "request", "GET", "3.1.3/4.1.2", expectRequestJson: false, expectResponseJson: false);
+        AssertServiceEvidenceLog(logger.Lines, "status", "response", "GET", "3.1.3/4.1.2", expectRequestJson: false, expectResponseJson: true);
+        AssertServiceEvidenceLog(logger.Lines, "recover", "request", "POST", "3.1.3/4.1.2", expectRequestJson: true, expectResponseJson: false);
+        AssertServiceEvidenceLog(logger.Lines, "recover", "response", "POST", "3.1.3/4.1.2", expectRequestJson: false, expectResponseJson: true);
+        AssertServiceEvidenceLog(logger.Lines, "acknowledge", "request", "POST", "4.1.2", expectRequestJson: false, expectResponseJson: false);
+        AssertServiceEvidenceLog(logger.Lines, "acknowledge", "response", "POST", "4.1.2", expectRequestJson: false, expectResponseJson: true);
+        AssertServiceEvidenceLog(logger.Lines, "receipt/printed", "request", "POST", "4.1.3", expectRequestJson: true, expectResponseJson: false);
+        AssertServiceEvidenceLog(logger.Lines, "receipt/printed", "response", "POST", "4.1.3", expectRequestJson: false, expectResponseJson: true);
+    }
+
+    [Fact]
     public async Task AcknowledgeSessionAsync_throws_when_session_is_missing()
     {
         var service = CreateService(new CapturingLinklyCloudBackendAsyncTransport(HttpStatusCode.Accepted));
@@ -1947,6 +2005,40 @@ namespace Hbpos.Api.Tests;
         }
 
         throw new Xunit.Sdk.XunitException($"Expected Linkly JSON log operation={operation} phase={phase}.");
+    }
+
+    private static void AssertServiceEvidenceLog(
+        IReadOnlyList<string> lines,
+        string operation,
+        string phase,
+        string method,
+        string certCase,
+        bool expectRequestJson,
+        bool expectResponseJson)
+    {
+        using var log = FindLinklyLog(lines, operation, phase);
+        Assert.Equal("api-backend-service", log.RootElement.GetProperty("source").GetString());
+        var details = log.RootElement.GetProperty("details");
+        Assert.False(string.IsNullOrWhiteSpace(details.GetProperty("timestamp").GetString()));
+        var data = details.GetProperty("data");
+        Assert.Equal(certCase, data.GetProperty("certCase").GetString());
+        Assert.Equal(method, data.GetProperty("method").GetString());
+        Assert.False(string.IsNullOrWhiteSpace(data.GetProperty("url").GetString()));
+        if (phase == "response")
+        {
+            Assert.False(string.IsNullOrWhiteSpace(data.GetProperty("transactionReference").GetString()));
+        }
+
+        Assert.Equal(
+            expectRequestJson,
+            data.TryGetProperty("requestJson", out var requestJson) &&
+                requestJson.ValueKind == JsonValueKind.String &&
+                !string.IsNullOrWhiteSpace(requestJson.GetString()));
+        Assert.Equal(
+            expectResponseJson,
+            data.TryGetProperty("responseJson", out var responseJson) &&
+                responseJson.ValueKind == JsonValueKind.String &&
+                !string.IsNullOrWhiteSpace(responseJson.GetString()));
     }
 
     private sealed class RecordingLogger<T> : ILogger<T>

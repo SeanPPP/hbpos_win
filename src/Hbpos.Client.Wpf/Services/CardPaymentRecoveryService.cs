@@ -511,6 +511,8 @@ public sealed class CardPaymentRecoveryService(
                 deviceCode = session.DeviceCode,
                 cashierId = session.CashierId,
                 selectedEnvironment = settings.Environment.ToString(),
+                certCase = "4.1.1",
+                transactionReference = NormalizeOptional(attempt?.SessionId) ?? NormalizeOptional(attempt?.TxnRef),
                 attemptGuid = attempt?.AttemptGuid,
                 localStatus = attempt?.Status.ToString(),
                 attemptSessionId = NormalizeOptional(attempt?.SessionId),
@@ -537,6 +539,8 @@ public sealed class CardPaymentRecoveryService(
             {
                 timestamp = DateTimeOffset.Now,
                 attemptGuid = attempt.AttemptGuid,
+                certCase = "4.1.2",
+                transactionReference = NormalizeOptional(attempt.SessionId) ?? NormalizeOptional(attempt.TxnRef),
                 localStatus = attempt.Status.ToString(),
                 attemptSessionId = NormalizeOptional(attempt.SessionId),
                 txnRef = NormalizeOptional(attempt.TxnRef),
@@ -584,8 +588,13 @@ public sealed class CardPaymentRecoveryService(
             {
                 timestamp = DateTimeOffset.Now,
                 outcome = outcome.ToString(),
+                certCase = GetRecoveryCertificationCase(outcome, reason),
                 error,
                 attemptGuid = attempt?.AttemptGuid,
+                transactionReference = NormalizeOptional(attempt?.SessionId) ??
+                    NormalizeOptional(status?.SessionId) ??
+                    NormalizeOptional(attempt?.TxnRef) ??
+                    NormalizeOptional(status?.TxnRef),
                 localStatus = attempt?.Status.ToString(),
                 attemptSessionId = NormalizeOptional(attempt?.SessionId),
                 statusSessionId = NormalizeOptional(status?.SessionId),
@@ -599,6 +608,18 @@ public sealed class CardPaymentRecoveryService(
                 responseCode = status?.ResponseCode,
                 responseText = status?.ResponseText
             });
+    }
+
+    private static string GetRecoveryCertificationCase(CardPaymentRecoveryOutcome outcome, string reason)
+    {
+        if (reason.Contains("approved", StringComparison.OrdinalIgnoreCase) ||
+            reason.Contains("declined", StringComparison.OrdinalIgnoreCase) ||
+            reason.Contains("failed", StringComparison.OrdinalIgnoreCase))
+        {
+            return "3.1.2/4.1.2";
+        }
+
+        return "4.1.2";
     }
 
     private static string LogValue(string? value)

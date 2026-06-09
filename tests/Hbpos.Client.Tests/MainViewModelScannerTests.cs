@@ -2104,6 +2104,31 @@ public sealed class MainViewModelScannerTests
     }
 
     [Fact]
+    public async Task Card_payment_recovery_completed_during_startup_prints_card_receipt()
+    {
+        var printService = new RecordingReceiptPrintService();
+        var order = CreateReceiptPrintOrder(PaymentMethodKind.Card);
+        var recovery = new FakeCardPaymentRecoveryService(
+            Task.FromResult(new CardPaymentRecoveryResult(
+                CardPaymentRecoveryOutcome.OrderCompleted,
+                "Recovered approved payment.",
+                order)));
+        var viewModel = CreateAuthorizedMainViewModel(
+            new FakeCustomerDisplayWindowService(),
+            receiptPrintService: printService,
+            cardPaymentRecoveryService: recovery);
+
+        await viewModel.InitializeAsync(new AppStartupOptions([], false, null, null));
+        var recovered = await InvokeRecoverCardPaymentAttemptAsync(viewModel, navigateToPaymentOnDraft: false);
+
+        Assert.True(recovered);
+        Assert.Same(viewModel.PaymentSuccess, viewModel.CurrentScreen);
+        var call = Assert.Single(printService.Calls);
+        Assert.Equal(order.OrderGuid, call.OrderGuid);
+        Assert.Equal(ReceiptPrintReason.CardAuto, call.Reason);
+    }
+
+    [Fact]
     public async Task Card_payment_recovery_draft_restored_during_startup_keeps_pos_screen_and_surfaces_status()
     {
         var cart = new PosCartService();

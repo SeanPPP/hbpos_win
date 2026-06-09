@@ -220,14 +220,52 @@ public class LinklyCloudBackendAsyncService(
         string sessionId,
         CancellationToken cancellationToken)
     {
+        var normalizedEnvironment = NormalizeEnvironment(environment);
+        var normalizedStoreCode = NormalizeRequired(storeCode, "storeCode");
+        var normalizedDeviceCode = NormalizeRequired(deviceCode, "deviceCode");
+        var normalizedSessionId = NormalizeRequired(sessionId, "sessionId");
+        var evidenceUrl = $"api/v1/linkly/cloud-backend/transactions/{normalizedSessionId}/status?environment={normalizedEnvironment}";
+        LogRecoveryServiceEvidence(
+            "status",
+            "request",
+            "request",
+            normalizedEnvironment,
+            normalizedStoreCode,
+            normalizedDeviceCode,
+            normalizedSessionId,
+            "GET",
+            evidenceUrl,
+            requestJson: null,
+            responseJson: null,
+            success: null,
+            reason: null,
+            response: null,
+            certCase: "3.1.3/4.1.2");
         var session = await repository.GetSessionAsync(
-            NormalizeEnvironment(environment),
-            NormalizeRequired(storeCode, "storeCode"),
-            NormalizeRequired(deviceCode, "deviceCode"),
-            NormalizeRequired(sessionId, "sessionId"),
+            normalizedEnvironment,
+            normalizedStoreCode,
+            normalizedDeviceCode,
+            normalizedSessionId,
             cancellationToken);
 
-        return session is null ? null : await BuildResponseAsync(session, cancellationToken);
+        var result = session is null ? null : await BuildResponseAsync(session, cancellationToken);
+        LogRecoveryServiceEvidence(
+            "status",
+            "response",
+            "response",
+            normalizedEnvironment,
+            normalizedStoreCode,
+            normalizedDeviceCode,
+            normalizedSessionId,
+            "GET",
+            evidenceUrl,
+            requestJson: null,
+            responseJson: SerializeEvidenceJson(result),
+            success: result is not null,
+            reason: result is null ? "not-found" : null,
+            response: result,
+            certCase: "3.1.3/4.1.2");
+        return result;
     }
 
     public async Task<LinklyCloudBackendSessionResponse?> GetActiveSessionAsync(
@@ -251,13 +289,50 @@ public class LinklyCloudBackendAsyncService(
         string environment,
         CancellationToken cancellationToken)
     {
+        var normalizedEnvironment = NormalizeEnvironment(environment);
+        var normalizedStoreCode = NormalizeRequired(storeCode, "storeCode");
+        var normalizedDeviceCode = NormalizeRequired(deviceCode, "deviceCode");
+        var evidenceUrl = $"api/v1/linkly/cloud-backend/transactions/resumable?environment={normalizedEnvironment}";
+        LogRecoveryServiceEvidence(
+            "resumable session",
+            "request",
+            "request",
+            normalizedEnvironment,
+            normalizedStoreCode,
+            normalizedDeviceCode,
+            null,
+            "GET",
+            evidenceUrl,
+            requestJson: null,
+            responseJson: null,
+            success: null,
+            reason: null,
+            response: null,
+            certCase: "4.1.2");
         var session = await repository.GetResumableSessionAsync(
-            NormalizeEnvironment(environment),
-            NormalizeRequired(storeCode, "storeCode"),
-            NormalizeRequired(deviceCode, "deviceCode"),
+            normalizedEnvironment,
+            normalizedStoreCode,
+            normalizedDeviceCode,
             cancellationToken);
 
-        return session is null ? null : await BuildResponseAsync(session, cancellationToken);
+        var result = session is null ? null : await BuildResponseAsync(session, cancellationToken);
+        LogRecoveryServiceEvidence(
+            "resumable session",
+            "response",
+            "response",
+            normalizedEnvironment,
+            normalizedStoreCode,
+            normalizedDeviceCode,
+            result?.SessionId,
+            "GET",
+            evidenceUrl,
+            requestJson: null,
+            responseJson: SerializeEvidenceJson(result),
+            success: result is not null,
+            reason: result is null ? "not-found" : null,
+            response: result,
+            certCase: "4.1.2");
+        return result;
     }
 
     public async Task<LinklyCloudBackendSessionResponse> RecoverAsync(
@@ -268,6 +343,23 @@ public class LinklyCloudBackendAsyncService(
         CancellationToken cancellationToken)
     {
         var session = await GetRequiredSessionAsync(storeCode, deviceCode, request.Environment, sessionId, cancellationToken);
+        var evidenceUrl = $"api/v1/linkly/cloud-backend/transactions/{session.SessionId}/recover";
+        LogRecoveryServiceEvidence(
+            "recover",
+            "request",
+            "request",
+            session.Environment,
+            session.StoreCode,
+            session.DeviceCode,
+            session.SessionId,
+            "POST",
+            evidenceUrl,
+            SerializeEvidenceJson(request),
+            responseJson: null,
+            success: null,
+            reason: null,
+            response: null,
+            certCase: "3.1.3/4.1.2");
         var token = await tokenProvider.GetTokenAsync(
             session.Environment,
             session.StoreCode,
@@ -290,7 +382,24 @@ public class LinklyCloudBackendAsyncService(
         }
 
         var savedSession = await UpsertSessionAndReadLatestAsync(session, cancellationToken);
-        return await BuildResponseAsync(savedSession, cancellationToken);
+        var result = await BuildResponseAsync(savedSession, cancellationToken);
+        LogRecoveryServiceEvidence(
+            "recover",
+            "response",
+            "response",
+            result.Environment,
+            result.StoreCode,
+            result.DeviceCode,
+            result.SessionId,
+            "POST",
+            evidenceUrl,
+            requestJson: null,
+            responseJson: SerializeEvidenceJson(result),
+            success: true,
+            reason: null,
+            response: result,
+            certCase: "3.1.3/4.1.2");
+        return result;
     }
 
     public async Task<LinklyCloudBackendSessionResponse> SendKeyAsync(
@@ -336,12 +445,46 @@ public class LinklyCloudBackendAsyncService(
     {
         var session = await GetRequiredSessionAsync(storeCode, deviceCode, request.Environment, sessionId, cancellationToken);
         var now = DateTimeOffset.UtcNow;
+        var evidenceUrl = $"api/v1/linkly/cloud-backend/transactions/{session.SessionId}/receipt/printed";
+        LogRecoveryServiceEvidence(
+            "receipt/printed",
+            "request",
+            "request",
+            session.Environment,
+            session.StoreCode,
+            session.DeviceCode,
+            session.SessionId,
+            "POST",
+            evidenceUrl,
+            SerializeEvidenceJson(request),
+            responseJson: null,
+            success: null,
+            reason: null,
+            response: null,
+            certCase: "4.1.3");
 
         // 闁衡偓閼搁潧绁﹂梺顐ｆ皑閻擄繝宕ｉ鍥跺殯闁哄嫬瀛╅弸鍐嫉椤掆偓閸戯繝宕氶幏灞惧涧闁挎稒绋戦褰掑箣妞嬪寒浼傜痪顓у枦椤撶粯娼诲☉妯哄汲闁瑰灚鎸稿畵鍐╃閵堝嫮甯涢梺鐐礃閻箖宕ユ惔顖滅闁归潧绉村﹢顏呮交濞嗘挸娅￠柡宥呮穿椤斿洤顔忛崣澶娾叺闁告鍩囬埀?
         session.ReceiptPrintedAt ??= now;
         session.UpdatedAt = now;
         var savedSession = await UpsertSessionAndReadLatestAsync(session, cancellationToken);
-        return await BuildResponseAsync(savedSession, cancellationToken);
+        var result = await BuildResponseAsync(savedSession, cancellationToken);
+        LogRecoveryServiceEvidence(
+            "receipt/printed",
+            "response",
+            "response",
+            result.Environment,
+            result.StoreCode,
+            result.DeviceCode,
+            result.SessionId,
+            "POST",
+            evidenceUrl,
+            requestJson: null,
+            responseJson: SerializeEvidenceJson(result),
+            success: true,
+            reason: null,
+            response: result,
+            certCase: "4.1.3");
+        return result;
     }
 
     public async Task<LinklyCloudBackendSessionResponse> AcknowledgeSessionAsync(
@@ -352,17 +495,55 @@ public class LinklyCloudBackendAsyncService(
         CancellationToken cancellationToken)
     {
         var acknowledgedAt = DateTimeOffset.UtcNow;
+        var normalizedEnvironment = NormalizeEnvironment(environment);
+        var normalizedStoreCode = NormalizeRequired(storeCode, "storeCode");
+        var normalizedDeviceCode = NormalizeRequired(deviceCode, "deviceCode");
+        var normalizedSessionId = NormalizeRequired(sessionId, "sessionId");
+        var evidenceUrl = $"api/v1/linkly/cloud-backend/transactions/{normalizedSessionId}/acknowledge";
+        LogRecoveryServiceEvidence(
+            "acknowledge",
+            "request",
+            "request",
+            normalizedEnvironment,
+            normalizedStoreCode,
+            normalizedDeviceCode,
+            normalizedSessionId,
+            "POST",
+            evidenceUrl,
+            requestJson: null,
+            responseJson: null,
+            success: null,
+            reason: null,
+            response: null,
+            certCase: "4.1.2");
         var session = await repository.AcknowledgeSessionAsync(
-            NormalizeEnvironment(environment),
-            NormalizeRequired(storeCode, "storeCode"),
-            NormalizeRequired(deviceCode, "deviceCode"),
-            NormalizeRequired(sessionId, "sessionId"),
+            normalizedEnvironment,
+            normalizedStoreCode,
+            normalizedDeviceCode,
+            normalizedSessionId,
             acknowledgedAt,
             cancellationToken);
 
-        return session is null
+        var result = session is null
             ? throw new LinklyCloudBackendSessionNotFoundException()
             : await BuildResponseAsync(session, cancellationToken);
+        LogRecoveryServiceEvidence(
+            "acknowledge",
+            "response",
+            "response",
+            result.Environment,
+            result.StoreCode,
+            result.DeviceCode,
+            result.SessionId,
+            "POST",
+            evidenceUrl,
+            requestJson: null,
+            responseJson: SerializeEvidenceJson(result),
+            success: true,
+            reason: null,
+            response: result,
+            certCase: "4.1.2");
+        return result;
     }
 
     public async Task ReceiveNotificationAsync(
@@ -1832,6 +2013,74 @@ public class LinklyCloudBackendAsyncService(
         Console.WriteLine($"[HBPOS][Api][LinklyCloudBackend] {DateTimeOffset.Now:O} {message}");
     }
 
+    private void LogRecoveryServiceEvidence(
+        string operation,
+        string phase,
+        string direction,
+        string environment,
+        string storeCode,
+        string deviceCode,
+        string? transactionReference,
+        string method,
+        string url,
+        string? requestJson,
+        string? responseJson,
+        bool? success,
+        string? reason,
+        object? response,
+        string certCase)
+    {
+        LogServiceJson(
+            operation,
+            phase,
+            direction,
+            environment,
+            storeCode,
+            deviceCode,
+            success,
+            reason,
+            requestJson is null
+                ? null
+                : new
+                {
+                    method,
+                    url,
+                    body = RawJsonBody(requestJson)
+                },
+            response,
+            new
+            {
+                certCase,
+                method,
+                url,
+                transactionReference,
+                requestJson,
+                responseJson
+            });
+    }
+
+    private static string? SerializeEvidenceJson<T>(T? value)
+    {
+        return value is null ? null : JsonSerializer.Serialize(value, ServiceJsonOptions);
+    }
+
+    private static object? RawJsonBody(string? bodyJson)
+    {
+        if (string.IsNullOrWhiteSpace(bodyJson))
+        {
+            return null;
+        }
+
+        try
+        {
+            return JsonSerializer.Deserialize<JsonElement>(bodyJson);
+        }
+        catch (JsonException)
+        {
+            return bodyJson;
+        }
+    }
+
     private void LogServiceJson(
         string operation,
         string phase,
@@ -3115,6 +3364,8 @@ public sealed class InMemoryLinklyCloudBackendAsyncRepository : ILinklyCloudBack
 
             var next = Clone(session);
             // 客户端恢复完成后写入确认时间，后�?resumable 查询不再返回这笔已完成会话�?            next.ClientAcknowledgedAt = acknowledgedAt;
+            // 客户端恢复完成后写入确认时间，后续 resumable 查询不再返回这笔已完成会话。
+            next.ClientAcknowledgedAt = acknowledgedAt;
             next.UpdatedAt = acknowledgedAt;
             _sessions[key] = Clone(next);
             return Task.FromResult<LinklyCloudBackendSessionRecord?>(next);

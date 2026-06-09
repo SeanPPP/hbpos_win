@@ -8,6 +8,7 @@ using Hbpos.Client.Wpf.Localization;
 using Hbpos.Client.Wpf.Models;
 using Hbpos.Client.Wpf.Services;
 using Hbpos.Contracts.Catalog;
+using Hbpos.Contracts.Linkly;
 using Hbpos.Contracts.Orders;
 using Microsoft.Extensions.DependencyInjection;
 
@@ -1573,6 +1574,8 @@ public sealed partial class MainViewModel : ObservableObject
             await RefreshPendingSyncAsync();
             await PaymentSuccess.LoadFromOrderAsync(result.Order);
             CurrentScreen = PaymentSuccess;
+            LogRecoveredCardOrderCompleted(result.Order);
+            await PrintRecoveredCardReceiptAsync(result.Order);
             ShowCashPaymentCommand.NotifyCanExecuteChanged();
             return true;
         }
@@ -1594,6 +1597,115 @@ public sealed partial class MainViewModel : ObservableObject
 
         return false;
     }
+
+    private async Task PrintRecoveredCardReceiptAsync(LocalOrder order)
+    {
+        var evidence = GetCardRecoveryEvidence(order);
+        LinklyJsonLog.Write(
+            "CardRecovery",
+            "card-recovery",
+            "power-fail-recovery-print",
+            "request",
+            direction: "request",
+            sessionId: evidence.SessionId,
+            request: new
+            {
+                reason = ReceiptPrintReason.CardAuto.ToString(),
+                orderGuid = order.OrderGuid
+            },
+            details: new
+            {
+                timestamp = DateTimeOffset.Now,
+                certCase = "4.1.3",
+                orderGuid = order.OrderGuid,
+                transactionReference = evidence.TransactionReference,
+                evidence.TxnRef,
+                evidence.SessionId,
+                reason = "4.1.3"
+            });
+
+        var printResult = await PrintReceiptAsync(ReceiptQueryService.CreateReceipt(order), ReceiptPrintReason.CardAuto);
+        LinklyJsonLog.Write(
+            "CardRecovery",
+            "card-recovery",
+            "power-fail-recovery-print",
+            "response",
+            direction: "response",
+            sessionId: evidence.SessionId,
+            success: printResult.Succeeded,
+            reason: printResult.Succeeded ? null : "receipt-print-failed",
+            response: new
+            {
+                printResult.Succeeded,
+                printResult.Message,
+                printResult.OrderGuid
+            },
+            details: new
+            {
+                timestamp = DateTimeOffset.Now,
+                certCase = "4.1.3",
+                orderGuid = order.OrderGuid,
+                transactionReference = evidence.TransactionReference,
+                evidence.TxnRef,
+                evidence.SessionId,
+                reason = "4.1.3"
+            });
+    }
+
+    private static void LogRecoveredCardOrderCompleted(LocalOrder order)
+    {
+        var evidence = GetCardRecoveryEvidence(order);
+        LinklyJsonLog.Write(
+            "CardRecovery",
+            "card-recovery",
+            "power-fail-recovery",
+            "order-completed",
+            sessionId: evidence.SessionId,
+            success: true,
+            details: new
+            {
+                timestamp = DateTimeOffset.Now,
+                certCase = "4.1.2",
+                orderGuid = order.OrderGuid,
+                transactionReference = evidence.TransactionReference,
+                evidence.TxnRef,
+                evidence.SessionId,
+                reason = "4.1.2"
+            });
+    }
+
+    private static CardRecoveryEvidence GetCardRecoveryEvidence(LocalOrder order)
+    {
+        var cardPayment = order.Payments.FirstOrDefault(payment => payment.Method == PaymentMethodKind.Card);
+        var cardTransaction = cardPayment?.CardTransactions?.FirstOrDefault();
+        var txnRef = NormalizeEvidenceValue(cardTransaction?.TxnRef) ?? TryReadLinklyBackendTxnRef(cardPayment?.Reference);
+        var sessionId = LinklyBackendPaymentReference.TryGetPrintMarker(cardPayment?.Reference, out _, out var markerSessionId)
+            ? NormalizeEvidenceValue(markerSessionId)
+            : null;
+        return new CardRecoveryEvidence(
+            NormalizeEvidenceValue(sessionId) ?? NormalizeEvidenceValue(txnRef) ?? order.OrderGuid.ToString("D"),
+            NormalizeEvidenceValue(txnRef),
+            NormalizeEvidenceValue(sessionId));
+    }
+
+    private static string? TryReadLinklyBackendTxnRef(string? reference)
+    {
+        if (string.IsNullOrWhiteSpace(reference) ||
+            !reference.StartsWith($"{LinklyBackendPaymentReference.Prefix}:", StringComparison.OrdinalIgnoreCase))
+        {
+            return null;
+        }
+
+        var parts = reference.Split(':', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        return parts.Length >= 2 ? NormalizeEvidenceValue(parts[1]) : null;
+    }
+
+    private static string? NormalizeEvidenceValue(string? value)
+    {
+        return string.IsNullOrWhiteSpace(value) ? null : value.Trim();
+    }
+
+    private sealed record CardRecoveryEvidence(string TransactionReference, string? TxnRef, string? SessionId);
 
     private static bool ShouldRetryCardPaymentRecovery(CardPaymentRecoveryOutcome outcome)
     {

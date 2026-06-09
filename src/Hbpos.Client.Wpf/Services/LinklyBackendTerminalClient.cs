@@ -1906,6 +1906,7 @@ public sealed class LinklyBackendTerminalClient(
         string? txnRef,
         string? bodyJson)
     {
+        var responseDetails = LinklyHttpEvidenceDetails.Empty;
         LinklyJsonLog.Write(
             "LinklyBackend",
             "backend-terminal",
@@ -1921,8 +1922,12 @@ public sealed class LinklyBackendTerminalClient(
             details: new
             {
                 timestamp = DateTimeOffset.Now,
+                certCase = GetCertificationCase(operation),
+                transactionReference = ReadTransactionReference(url, bodyJson, responseDetails),
                 txnType,
-                txnRef
+                txnRef,
+                requestJson = bodyJson,
+                responseJson = (string?)null
             });
     }
 
@@ -1936,6 +1941,7 @@ public sealed class LinklyBackendTerminalClient(
         string? txnRef,
         string? bodyJson)
     {
+        var responseDetails = ReadLinklyHttpEvidenceDetails(bodyJson);
         LinklyJsonLog.Write(
             "LinklyBackend",
             "backend-terminal",
@@ -1954,9 +1960,121 @@ public sealed class LinklyBackendTerminalClient(
             details: new
             {
                 timestamp = DateTimeOffset.Now,
+                certCase = GetCertificationCase(operation),
+                transactionReference = ReadTransactionReference(url, null, responseDetails),
                 txnType,
-                txnRef
+                txnRef = NormalizeOptional(txnRef) ?? responseDetails.TxnRef,
+                requestJson = (string?)null,
+                responseJson = bodyJson,
+                responseTxnRef = responseDetails.TxnRef,
+                responseDate = responseDetails.Date,
+                responseTime = responseDetails.Time,
+                responseCode = responseDetails.ResponseCode,
+                responseText = responseDetails.ResponseText
             });
+    }
+
+    private static string? GetCertificationCase(string operation)
+    {
+        return operation switch
+        {
+            "transaction-status-test" => "3.1.1/3.1.2",
+            "resumable session" => "4.1.2",
+            "status" => "3.1.3/4.1.2",
+            "recover" => "3.1.3/4.1.2",
+            _ => null
+        };
+    }
+
+    private static string? ReadTransactionReference(
+        string url,
+        string? requestJson,
+        LinklyHttpEvidenceDetails responseDetails)
+    {
+        return NormalizeOptional(responseDetails.TxnRef) ??
+            ReadSessionIdFromUrl(url) ??
+            ReadSessionIdFromJson(requestJson);
+    }
+
+    private static string? ReadSessionIdFromUrl(string url)
+    {
+        if (!Uri.TryCreate(url, UriKind.Absolute, out var uri))
+        {
+            return null;
+        }
+
+        var segments = uri.AbsolutePath
+            .Split('/', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        for (var i = 0; i < segments.Length - 1; i++)
+        {
+            if (string.Equals(segments[i], "transactions", StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(segments[i], "sessions", StringComparison.OrdinalIgnoreCase))
+            {
+                return Uri.UnescapeDataString(segments[i + 1]);
+            }
+        }
+
+        return null;
+    }
+
+    private static string? ReadSessionIdFromJson(string? json)
+    {
+        if (string.IsNullOrWhiteSpace(json))
+        {
+            return null;
+        }
+
+        try
+        {
+            using var document = JsonDocument.Parse(json);
+            return ReadString(document.RootElement, "SessionId");
+        }
+        catch (JsonException)
+        {
+            return null;
+        }
+    }
+
+    private static LinklyHttpEvidenceDetails ReadLinklyHttpEvidenceDetails(string? json)
+    {
+        if (string.IsNullOrWhiteSpace(json))
+        {
+            return LinklyHttpEvidenceDetails.Empty;
+        }
+
+        try
+        {
+            using var document = JsonDocument.Parse(json);
+            var root = document.RootElement;
+            var response = TryGetProperty(root, "result", out var result) && result.ValueKind == JsonValueKind.Object
+                ? result
+                : root;
+            if (TryGetProperty(response, "data", out var data) && data.ValueKind == JsonValueKind.Object)
+            {
+                response = data;
+            }
+
+            return new LinklyHttpEvidenceDetails(
+                ReadString(response, "txnRef") ?? ReadString(response, "TxnRef") ?? ReadString(response, "responseTxnRef"),
+                ReadString(response, "responseDate") ?? ReadString(response, "Date"),
+                ReadString(response, "responseTime") ?? ReadString(response, "Time"),
+                ReadString(response, "responseCode") ?? ReadString(response, "ResponseCode"),
+                ReadString(response, "responseText") ?? ReadString(response, "ResponseText"));
+        }
+        catch (JsonException)
+        {
+            return LinklyHttpEvidenceDetails.Empty;
+        }
+    }
+
+    private sealed record LinklyHttpEvidenceDetails(
+        string? TxnRef,
+        string? Date,
+        string? Time,
+        string? ResponseCode,
+        string? ResponseText)
+    {
+        public static LinklyHttpEvidenceDetails Empty { get; } = new(null, null, null, null, null);
     }
 
     private static void LogStatusSnapshot(string prefix, LinklyCloudBackendSessionResponse status)
