@@ -9,6 +9,7 @@
         WindowStartupLocation="CenterScreen"
         ShowInTaskbar="False"
         Topmost="True"
+        Icon="pack://application:,,,/Resources/AppIcon.ico"
         Background="White"
         FontFamily="{StaticResource PosFontFamily}"
         UseLayoutRounding="True">

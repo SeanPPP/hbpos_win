@@ -43,6 +43,32 @@ public sealed class WindowsShellIdentityServiceTests
     }
 
     [Fact]
+    public void ResolveApplicationExecutablePath_prefers_base_directory_wpf_exe_over_entry_assembly_path()
+    {
+        var baseDirectory = Directory.CreateTempSubdirectory();
+        var entryDirectory = Directory.CreateTempSubdirectory();
+        try
+        {
+            var appExePath = Path.Combine(baseDirectory.FullName, "Hbpos.Client.Wpf.exe");
+            var entryExePath = Path.Combine(entryDirectory.FullName, "Hbpos.Client.Wpf.exe");
+            File.WriteAllText(appExePath, string.Empty);
+            File.WriteAllText(entryExePath, string.Empty);
+
+            var resolvedPath = WindowsShellIdentityService.ResolveApplicationExecutablePath(
+                @"C:\Program Files\dotnet\dotnet.exe",
+                Path.Combine(entryDirectory.FullName, "Hbpos.Client.Wpf.dll"),
+                baseDirectory.FullName);
+
+            Assert.Equal(appExePath, resolvedPath);
+        }
+        finally
+        {
+            baseDirectory.Delete(recursive: true);
+            entryDirectory.Delete(recursive: true);
+        }
+    }
+
+    [Fact]
     public void ResolveApplicationExecutablePath_uses_wpf_exe_from_base_directory_when_entry_is_host()
     {
         var tempDirectory = Directory.CreateTempSubdirectory();

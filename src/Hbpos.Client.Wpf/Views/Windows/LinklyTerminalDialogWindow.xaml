@@ -5,6 +5,7 @@
         Height="420"
         MinWidth="420"
         MinHeight="360"
+        Icon="pack://application:,,,/Resources/AppIcon.ico"
         WindowStartupLocation="CenterOwner"
         ResizeMode="CanResize"
         FontFamily="{StaticResource PosFontFamily}"

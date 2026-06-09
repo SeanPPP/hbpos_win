@@ -65,9 +65,12 @@ public partial class App : Application
             _startupProgressState?.SetStage(MainWindowPreparingPercent, localization.T("startup.stage.loadingProducts"));
             await mainWindow.InitializeForStartupAsync();
             _startupProgressState?.SetStage(MainWindowInitializedPercent, localization.T("startup.stage.preparingMainWindow"));
-            FinishStartupExperience();
             MainWindow = mainWindow;
+            FinishStartupExperience();
             mainWindow.Show();
+            // 主窗口句柄会在 Show 前为扫码初始化提前创建；Show 后再刷新一次，确保任务栏按钮拿到正确图标。
+            WindowsShellIdentityService.ApplyWindowIdentity(mainWindow);
+            WindowsShellIdentityService.ApplyWindowIcon(mainWindow);
             mainWindow.ActivateForScannerInput();
             await Dispatcher.InvokeAsync(static () => { }, DispatcherPriority.Render);
             mainWindow.ContinueStartupAfterShown();

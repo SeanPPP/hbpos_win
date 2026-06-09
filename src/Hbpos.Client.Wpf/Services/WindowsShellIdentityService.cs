@@ -77,7 +77,7 @@ internal static class WindowsShellIdentityService
             return;
         }
 
-        // 无边框主窗口创建句柄后再显式推送大小图标，确保任务栏和 Alt+Tab 都使用 exe 内嵌 HB POS 图标。
+        // 无边框窗口创建句柄后显式推送大小图标，确保任务栏、标题栏和 Alt+Tab 都使用 exe 内嵌图标。
         if (largeIcons[0] != IntPtr.Zero)
         {
             SendMessage(hwnd, WmSetIcon, new IntPtr(IconBig), largeIcons[0]);
@@ -106,16 +106,17 @@ internal static class WindowsShellIdentityService
         string? entryAssemblyLocation,
         string baseDirectory)
     {
-        var assemblyExePath = GetAssemblyExePath(entryAssemblyLocation);
-        if (File.Exists(assemblyExePath))
-        {
-            return assemblyExePath;
-        }
-
+        // 图标必须优先绑定当前应用输出目录的 exe，避免 host-driven 启动时误用宿主或旧产物路径。
         var appExePath = Path.Combine(baseDirectory, ApplicationExecutableName);
         if (File.Exists(appExePath))
         {
             return appExePath;
+        }
+
+        var assemblyExePath = GetAssemblyExePath(entryAssemblyLocation);
+        if (File.Exists(assemblyExePath))
+        {
+            return assemblyExePath;
         }
 
         return processPath;
