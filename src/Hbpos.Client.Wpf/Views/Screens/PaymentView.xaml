@@ -54,18 +54,28 @@
             <Setter Property="FontSize" Value="44" />
         </Style>
 
+        <Style x:Key="PaymentMethodContentGridStyle" TargetType="Grid">
+            <Setter Property="Width" Value="280" />
+            <Setter Property="HorizontalAlignment" Value="Center" />
+            <Setter Property="VerticalAlignment" Value="Center" />
+        </Style>
+
         <Style x:Key="CashMethodButtonStyle" TargetType="Button" BasedOn="{StaticResource PosPaymentMethodButtonStyle}">
             <Setter Property="MinHeight" Value="74" />
             <Setter Property="Padding" Value="14,10" />
             <Setter Property="HorizontalContentAlignment" Value="Stretch" />
             <Setter Property="VerticalContentAlignment" Value="Center" />
-            <Setter Property="Background" Value="#FFFFF3E0" />
-            <Setter Property="BorderBrush" Value="{StaticResource PosAccentBrush}" />
-            <Setter Property="Foreground" Value="{StaticResource PosAccentBrush}" />
+            <Setter Property="Background" Value="#FFF59E0B" />
+            <Setter Property="BorderBrush" Value="#FFF59E0B" />
+            <Setter Property="Foreground" Value="White" />
             <Style.Triggers>
+                <Trigger Property="IsMouseOver" Value="True">
+                    <Setter Property="Background" Value="#FFD97706" />
+                    <Setter Property="BorderBrush" Value="#FFD97706" />
+                </Trigger>
                 <DataTrigger Binding="{Binding IsCashSelected}" Value="True">
-                    <Setter Property="Background" Value="{StaticResource PosAccentBrush}" />
-                    <Setter Property="BorderBrush" Value="{StaticResource PosAccentBrush}" />
+                    <Setter Property="Background" Value="#FFD97706" />
+                    <Setter Property="BorderBrush" Value="White" />
                     <Setter Property="Foreground" Value="White" />
                 </DataTrigger>
             </Style.Triggers>
@@ -76,13 +86,17 @@
             <Setter Property="Padding" Value="14,10" />
             <Setter Property="HorizontalContentAlignment" Value="Stretch" />
             <Setter Property="VerticalContentAlignment" Value="Center" />
-            <Setter Property="Background" Value="#FFE8F0FE" />
-            <Setter Property="BorderBrush" Value="{StaticResource PosPrimaryBrush}" />
-            <Setter Property="Foreground" Value="{StaticResource PosPrimaryBrush}" />
+            <Setter Property="Background" Value="#FF2563EB" />
+            <Setter Property="BorderBrush" Value="#FF2563EB" />
+            <Setter Property="Foreground" Value="White" />
             <Style.Triggers>
+                <Trigger Property="IsMouseOver" Value="True">
+                    <Setter Property="Background" Value="#FF1D4ED8" />
+                    <Setter Property="BorderBrush" Value="#FF1D4ED8" />
+                </Trigger>
                 <DataTrigger Binding="{Binding IsCardSelected}" Value="True">
-                    <Setter Property="Background" Value="{StaticResource PosPrimaryBrush}" />
-                    <Setter Property="BorderBrush" Value="{StaticResource PosPrimaryBrush}" />
+                    <Setter Property="Background" Value="#FF1D4ED8" />
+                    <Setter Property="BorderBrush" Value="White" />
                     <Setter Property="Foreground" Value="White" />
                 </DataTrigger>
             </Style.Triggers>
@@ -93,15 +107,35 @@
             <Setter Property="Padding" Value="14,10" />
             <Setter Property="HorizontalContentAlignment" Value="Stretch" />
             <Setter Property="VerticalContentAlignment" Value="Center" />
-            <Setter Property="Background" Value="#FFEAF7EF" />
-            <Setter Property="BorderBrush" Value="{StaticResource PosSuccessBrush}" />
-            <Setter Property="Foreground" Value="{StaticResource PosSuccessBrush}" />
+            <Setter Property="Background" Value="#FF16A34A" />
+            <Setter Property="BorderBrush" Value="#FF16A34A" />
+            <Setter Property="Foreground" Value="White" />
             <Style.Triggers>
+                <Trigger Property="IsMouseOver" Value="True">
+                    <Setter Property="Background" Value="#FF15803D" />
+                    <Setter Property="BorderBrush" Value="#FF15803D" />
+                </Trigger>
                 <DataTrigger Binding="{Binding IsVoucherSelected}" Value="True">
-                    <Setter Property="Background" Value="{StaticResource PosSuccessBrush}" />
-                    <Setter Property="BorderBrush" Value="{StaticResource PosSuccessBrush}" />
+                    <Setter Property="Background" Value="#FF15803D" />
+                    <Setter Property="BorderBrush" Value="White" />
                     <Setter Property="Foreground" Value="White" />
                 </DataTrigger>
+            </Style.Triggers>
+        </Style>
+
+        <Style x:Key="InstallmentMethodButtonStyle" TargetType="Button" BasedOn="{StaticResource PosPaymentMethodButtonStyle}">
+            <Setter Property="MinHeight" Value="74" />
+            <Setter Property="Padding" Value="14,10" />
+            <Setter Property="HorizontalContentAlignment" Value="Stretch" />
+            <Setter Property="VerticalContentAlignment" Value="Center" />
+            <Setter Property="Background" Value="#FF7C3AED" />
+            <Setter Property="BorderBrush" Value="#FF7C3AED" />
+            <Setter Property="Foreground" Value="White" />
+            <Style.Triggers>
+                <Trigger Property="IsMouseOver" Value="True">
+                    <Setter Property="Background" Value="#FF6D28D9" />
+                    <Setter Property="BorderBrush" Value="#FF6D28D9" />
+                </Trigger>
             </Style.Triggers>
         </Style>
     </UserControl.Resources>
@@ -457,33 +491,48 @@
                     </Style>
                 </StackPanel.Style>
                 <Button Command="{Binding SelectCashCommand}" Style="{StaticResource CashMethodButtonStyle}">
-                    <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
-                        <Border Width="46" Height="46" Margin="0,0,14,0" Background="#33FFFFFF" CornerRadius="10">
-                            <materialDesign:PackIcon Kind="Cash" Width="28" Height="28" HorizontalAlignment="Center" VerticalAlignment="Center" Foreground="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}" />
+                    <Grid Style="{StaticResource PaymentMethodContentGridStyle}">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="46" />
+                            <ColumnDefinition Width="14" />
+                            <ColumnDefinition Width="*" />
+                        </Grid.ColumnDefinitions>
+                        <Border Grid.Column="0" Width="46" Height="46" Background="#33FFFFFF" CornerRadius="10">
+                            <materialDesign:PackIcon Kind="Cash" Width="28" Height="28" HorizontalAlignment="Center" VerticalAlignment="Center" Foreground="White" />
                         </Border>
-                        <TextBlock Text="{Binding CashMethodText}" VerticalAlignment="Center" FontSize="17" FontWeight="Black" Foreground="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}" />
-                    </StackPanel>
+                        <TextBlock Grid.Column="2" Text="{Binding CashMethodText}" VerticalAlignment="Center" TextAlignment="Left" FontSize="17" FontWeight="Black" Foreground="White" />
+                    </Grid>
                 </Button>
                 <Button Command="{Binding SelectCardCommand}" Style="{StaticResource CardMethodButtonStyle}">
-                    <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
-                        <Border Width="46" Height="46" Margin="0,0,14,0" Background="#33FFFFFF" CornerRadius="10">
-                            <materialDesign:PackIcon Kind="CreditCard" Width="28" Height="28" Foreground="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}" HorizontalAlignment="Center" VerticalAlignment="Center" />
+                    <Grid Style="{StaticResource PaymentMethodContentGridStyle}">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="46" />
+                            <ColumnDefinition Width="14" />
+                            <ColumnDefinition Width="*" />
+                        </Grid.ColumnDefinitions>
+                        <Border Grid.Column="0" Width="46" Height="46" Background="#33FFFFFF" CornerRadius="10">
+                            <materialDesign:PackIcon Kind="CreditCard" Width="28" Height="28" Foreground="White" HorizontalAlignment="Center" VerticalAlignment="Center" />
                         </Border>
-                        <TextBlock Text="{Binding CardMethodText}" VerticalAlignment="Center" FontSize="17" FontWeight="Black" Foreground="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}" />
-                    </StackPanel>
+                        <TextBlock Grid.Column="2" Text="{Binding CardMethodText}" VerticalAlignment="Center" TextAlignment="Left" FontSize="17" FontWeight="Black" Foreground="White" />
+                    </Grid>
                 </Button>
                 <Button Command="{Binding SelectVoucherCommand}" Style="{StaticResource VoucherMethodButtonStyle}">
-                    <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
-                        <Border Width="46" Height="46" Margin="0,0,14,0" Background="#33FFFFFF" CornerRadius="10">
-                            <materialDesign:PackIcon Kind="TicketPercent" Width="28" Height="28" Foreground="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}" HorizontalAlignment="Center" VerticalAlignment="Center" />
+                    <Grid Style="{StaticResource PaymentMethodContentGridStyle}">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="46" />
+                            <ColumnDefinition Width="14" />
+                            <ColumnDefinition Width="*" />
+                        </Grid.ColumnDefinitions>
+                        <Border Grid.Column="0" Width="46" Height="46" Background="#33FFFFFF" CornerRadius="10">
+                            <materialDesign:PackIcon Kind="TicketPercent" Width="28" Height="28" Foreground="White" HorizontalAlignment="Center" VerticalAlignment="Center" />
                         </Border>
-                        <TextBlock Text="{Binding VoucherMethodText}" VerticalAlignment="Center" FontSize="17" FontWeight="Black" Foreground="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}" />
-                    </StackPanel>
+                        <TextBlock Grid.Column="2" Text="{Binding VoucherMethodText}" VerticalAlignment="Center" TextAlignment="Left" FontSize="17" FontWeight="Black" Foreground="White" />
+                    </Grid>
                 </Button>
                 <Button Command="{Binding ShowInstallmentCenterCommand}"
                         Margin="0,8,0,0">
                     <Button.Style>
-                        <Style TargetType="Button" BasedOn="{StaticResource CardMethodButtonStyle}">
+                        <Style TargetType="Button" BasedOn="{StaticResource InstallmentMethodButtonStyle}">
                             <Setter Property="Visibility" Value="Visible" />
                             <Style.Triggers>
                                 <DataTrigger Binding="{Binding IsInstallmentEntryVisible}" Value="False">
@@ -492,12 +541,17 @@
                             </Style.Triggers>
                         </Style>
                     </Button.Style>
-                    <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
-                        <Border Width="46" Height="46" Margin="0,0,14,0" Background="#33FFFFFF" CornerRadius="10">
-                            <materialDesign:PackIcon Kind="CalendarClock" Width="28" Height="28" Foreground="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}" HorizontalAlignment="Center" VerticalAlignment="Center" />
+                    <Grid Style="{StaticResource PaymentMethodContentGridStyle}">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="46" />
+                            <ColumnDefinition Width="14" />
+                            <ColumnDefinition Width="*" />
+                        </Grid.ColumnDefinitions>
+                        <Border Grid.Column="0" Width="46" Height="46" Background="#33FFFFFF" CornerRadius="10">
+                            <materialDesign:PackIcon Kind="CalendarClock" Width="28" Height="28" Foreground="White" HorizontalAlignment="Center" VerticalAlignment="Center" />
                         </Border>
-                        <TextBlock Text="{Binding InstallmentMethodText}" VerticalAlignment="Center" FontSize="17" FontWeight="Black" Foreground="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}" />
-                    </StackPanel>
+                        <TextBlock Grid.Column="2" Text="{Binding InstallmentMethodText}" VerticalAlignment="Center" TextAlignment="Left" FontSize="17" FontWeight="Black" Foreground="White" />
+                    </Grid>
                 </Button>
                 <TextBox Text="{Binding VoucherCodeText, UpdateSourceTrigger=PropertyChanged}"
                          materialDesign:HintAssist.Hint="{loc:Loc payment.voucher.code}"

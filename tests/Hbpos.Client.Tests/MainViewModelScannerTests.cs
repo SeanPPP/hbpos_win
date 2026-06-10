@@ -1,4 +1,4 @@
-﻿using System.Collections.Concurrent;
+using System.Collections.Concurrent;
 using System.Windows;
 using System.Globalization;
 using System.Reflection;
@@ -2057,7 +2057,7 @@ public sealed class MainViewModelScannerTests
         await InvokeRecoverCardPaymentAttemptAsync(viewModel, navigateToPaymentOnDraft: true);
         await InvokeRecoverCardPaymentAttemptAsync(viewModel, navigateToPaymentOnDraft: true);
 
-        Assert.Equal(2, recovery.CallCount);
+        Assert.Equal(1, recovery.CallCount);
     }
 
     [Fact]
@@ -2083,7 +2083,7 @@ public sealed class MainViewModelScannerTests
     }
 
     [Fact]
-    public async Task Card_payment_recovery_check_runs_again_when_opening_payment_with_non_empty_cart()
+    public async Task Card_payment_recovery_check_does_not_run_when_opening_payment_with_non_empty_cart()
     {
         var cart = new PosCartService();
         var recovery = new FakeCardPaymentRecoveryService(
@@ -2099,7 +2099,7 @@ public sealed class MainViewModelScannerTests
 
         viewModel.ShowCashPaymentCommand.Execute(null);
 
-        Assert.Equal(2, recovery.CallCount);
+        Assert.Equal(1, recovery.CallCount);
         Assert.Equal("Payment", viewModel.ActivePageTitleText);
     }
 
@@ -2141,6 +2141,7 @@ public sealed class MainViewModelScannerTests
     public async Task Card_payment_recovery_draft_restored_during_startup_keeps_pos_screen_and_surfaces_status()
     {
         var cart = new PosCartService();
+        cart.AddItem(CreateItem("1042", "SKU-CURRENT-PAYMENT", "930CURRENTPAYMENT"));
         var recovery = new FakeCardPaymentRecoveryService((recoveredCart, _, _) =>
         {
             // 模拟恢复服务在返回结果前已经把草稿购物车恢复到当前会话。
@@ -2203,9 +2204,10 @@ public sealed class MainViewModelScannerTests
     }
 
     [Fact]
-    public async Task Card_payment_recovery_draft_restored_when_opening_payment_navigates_to_payment_screen()
+    public async Task Card_payment_recovery_draft_restored_is_not_checked_when_opening_payment()
     {
         var cart = new PosCartService();
+        cart.AddItem(CreateItem("1042", "SKU-CURRENT-PAYMENT", "930CURRENTPAYMENT"));
         var recovery = new FakeCardPaymentRecoveryService((recoveredCart, _, _) =>
         {
             // 模拟恢复服务把待继续支付的购物车恢复回来，界面应直接收口到支付页。
@@ -2222,12 +2224,11 @@ public sealed class MainViewModelScannerTests
         await viewModel.InitializeAsync(new AppStartupOptions([], false, null, null));
 
         viewModel.ShowCashPaymentCommand.Execute(null);
-        await WaitUntilAsync(() => recovery.CallCount == 1 && ReferenceEquals(viewModel.CashPayment, viewModel.CurrentScreen));
 
         Assert.Same(viewModel.CashPayment, viewModel.CurrentScreen);
         Assert.True(viewModel.IsCashPaymentScreenActive);
         Assert.False(viewModel.IsPosTerminalScreenActive);
-        Assert.Equal("Recovered draft for payment.", viewModel.StatusMessage);
+        Assert.Equal(0, recovery.CallCount);
         Assert.Equal("Payment", viewModel.ActivePageTitleText);
         Assert.Single(cart.Lines);
     }

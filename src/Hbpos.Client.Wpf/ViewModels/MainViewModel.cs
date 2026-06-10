@@ -1,4 +1,4 @@
-﻿using System.Collections.ObjectModel;
+using System.Collections.ObjectModel;
 using System.Diagnostics;
 using System.Windows;
 using System.Windows.Threading;
@@ -1518,14 +1518,8 @@ public sealed partial class MainViewModel : ObservableObject
         }
     }
 
-    private async void ShowCashPayment()
+    private void ShowCashPayment()
     {
-        var recovered = await RecoverCardPaymentAttemptAsync(navigateToPaymentOnDraft: true);
-        if (recovered)
-        {
-            return;
-        }
-
         if (_cart.IsEmpty)
         {
             ShowPos();
