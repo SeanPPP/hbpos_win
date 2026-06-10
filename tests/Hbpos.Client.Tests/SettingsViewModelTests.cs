@@ -698,6 +698,35 @@ public sealed class SettingsViewModelTests
     }
 
     [Fact]
+    public async Task CloudBackendAsync_status_test_non_transaction_failure_does_not_request_failed_last_transaction_dialog()
+    {
+        var dialogService = new RecordingCardRecoveryResultDialogService();
+        var service = new FakeCardTerminalSetupService
+        {
+            LinklyCloudBackendStatusTestResult = new LinklyConnectionTestResult(
+                false,
+                "LOGON REQUIRED",
+                new LinklyStatusTestDetails(
+                    "status-session",
+                    new DateTimeOffset(2026, 6, 10, 9, 35, 0, TimeSpan.Zero),
+                    "91",
+                    "LOGON REQUIRED",
+                    null))
+        };
+        var viewModel = new SettingsViewModel(
+            service,
+            cardRecoveryResultDialogService: dialogService)
+        {
+            SelectedLinklyMode = LinklySettingsMode.CloudBackendAsync,
+            IsSandbox = true
+        };
+
+        await viewModel.TestLinklyTransactionStatusCommand.ExecuteAsync(null);
+
+        Assert.Empty(dialogService.RequestedDialogs);
+    }
+
+    [Fact]
     public async Task CloudBackendAsync_mode_reuses_credential_save_and_pair_commands()
     {
         var service = new FakeCardTerminalSetupService

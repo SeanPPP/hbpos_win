@@ -640,7 +640,7 @@ public sealed partial class SettingsViewModel : ObservableObject
     {
         if (result.Succeeded ||
             result.StatusTest is not { } status ||
-            !IsFailedLastTransactionStatus(status))
+            !IsFailedLastTransactionStatus(status, result.Message))
         {
             return;
         }
@@ -658,7 +658,7 @@ public sealed partial class SettingsViewModel : ObservableObject
             timestamp: status.Timestamp ?? DateTimeOffset.Now));
     }
 
-    private static bool IsFailedLastTransactionStatus(LinklyStatusTestDetails status)
+    private static bool IsFailedLastTransactionStatus(LinklyStatusTestDetails status, string? message)
     {
         var code = status.ResponseCode?.Trim();
         if (string.Equals(code, "00", StringComparison.OrdinalIgnoreCase) ||
@@ -667,9 +667,8 @@ public sealed partial class SettingsViewModel : ObservableObject
             return false;
         }
 
-        var text = status.ResponseText?.Trim();
-        return !string.IsNullOrWhiteSpace(code) ||
-            ContainsFailureText(text);
+        return ContainsFailureText(status.ResponseText) ||
+            ContainsFailureText(message);
     }
 
     private static bool ContainsFailureText(string? text)
