@@ -1,4 +1,4 @@
-using System.Text.Json;
+﻿using System.Text.Json;
 using Hbpos.Client.Wpf.Models;
 using Hbpos.Contracts.Linkly;
 using Hbpos.Contracts.Orders;
@@ -21,10 +21,19 @@ public sealed record CardPaymentRecoveryResult(
     LocalOrder? Order = null,
     decimal TenderedAmount = 0m,
     decimal ChangeAmount = 0m,
-    PosSessionState? UpdatedSession = null)
+    PosSessionState? UpdatedSession = null,
+    CardPaymentRecoveryDialogDetails? DialogDetails = null)
 {
     public static CardPaymentRecoveryResult None { get; } = new(CardPaymentRecoveryOutcome.None, string.Empty);
 }
+
+public sealed record CardPaymentRecoveryDialogDetails(
+    string? SessionId,
+    string? TxnRef,
+    string? ResponseCode,
+    string? ResponseText,
+    decimal? Amount,
+    DateTimeOffset Timestamp);
 
 public interface ICardPaymentRecoveryService
 {
@@ -77,7 +86,8 @@ public sealed class CardPaymentRecoveryService(
             LogRecoveryResult(settings, attempt, null, CardPaymentRecoveryOutcome.Unknown, "requires-review");
             return new CardPaymentRecoveryResult(
                 CardPaymentRecoveryOutcome.Unknown,
-                "上一笔刷卡金额与订单金额不一致。请主管确认 Linkly 后台状态后处理。");
+                "上一笔刷卡金额与订单金额不一致。请主管确认 Linkly 后台状态后处理。",
+                DialogDetails: BuildDialogDetails(attempt));
         }
 
         if (attempt.Status == LocalCardPaymentAttemptStatus.OrderCompleted &&
@@ -102,7 +112,7 @@ public sealed class CardPaymentRecoveryService(
                 ? await backendTerminalClient.GetSessionStatusAsync(settings, attempt.SessionId!, cancellationToken)
                 : await backendTerminalClient.GetResumableSessionAsync(settings, cancellationToken);
 
-            // 有 SessionId 但后端 session 已过期/清理，兜底尝试 Resumable
+            // 鏈?SessionId 浣嗗悗绔?session 宸茶繃鏈?娓呯悊锛屽厹搴曞皾璇?Resumable
             if (!statusFromResumable && status is null)
             {
                 ConsoleLog.Write(
@@ -133,7 +143,8 @@ public sealed class CardPaymentRecoveryService(
             LogRecoveryResult(settings, attempt, status, CardPaymentRecoveryOutcome.Unknown, "status-query-failed", ex.GetType().Name);
             return new CardPaymentRecoveryResult(
                 CardPaymentRecoveryOutcome.Unknown,
-                "无法确认上一笔刷卡结果。请联系主管确认 Linkly 后台状态后再继续。");
+                "无法确认上一笔刷卡结果。请联系主管确认 Linkly 后台状态后再继续。",
+                DialogDetails: BuildDialogDetails(attempt, status));
         }
 
         if (status is null)
@@ -156,7 +167,8 @@ public sealed class CardPaymentRecoveryService(
             LogRecoveryResult(settings, attempt, status, CardPaymentRecoveryOutcome.Unknown, mismatchReason);
             return new CardPaymentRecoveryResult(
                 CardPaymentRecoveryOutcome.Unknown,
-                "无法确认上一笔刷卡结果。请联系主管确认 Linkly 后台状态后再继续。");
+                "无法确认上一笔刷卡结果。请联系主管确认 Linkly 后台状态后再继续。",
+                DialogDetails: BuildDialogDetails(attempt, status));
         }
 
         if (!cart.IsEmpty)
@@ -165,11 +177,12 @@ public sealed class CardPaymentRecoveryService(
                 "CardRecovery",
                 $"recover deferred current-cart-not-empty attemptGuid={attempt.AttemptGuid} sessionId={LogValue(attempt.SessionId)} statusSessionId={LogValue(status.SessionId)} outcome={status.Status}");
             LogRecoveryResult(settings, attempt, status, CardPaymentRecoveryOutcome.Unknown, "current-cart-not-empty");
-            // 已补绑 session 的恢复项仍需保持 Recovering，避免用户清空购物车后无法再次恢复。
+            // 宸茶ˉ缁?session 鐨勬仮澶嶉」浠嶉渶淇濇寔 Recovering锛岄伩鍏嶇敤鎴锋竻绌鸿喘鐗╄溅鍚庢棤娉曞啀娆℃仮澶嶃€?
             await attemptRepository.MarkRecoveringAsync(attempt.AttemptGuid, DateTimeOffset.UtcNow, cancellationToken);
             return new CardPaymentRecoveryResult(
                 CardPaymentRecoveryOutcome.Unknown,
-                "检测到上一笔刷卡结果需要处理，但当前购物车已有商品。请先完成或清空当前购物车后再恢复上一笔订单。");
+                "检测到上一笔刷卡结果需要处理，但当前购物车已有商品。请先完成或清空当前购物车后再恢复上一笔订单。",
+                DialogDetails: BuildDialogDetails(attempt, status));
         }
 
         if (IsApproved(status))
@@ -195,13 +208,15 @@ public sealed class CardPaymentRecoveryService(
             LogRecoveryResult(settings, attempt, status, CardPaymentRecoveryOutcome.DraftRestored, "declined-or-failed");
             return new CardPaymentRecoveryResult(
                 CardPaymentRecoveryOutcome.DraftRestored,
-                $"上一笔刷卡失败：{reason}。订单已恢复，请重新选择付款方式。");
+                $"上一笔刷卡失败：{reason}。订单已恢复，请重新选择付款方式。",
+                DialogDetails: BuildDialogDetails(attempt, status));
         }
 
         LogRecoveryResult(settings, attempt, status, CardPaymentRecoveryOutcome.Unknown, "unhandled-final-status");
         return new CardPaymentRecoveryResult(
             CardPaymentRecoveryOutcome.Unknown,
-            "无法确认上一笔刷卡结果。请联系主管确认 Linkly 后台状态后再继续。");
+            "无法确认上一笔刷卡结果。请联系主管确认 Linkly 后台状态后再继续。",
+            DialogDetails: BuildDialogDetails(attempt, status));
     }
 
     private async Task<CardPaymentRecoveryResult> CompleteApprovedAttemptAsync(
@@ -258,7 +273,21 @@ public sealed class CardPaymentRecoveryService(
             order,
             tenders.Sum(tender => tender.Amount),
             checkoutResult.ChangeAmount,
-            currentSession with { PendingSyncCount = pendingSyncCount });
+            currentSession with { PendingSyncCount = pendingSyncCount },
+            BuildDialogDetails(attempt, status));
+    }
+
+    private static CardPaymentRecoveryDialogDetails BuildDialogDetails(
+        LocalCardPaymentAttempt attempt,
+        LinklyCloudBackendSessionResponse? status = null)
+    {
+        return new CardPaymentRecoveryDialogDetails(
+            NormalizeOptional(status?.SessionId) ?? NormalizeOptional(attempt.SessionId),
+            NormalizeOptional(status?.TxnRef) ?? NormalizeOptional(attempt.TxnRef),
+            status?.ResponseCode,
+            status?.ResponseText,
+            attempt.Amount,
+            DateTimeOffset.Now);
     }
 
     private async Task RetryCompletedAttemptAcknowledgeAsync(
@@ -287,7 +316,7 @@ public sealed class CardPaymentRecoveryService(
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
-            // 本地订单/草稿恢复已经完成，ack 失败只影响 backend 清理，不能阻断启动体验。
+            // 鏈湴璁㈠崟/鑽夌鎭㈠宸茬粡瀹屾垚锛宎ck 澶辫触鍙奖鍝?backend 娓呯悊锛屼笉鑳介樆鏂惎鍔ㄤ綋楠屻€?
             ConsoleLog.Write(
                 "CardRecovery",
                 $"recover acknowledge failed attemptGuid={attempt.AttemptGuid} sessionId={LogValue(sessionId)} txnRef={LogValue(txnRef)} error={ex.GetType().Name}");
@@ -425,7 +454,7 @@ public sealed class CardPaymentRecoveryService(
         }
         else if (attemptSessionId is null)
         {
-            // 本地没有 sessionId 时只能通过 txnRef 绑定 backend resumable，缺失则不能自动处理。
+            // 鏈湴娌℃湁 sessionId 鏃跺彧鑳介€氳繃 txnRef 缁戝畾 backend resumable锛岀己澶卞垯涓嶈兘鑷姩澶勭悊銆?
             mismatchReason = "missing-recoverable-binding";
             return false;
         }

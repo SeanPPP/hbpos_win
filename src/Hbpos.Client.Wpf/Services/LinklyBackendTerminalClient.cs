@@ -173,7 +173,15 @@ public sealed class LinklyBackendTerminalClient(
             }
 
             var result = ReadStatusTestResult(content);
-            return new LinklyConnectionTestResult(result.Succeeded, result.Message);
+            return new LinklyConnectionTestResult(
+                result.Succeeded,
+                result.Message,
+                new LinklyStatusTestDetails(
+                    result.TransactionReference,
+                    result.RequestedAt,
+                    result.ResponseCode,
+                    result.ResponseText,
+                    result.ResponseTxnRef));
         }
         catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException)
         {

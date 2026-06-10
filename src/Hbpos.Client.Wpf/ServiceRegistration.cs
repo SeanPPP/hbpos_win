@@ -185,6 +185,7 @@ public static class ServiceRegistration
         services.AddSingleton<IUserFeedbackService, WindowsMessageBeepUserFeedbackService>();
         services.AddSingleton<IApplicationExitService, WpfApplicationExitService>();
         services.AddSingleton<IConfirmationDialogService, WpfConfirmationDialogService>();
+        services.AddSingleton<ICardRecoveryResultDialogService, CardRecoveryResultDialogService>();
         services.AddSingleton<WpfLinklyTerminalDialogService>();
         services.AddSingleton<ILinklyTerminalDialogService>(sp => sp.GetRequiredService<WpfLinklyTerminalDialogService>());
         services.AddSingleton<ILinklyTerminalDialogPresenter>(sp => sp.GetRequiredService<WpfLinklyTerminalDialogService>());
@@ -249,7 +250,8 @@ public static class ServiceRegistration
             installmentOrderService: sp.GetRequiredService<IInstallmentOrderService>(),
             testSalesDataResetService: sp.GetRequiredService<ITestSalesDataResetService>(),
             linklyTerminalDialogPresenter: sp.GetRequiredService<ILinklyTerminalDialogPresenter>(),
-            cardPaymentRecoveryService: sp.GetRequiredService<ICardPaymentRecoveryService>()));
+            cardPaymentRecoveryService: sp.GetRequiredService<ICardPaymentRecoveryService>(),
+            cardRecoveryResultDialogService: sp.GetRequiredService<ICardRecoveryResultDialogService>()));
         services.AddSingleton<MainWindow>();
 
         return services;

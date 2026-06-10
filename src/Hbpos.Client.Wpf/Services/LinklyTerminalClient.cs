@@ -35,7 +35,17 @@ public interface ILinklyTerminalClient
         CancellationToken cancellationToken = default);
 }
 
-public sealed record LinklyConnectionTestResult(bool Succeeded, string? Message = null);
+public sealed record LinklyStatusTestDetails(
+    string? TransactionReference,
+    DateTimeOffset? Timestamp,
+    string? ResponseCode,
+    string? ResponseText,
+    string? TxnRef);
+
+public sealed record LinklyConnectionTestResult(
+    bool Succeeded,
+    string? Message = null,
+    LinklyStatusTestDetails? StatusTest = null);
 
 public interface ILinklyEftClientFactory
 {

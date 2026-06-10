@@ -67,6 +67,7 @@ public sealed partial class MainViewModel : ObservableObject
     private readonly ITestSalesDataResetService? _testSalesDataResetService;
     private readonly ILinklyTerminalDialogPresenter? _linklyTerminalDialogPresenter;
     private readonly ICardPaymentRecoveryService? _cardPaymentRecoveryService;
+    private readonly ICardRecoveryResultDialogService? _cardRecoveryResultDialogService;
     private readonly PosTerminalWorkflowFactory _posTerminalWorkflowFactory;
     private readonly DispatcherTimer _clockTimer = new() { Interval = TimeSpan.FromSeconds(1) };
     private readonly DispatcherTimer _connectivityTimer = new() { Interval = TimeSpan.FromSeconds(30) };
@@ -82,6 +83,7 @@ public sealed partial class MainViewModel : ObservableObject
     private Task? _deviceRegistrationStoreLoadTask;
     private Task? _posPostShowStartupTask;
     private Task<CardPaymentRecoveryResult>? _cardPaymentRecoveryTask;
+    private ReceiptDetails? _cardRecoveryDialogReceipt;
     private bool _customerDisplayPrewarmed;
     private Task<IReadOnlyList<SellableItemDto>>? _startupCatalogIndexLoadTask;
     private AppStartupOptions? _startupOptions;
@@ -142,6 +144,12 @@ public sealed partial class MainViewModel : ObservableObject
 
     [ObservableProperty]
     private bool _isDeviceReregistrationDialogOpen;
+
+    [ObservableProperty]
+    private bool _isCardRecoveryResultDialogOpen;
+
+    [ObservableProperty]
+    private CardRecoveryResultDialogViewModel? _cardRecoveryResultDialog;
 
     [ObservableProperty]
     private bool _isCustomerDisplayOpen;
@@ -297,7 +305,8 @@ public sealed partial class MainViewModel : ObservableObject
         IInstallmentOrderService? installmentOrderService = null,
         ITestSalesDataResetService? testSalesDataResetService = null,
         ILinklyTerminalDialogPresenter? linklyTerminalDialogPresenter = null,
-        ICardPaymentRecoveryService? cardPaymentRecoveryService = null)
+        ICardPaymentRecoveryService? cardPaymentRecoveryService = null,
+        ICardRecoveryResultDialogService? cardRecoveryResultDialogService = null)
     {
         _priceIndex = priceIndex;
         _cart = cart;
@@ -345,6 +354,7 @@ public sealed partial class MainViewModel : ObservableObject
         _testSalesDataResetService = testSalesDataResetService;
         _linklyTerminalDialogPresenter = linklyTerminalDialogPresenter;
         _cardPaymentRecoveryService = cardPaymentRecoveryService;
+        _cardRecoveryResultDialogService = cardRecoveryResultDialogService;
         _posTerminalWorkflowFactory = posTerminalWorkflowFactory;
 
         PaymentSuccess = new PaymentSuccessViewModel(
@@ -371,6 +381,13 @@ public sealed partial class MainViewModel : ObservableObject
         ShowCustomerDisplayFullscreenCommand = new RelayCommand(ShowCustomerDisplayFullscreen);
         ToggleCultureCommand = new AsyncRelayCommand(ToggleCultureAsync);
         ResetScannerBindingCommand = new AsyncRelayCommand(ResetScannerBindingAsync);
+        CloseCardRecoveryResultDialogCommand = new RelayCommand(CloseCardRecoveryResultDialog);
+        PrintRecoveredReceiptCommand = new AsyncRelayCommand(PrintRecoveredReceiptAsync, CanPrintRecoveredReceipt);
+
+        if (_cardRecoveryResultDialogService is not null)
+        {
+            _cardRecoveryResultDialogService.DialogRequested += OnCardRecoveryResultDialogRequested;
+        }
 
         _cart.CartChanged += OnCartChanged;
         _localization.CultureChanged += OnCultureChanged;
@@ -427,6 +444,10 @@ public sealed partial class MainViewModel : ObservableObject
     public ObservableCollection<SyncQueueListItem> SyncCenterOrders { get; } = [];
 
     public IRelayCommand ShowPosCommand { get; }
+
+    public IRelayCommand CloseCardRecoveryResultDialogCommand { get; }
+
+    public IAsyncRelayCommand PrintRecoveredReceiptCommand { get; }
 
     public IRelayCommand ShowCashPaymentCommand { get; }
 
@@ -1575,7 +1596,8 @@ public sealed partial class MainViewModel : ObservableObject
             await PaymentSuccess.LoadFromOrderAsync(result.Order);
             CurrentScreen = PaymentSuccess;
             LogRecoveredCardOrderCompleted(result.Order);
-            await PrintRecoveredCardReceiptAsync(result.Order);
+            var printResult = await PrintRecoveredCardReceiptAsync(result.Order);
+            await ShowRecoveredCardOrderDialogAsync(result, printResult);
             ShowCashPaymentCommand.NotifyCanExecuteChanged();
             return true;
         }
@@ -1592,13 +1614,19 @@ public sealed partial class MainViewModel : ObservableObject
                 CurrentScreen = CashPayment;
             }
 
+            ShowRecoveredCardDraftDialog(result);
             return true;
+        }
+
+        if (result.Outcome == CardPaymentRecoveryOutcome.Unknown)
+        {
+            ShowRecoveredCardFailureDialog(result);
         }
 
         return false;
     }
 
-    private async Task PrintRecoveredCardReceiptAsync(LocalOrder order)
+    private async Task<ReceiptPrintResult> PrintRecoveredCardReceiptAsync(LocalOrder order)
     {
         var evidence = GetCardRecoveryEvidence(order);
         LinklyJsonLog.Write(
@@ -1650,6 +1678,155 @@ public sealed partial class MainViewModel : ObservableObject
                 evidence.SessionId,
                 reason = "4.1.3"
             });
+        return printResult;
+    }
+
+    private async Task ShowRecoveredCardOrderDialogAsync(
+        CardPaymentRecoveryResult result,
+        ReceiptPrintResult printResult)
+    {
+        if (result.Order is null)
+        {
+            return;
+        }
+
+        var receipt = ReceiptQueryService.CreateReceipt(result.Order);
+        _cardRecoveryDialogReceipt = receipt;
+        var previewRows = await BuildReceiptPreviewRowsAsync(receipt);
+        var details = result.DialogDetails;
+        var printMessage = printResult.Succeeded
+            ? "小票已自动打印。可在此预览并按需重新打印。"
+            : $"订单已恢复，但自动打印失败：{printResult.Message}。请检查打印机后点击打印。";
+
+        ShowCardRecoveryResultDialog(new CardRecoveryResultDialogViewModel(
+            "刷卡交易已恢复成功",
+            printMessage,
+            printResult.Succeeded ? CardRecoveryResultSeverity.Success : CardRecoveryResultSeverity.Warning,
+            result.Order.OrderGuid,
+            result.Order.ActualAmount,
+            details?.SessionId ?? GetCardRecoveryEvidence(result.Order).SessionId,
+            details?.TxnRef ?? GetCardRecoveryEvidence(result.Order).TxnRef,
+            details?.ResponseCode ?? GetCardRecoveryResponseCode(result.Order),
+            details?.ResponseText ?? GetCardRecoveryResponseText(result.Order),
+            details?.Timestamp ?? DateTimeOffset.Now,
+            previewRows,
+            canPrintReceipt: true,
+            printButtonText: "打印小票"));
+    }
+
+    private void ShowRecoveredCardDraftDialog(CardPaymentRecoveryResult result)
+    {
+        var details = result.DialogDetails;
+        ShowCardRecoveryResultDialog(new CardRecoveryResultDialogViewModel(
+            "上一笔刷卡未完成",
+            string.IsNullOrWhiteSpace(result.Message)
+                ? "购物车已恢复，请重新确认付款。"
+                : result.Message,
+            CardRecoveryResultSeverity.Warning,
+            orderGuid: null,
+            amount: details?.Amount,
+            sessionId: details?.SessionId,
+            txnRef: details?.TxnRef,
+            responseCode: details?.ResponseCode,
+            responseText: details?.ResponseText,
+            timestamp: details?.Timestamp ?? DateTimeOffset.Now));
+    }
+
+    private void ShowRecoveredCardFailureDialog(CardPaymentRecoveryResult result)
+    {
+        var details = result.DialogDetails;
+        ShowCardRecoveryResultDialog(new CardRecoveryResultDialogViewModel(
+            "上一笔刷卡未成功",
+            string.IsNullOrWhiteSpace(result.Message)
+                ? "已确认终端结果，请按提示人工处理。"
+                : result.Message,
+            CardRecoveryResultSeverity.Error,
+            orderGuid: null,
+            amount: details?.Amount,
+            sessionId: details?.SessionId,
+            txnRef: details?.TxnRef,
+            responseCode: details?.ResponseCode,
+            responseText: details?.ResponseText,
+            timestamp: details?.Timestamp ?? DateTimeOffset.Now));
+    }
+
+    private void OnCardRecoveryResultDialogRequested(object? sender, CardRecoveryResultDialogViewModel dialog)
+    {
+        ShowCardRecoveryResultDialog(dialog);
+    }
+
+    private void ShowCardRecoveryResultDialog(CardRecoveryResultDialogViewModel dialog)
+    {
+        CardRecoveryResultDialog = dialog;
+        IsCardRecoveryResultDialogOpen = true;
+        PrintRecoveredReceiptCommand.NotifyCanExecuteChanged();
+    }
+
+    private void CloseCardRecoveryResultDialog()
+    {
+        IsCardRecoveryResultDialogOpen = false;
+        CardRecoveryResultDialog = null;
+        _cardRecoveryDialogReceipt = null;
+        PrintRecoveredReceiptCommand.NotifyCanExecuteChanged();
+    }
+
+    private bool CanPrintRecoveredReceipt()
+    {
+        return CardRecoveryResultDialog?.CanPrintReceipt == true &&
+            _cardRecoveryDialogReceipt is not null;
+    }
+
+    private async Task PrintRecoveredReceiptAsync()
+    {
+        if (_cardRecoveryDialogReceipt is null)
+        {
+            return;
+        }
+
+        await PrintReceiptAsync(_cardRecoveryDialogReceipt, ReceiptPrintReason.CardAuto);
+    }
+
+    private async Task<IReadOnlyList<ReceiptPreviewRow>> BuildReceiptPreviewRowsAsync(ReceiptDetails receipt)
+    {
+        var settings = ReceiptPrinterSettings.Default;
+        if (_receiptPrinterSettingsStore is not null)
+        {
+            try
+            {
+                settings = await _receiptPrinterSettingsStore.LoadAsync();
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                settings = ReceiptPrinterSettings.Default;
+            }
+        }
+
+        try
+        {
+            return _receiptTextFormatter.Build(receipt, settings, receipt.SoldAt).PreviewRows;
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            return [];
+        }
+    }
+
+    private static string? GetCardRecoveryResponseCode(LocalOrder order)
+    {
+        return order.Payments
+            .FirstOrDefault(payment => payment.Method == PaymentMethodKind.Card)?
+            .CardTransactions?
+            .FirstOrDefault()?
+            .ResponseCode;
+    }
+
+    private static string? GetCardRecoveryResponseText(LocalOrder order)
+    {
+        return order.Payments
+            .FirstOrDefault(payment => payment.Method == PaymentMethodKind.Card)?
+            .CardTransactions?
+            .FirstOrDefault()?
+            .ResponseText;
     }
 
     private static void LogRecoveredCardOrderCompleted(LocalOrder order)
@@ -1852,7 +2029,8 @@ public sealed partial class MainViewModel : ObservableObject
             _receiptPrinterSettingsStore,
             _receiptPrintService,
             resetTestSalesDataAsync: resetTestSalesDataAsync,
-            confirmResetTestSalesData: confirmResetTestSalesData);
+            confirmResetTestSalesData: confirmResetTestSalesData,
+            cardRecoveryResultDialogService: _cardRecoveryResultDialogService);
         await Settings.LoadAsync();
         CurrentScreen = Settings;
     }

@@ -36,6 +36,7 @@ public sealed partial class SettingsViewModel : ObservableObject
     private readonly Action? _returnToPos;
     private readonly IReceiptPrinterSettingsStore? _receiptPrinterSettingsStore;
     private readonly IReceiptPrintService? _receiptPrintService;
+    private readonly ICardRecoveryResultDialogService? _cardRecoveryResultDialogService;
     private CardTerminalConfiguration _loadedConfiguration = CardTerminalConfiguration.Default;
     private string? _savedSquareLocationId;
     private string? _savedSquareDeviceId;
@@ -146,7 +147,8 @@ public sealed partial class SettingsViewModel : ObservableObject
         IReceiptPrinterSettingsStore? receiptPrinterSettingsStore = null,
         IReceiptPrintService? receiptPrintService = null,
         Func<CancellationToken, Task>? resetTestSalesDataAsync = null,
-        Func<bool>? confirmResetTestSalesData = null)
+        Func<bool>? confirmResetTestSalesData = null,
+        ICardRecoveryResultDialogService? cardRecoveryResultDialogService = null)
     {
         _setupService = setupService;
         _localization = localization;
@@ -158,6 +160,7 @@ public sealed partial class SettingsViewModel : ObservableObject
         _returnToPos = returnToPos;
         _receiptPrinterSettingsStore = receiptPrinterSettingsStore;
         _receiptPrintService = receiptPrintService;
+        _cardRecoveryResultDialogService = cardRecoveryResultDialogService;
         if (_localization is not null)
         {
             _localization.CultureChanged += (_, _) => RaiseLocalizedProperties();
@@ -622,6 +625,7 @@ public sealed partial class SettingsViewModel : ObservableObject
                     SetLinklyTestStatusOverride(result.Message);
                     SetStatusOverride(result.Message);
                 }
+
             }
             catch (Exception ex)
             {
@@ -630,6 +634,51 @@ public sealed partial class SettingsViewModel : ObservableObject
                 throw;
             }
         });
+    }
+
+    private void ShowFailedLastTransactionDialogIfNeeded(LinklyConnectionTestResult result)
+    {
+        if (result.Succeeded ||
+            result.StatusTest is not { } status ||
+            !IsFailedLastTransactionStatus(status))
+        {
+            return;
+        }
+
+        _cardRecoveryResultDialogService?.Show(new CardRecoveryResultDialogViewModel(
+            "上一笔刷卡交易未成功",
+            "已完成不带 TxnRef 的 Transaction Status 查询，终端返回上一笔交易未成功。请按认证表记录 TxnRef、时间和响应码。",
+            CardRecoveryResultSeverity.Warning,
+            orderGuid: null,
+            amount: null,
+            sessionId: status.TransactionReference,
+            txnRef: status.TxnRef,
+            responseCode: status.ResponseCode,
+            responseText: status.ResponseText ?? result.Message,
+            timestamp: status.Timestamp ?? DateTimeOffset.Now));
+    }
+
+    private static bool IsFailedLastTransactionStatus(LinklyStatusTestDetails status)
+    {
+        var code = status.ResponseCode?.Trim();
+        if (string.Equals(code, "00", StringComparison.OrdinalIgnoreCase) ||
+            string.Equals(code, "T0", StringComparison.OrdinalIgnoreCase))
+        {
+            return false;
+        }
+
+        var text = status.ResponseText?.Trim();
+        return !string.IsNullOrWhiteSpace(code) ||
+            ContainsFailureText(text);
+    }
+
+    private static bool ContainsFailureText(string? text)
+    {
+        return !string.IsNullOrWhiteSpace(text) &&
+            (text.Contains("DECLINED", StringComparison.OrdinalIgnoreCase) ||
+             text.Contains("TIMEOUT", StringComparison.OrdinalIgnoreCase) ||
+             text.Contains("CANCELLED", StringComparison.OrdinalIgnoreCase) ||
+             text.Contains("FAILED", StringComparison.OrdinalIgnoreCase));
     }
 
     private async Task TestLinklyTransactionStatusAsync()
@@ -653,6 +702,8 @@ public sealed partial class SettingsViewModel : ObservableObject
                     SetLinklyTestStatusOverride(result.Message);
                     SetStatusOverride(result.Message);
                 }
+
+                ShowFailedLastTransactionDialogIfNeeded(result);
             }
             catch (Exception ex)
             {

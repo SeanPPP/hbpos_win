@@ -663,6 +663,41 @@ public sealed class SettingsViewModelTests
     }
 
     [Fact]
+    public async Task CloudBackendAsync_status_test_failed_last_transaction_requests_friendly_dialog()
+    {
+        var dialogService = new RecordingCardRecoveryResultDialogService();
+        var service = new FakeCardTerminalSetupService
+        {
+            LinklyCloudBackendStatusTestResult = new LinklyConnectionTestResult(
+                false,
+                "OPERATOR TIMEOUT",
+                new LinklyStatusTestDetails(
+                    "session-last",
+                    new DateTimeOffset(2026, 6, 10, 9, 30, 0, TimeSpan.Zero),
+                    "TM",
+                    "OPERATOR TIMEOUT",
+                    "txn-last"))
+        };
+        var viewModel = new SettingsViewModel(
+            service,
+            cardRecoveryResultDialogService: dialogService)
+        {
+            SelectedLinklyMode = LinklySettingsMode.CloudBackendAsync,
+            IsSandbox = true
+        };
+
+        await viewModel.TestLinklyTransactionStatusCommand.ExecuteAsync(null);
+
+        var dialog = Assert.Single(dialogService.RequestedDialogs);
+        Assert.Equal("上一笔刷卡交易未成功", dialog.Title);
+        Assert.Equal("session-last", dialog.SessionId);
+        Assert.Equal("txn-last", dialog.TxnRef);
+        Assert.Equal("TM", dialog.ResponseCode);
+        Assert.Equal("OPERATOR TIMEOUT", dialog.ResponseText);
+        Assert.False(dialog.CanPrintReceipt);
+    }
+
+    [Fact]
     public async Task CloudBackendAsync_mode_reuses_credential_save_and_pair_commands()
     {
         var service = new FakeCardTerminalSetupService
@@ -1562,6 +1597,19 @@ public sealed class SettingsViewModelTests
         {
             TestCallCount++;
             return Task.FromResult(TestResult);
+        }
+    }
+
+    private sealed class RecordingCardRecoveryResultDialogService : ICardRecoveryResultDialogService
+    {
+        public event EventHandler<CardRecoveryResultDialogViewModel>? DialogRequested;
+
+        public List<CardRecoveryResultDialogViewModel> RequestedDialogs { get; } = [];
+
+        public void Show(CardRecoveryResultDialogViewModel dialog)
+        {
+            RequestedDialogs.Add(dialog);
+            DialogRequested?.Invoke(this, dialog);
         }
     }
 }

@@ -2126,6 +2126,15 @@ public sealed class MainViewModelScannerTests
         var call = Assert.Single(printService.Calls);
         Assert.Equal(order.OrderGuid, call.OrderGuid);
         Assert.Equal(ReceiptPrintReason.CardAuto, call.Reason);
+        Assert.True(viewModel.IsCardRecoveryResultDialogOpen);
+        Assert.NotNull(viewModel.CardRecoveryResultDialog);
+        Assert.Equal("刷卡交易已恢复成功", viewModel.CardRecoveryResultDialog!.Title);
+        Assert.True(viewModel.CardRecoveryResultDialog.CanPrintReceipt);
+        Assert.True(viewModel.CardRecoveryResultDialog.HasReceiptPreview);
+
+        await viewModel.PrintRecoveredReceiptCommand.ExecuteAsync(null);
+        await WaitUntilAsync(() => printService.Calls.Count == 2);
+        Assert.Equal(ReceiptPrintReason.CardAuto, printService.Calls[1].Reason);
     }
 
     [Fact]
@@ -2155,6 +2164,42 @@ public sealed class MainViewModelScannerTests
         Assert.False(viewModel.IsCashPaymentScreenActive);
         Assert.Equal("Recovered draft during startup.", viewModel.StatusMessage);
         Assert.Single(cart.Lines);
+        Assert.True(viewModel.IsCardRecoveryResultDialogOpen);
+        Assert.NotNull(viewModel.CardRecoveryResultDialog);
+        Assert.Equal("上一笔刷卡未完成", viewModel.CardRecoveryResultDialog!.Title);
+        Assert.False(viewModel.CardRecoveryResultDialog.CanPrintReceipt);
+    }
+
+    [Fact]
+    public async Task Card_payment_recovery_unknown_result_opens_failure_dialog_without_print_button()
+    {
+        var recovery = new FakeCardPaymentRecoveryService(
+            Task.FromResult(new CardPaymentRecoveryResult(
+                CardPaymentRecoveryOutcome.Unknown,
+                "Manual review required.",
+                DialogDetails: new CardPaymentRecoveryDialogDetails(
+                    "session-review",
+                    "txn-review",
+                    "TM",
+                    "OPERATOR TIMEOUT",
+                    1.25m,
+                    new DateTimeOffset(2026, 6, 10, 9, 45, 0, TimeSpan.Zero)))));
+        var viewModel = CreateAuthorizedMainViewModel(
+            new FakeCustomerDisplayWindowService(),
+            cardPaymentRecoveryService: recovery);
+
+        await viewModel.InitializeAsync(new AppStartupOptions([], false, null, null));
+        var recovered = await InvokeRecoverCardPaymentAttemptAsync(viewModel, navigateToPaymentOnDraft: false);
+
+        Assert.False(recovered);
+        Assert.True(viewModel.IsCardRecoveryResultDialogOpen);
+        var dialog = viewModel.CardRecoveryResultDialog;
+        Assert.NotNull(dialog);
+        Assert.Equal("上一笔刷卡未成功", dialog.Title);
+        Assert.Equal("session-review", dialog.SessionId);
+        Assert.Equal("txn-review", dialog.TxnRef);
+        Assert.Equal("TM", dialog.ResponseCode);
+        Assert.False(dialog.CanPrintReceipt);
     }
 
     [Fact]
