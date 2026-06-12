@@ -206,6 +206,22 @@
   <data name="payment.card.squareInvalidResponse" xml:space="preserve"><value>Square terminal returned an invalid response.</value></data>
   <data name="payment.card.squareRefundMissingReference" xml:space="preserve"><value>Square refund requires an original Square payment reference.</value></data>
   <data name="payment.card.squareRefundStatus" xml:space="preserve"><value>Square refund status is {0}.</value></data>
+  <data name="payment.card.error.overlay.connectionFailed.title" xml:space="preserve"><value>Card Terminal Connection Failed</value></data>
+  <data name="payment.card.error.overlay.connectionFailed.message" xml:space="preserve"><value>Unable to connect to the card terminal. Please check the terminal's power and network connection, then try again.</value></data>
+  <data name="payment.card.error.overlay.cloudCommunicationFailed.title" xml:space="preserve"><value>Cloud Card Communication Failed</value></data>
+  <data name="payment.card.error.overlay.cloudCommunicationFailed.message" xml:space="preserve"><value>Communication with the cloud card service failed. Please check your network and try again.</value></data>
+  <data name="payment.card.error.overlay.timeout.title" xml:space="preserve"><value>Card Transaction Timed Out</value></data>
+  <data name="payment.card.error.overlay.timeout.message" xml:space="preserve"><value>The card transaction timed out. Please check the terminal status and try again.</value></data>
+  <data name="payment.card.error.overlay.squareCommunicationFailed.title" xml:space="preserve"><value>Square Terminal Communication Failed</value></data>
+  <data name="payment.card.error.overlay.squareCommunicationFailed.message" xml:space="preserve"><value>Communication with the Square terminal failed. Please check the Square terminal and network, then try again.</value></data>
+  <data name="payment.card.error.overlay.unexpected.title" xml:space="preserve"><value>Card Payment Error</value></data>
+  <data name="payment.card.error.overlay.unexpected.message" xml:space="preserve"><value>An unexpected error occurred during card payment. Please try again. If the problem persists, contact technical support.</value></data>
+  <data name="payment.card.error.overlay.close" xml:space="preserve"><value>OK</value></data>
+  <data name="payment.card.error.overlay.activeSession.title" xml:space="preserve"><value>Previous Card Transaction Needs Recovery</value></data>
+  <data name="payment.card.error.overlay.activeSession.message" xml:space="preserve"><value>The current order was not sent to Linkly. Recover or confirm the previous transaction before starting a new card payment.</value></data>
+  <data name="payment.card.error.overlay.activeSession.recover" xml:space="preserve"><value>Recover previous</value></data>
+  <data name="payment.card.error.overlay.activeSession.close" xml:space="preserve"><value>Close</value></data>
+  <data name="payment.card.error.overlay.activeSession.recovering" xml:space="preserve"><value>Recovering previous Linkly transaction...</value></data>
 
   <data name="success.subtitle" xml:space="preserve"><value>The transaction has been processed successfully.</value></data>
   <data name="success.totalPaid" xml:space="preserve"><value>Total Amount Paid</value></data>
@@ -387,6 +403,9 @@
   <data name="payment.status.alreadyFullyPaid" xml:space="preserve"><value>The order is already fully paid.</value></data>
   <data name="payment.status.cashTenderAdded" xml:space="preserve"><value>Cash tender added.</value></data>
   <data name="payment.status.cardTenderAdded" xml:space="preserve"><value>Card tender approved.</value></data>
+  <data name="payment.linklyFallback.succeeded" xml:space="preserve"><value>Card approved after Linkly automatically switched from {0} to {1}. {2}</value></data>
+  <data name="payment.linklyFallback.allFailed" xml:space="preserve"><value>All configured Linkly modes failed before a final payment result was received.</value></data>
+  <data name="payment.linklyFallback.promotePrimary" xml:space="preserve"><value>Ask a supervisor to change the preferred Linkly mode in Settings if needed.</value></data>
   <data name="payment.status.voucherTenderAdded" xml:space="preserve"><value>Voucher tender added.</value></data>
   <data name="payment.status.tenderRemoved" xml:space="preserve"><value>Tender removed.</value></data>
   <data name="payment.status.removeTendersBeforeBack" xml:space="preserve"><value>Remove added tenders or complete the payment before returning to POS.</value></data>
@@ -495,12 +514,14 @@
   <data name="returns.priceSource.receipt" xml:space="preserve"><value>Receipt return</value></data>
   <data name="main.catalogSync.timedOut" xml:space="preserve"><value>Catalog sync timed out. Using the local catalog for now.</value></data>
   <data name="main.catalogSync.failed" xml:space="preserve"><value>Catalog sync failed: {0}</value></data>
+  <data name="main.catalogSync.initialDownloadTimedOut" xml:space="preserve"><value>Initial catalog download was canceled before it completed.</value></data>
+  <data name="main.catalogSync.initialDownloadFailed" xml:space="preserve"><value>Initial catalog download failed: {0}</value></data>
   <data name="main.settingsUnavailable" xml:space="preserve"><value>Settings service is not available.</value></data>
   <data name="main.reregister.previewUnsupported" xml:space="preserve"><value>Device reregistration is unavailable in preview mode.</value></data>
   <data name="main.reregister.cartNotEmpty" xml:space="preserve"><value>Clear the current cart before changing store registration.</value></data>
   <data name="main.reregister.syncPending" xml:space="preserve"><value>Complete pending order sync before changing store registration.</value></data>
   <data name="main.reregister.submitted" xml:space="preserve"><value>Store switch submitted. Re-register this device to continue.</value></data>
-  <data name="main.reregister.cancelled" xml:space="preserve"><value>Device reregistration cancelled.</value></data>
+  <data name="main.reregister.cancelled" xml:space="preserve"><value>Store registration change cancelled.</value></data>
   <data name="main.suspendedUnavailable" xml:space="preserve"><value>Suspended order service is not available.</value></data>
   <data name="main.suspendedSaved" xml:space="preserve"><value>Suspended order {0} saved.</value></data>
   <data name="main.suspendedRecalled" xml:space="preserve"><value>Suspended order recalled.</value></data>
@@ -662,4 +683,42 @@
   <data name="installment.create.payment.status.voucher.missingCode" xml:space="preserve"><value>Enter a voucher code.</value></data>
   <data name="installment.create.payment.status.voucher.missingToken" xml:space="preserve"><value>Enter the voucher reservation token.</value></data>
   <data name="installment.create.payment.status.voucher.ready" xml:space="preserve"><value>Voucher code and reservation token are ready.</value></data>
+  <data name="cardRecovery.dialog.title.completed" xml:space="preserve"><value>Card transaction recovered successfully</value></data>
+  <data name="cardRecovery.dialog.title.draftRestored" xml:space="preserve"><value>Previous card transaction was not completed</value></data>
+  <data name="cardRecovery.dialog.title.failed" xml:space="preserve"><value>Previous card transaction was not successful</value></data>
+  <data name="cardRecovery.dialog.title.failedLastTransaction" xml:space="preserve"><value>Previous card transaction was not successful</value></data>
+  <data name="cardRecovery.dialog.message.failedLastTransaction" xml:space="preserve"><value>A Transaction Status request without TxnRef has completed. The terminal returned that the previous transaction was not successful. Record the TxnRef, timestamp, and response code for certification.</value></data>
+  <data name="cardRecovery.dialog.message.autoPrintSucceeded" xml:space="preserve"><value>The receipt was printed automatically. You can preview it here and reprint if needed.</value></data>
+  <data name="cardRecovery.dialog.message.autoPrintFailed" xml:space="preserve"><value>The order was recovered, but automatic printing failed: {0}. Check the printer and use Print receipt.</value></data>
+  <data name="cardRecovery.dialog.message.draftRestoredFallback" xml:space="preserve"><value>The cart has been restored. Please confirm payment again.</value></data>
+  <data name="cardRecovery.dialog.message.failedFallback" xml:space="preserve"><value>The terminal result has been confirmed. Follow the prompt for manual handling.</value></data>
+  <data name="cardRecovery.dialog.action.printReceipt" xml:space="preserve"><value>Print receipt</value></data>
+  <data name="cardRecovery.dialog.action.close" xml:space="preserve"><value>Close</value></data>
+  <data name="cardRecovery.dialog.section.certFields" xml:space="preserve"><value>Certification fields</value></data>
+  <data name="cardRecovery.dialog.section.receiptPreview" xml:space="preserve"><value>Receipt preview</value></data>
+  <data name="cardRecovery.dialog.field.order" xml:space="preserve"><value>Order</value></data>
+  <data name="cardRecovery.dialog.field.amount" xml:space="preserve"><value>Amount</value></data>
+  <data name="cardRecovery.dialog.field.txnRef" xml:space="preserve"><value>TxnRef</value></data>
+  <data name="cardRecovery.dialog.field.sessionId" xml:space="preserve"><value>Session ID</value></data>
+  <data name="cardRecovery.dialog.field.responseCode" xml:space="preserve"><value>Response Code</value></data>
+  <data name="cardRecovery.dialog.field.responseText" xml:space="preserve"><value>Response Text</value></data>
+  <data name="cardRecovery.dialog.field.timestamp" xml:space="preserve"><value>Timestamp</value></data>
+  <data name="cardRecovery.linkly.requiresReview" xml:space="preserve"><value>The previous card amount does not match the order amount. Ask a supervisor to confirm the Linkly backend status before handling.</value></data>
+  <data name="cardRecovery.linkly.checking" xml:space="preserve"><value>A previous card transaction for {0:C2} was in progress before the POS closed. Checking the card terminal status.</value></data>
+  <data name="cardRecovery.linkly.unknown" xml:space="preserve"><value>The previous card result cannot be confirmed. Ask a supervisor to confirm the Linkly backend status before continuing.</value></data>
+  <data name="cardRecovery.linkly.currentCartNotEmpty" xml:space="preserve"><value>The previous card result needs handling, but the current cart already contains items. Complete or clear the current cart before recovering the previous order.</value></data>
+  <data name="cardRecovery.linkly.approved" xml:space="preserve"><value>The previous card payment was successful. The order has been recovered and saved automatically.</value></data>
+  <data name="cardRecovery.linkly.failed" xml:space="preserve"><value>The previous card payment failed: {0}. The order has been restored. Select a payment method again.</value></data>
+  <data name="cardRecovery.linkly.noActiveSession" xml:space="preserve"><value>No unfinished Linkly session was found. You can try the card payment again.</value></data>
+  <data name="cardRecovery.linkly.activeSessionUnknown" xml:space="preserve"><value>The previous Linkly session cannot be confirmed. Ask a supervisor to check Linkly before charging again.</value></data>
+  <data name="cardRecovery.linkly.activeSessionStillPending" xml:space="preserve"><value>The previous Linkly session is still pending. Try recovery again or ask a supervisor to check Linkly.</value></data>
+  <data name="cardRecovery.linkly.activeSessionApproved" xml:space="preserve"><value>The previous Linkly session may have succeeded. Ask a supervisor to verify txnRef {0} before charging again.</value></data>
+  <data name="cardRecovery.linkly.activeSessionCleared" xml:space="preserve"><value>The previous Linkly session was not submitted or failed. It has been cleared; retry the current card payment.</value></data>
+  <data name="cardRecovery.square.currentCartNotEmpty" xml:space="preserve"><value>The previous Square card result needs handling, but the current cart already contains items. Complete or clear the current cart before recovering the previous order.</value></data>
+  <data name="cardRecovery.square.unknown" xml:space="preserve"><value>The previous Square card result cannot be confirmed. Ask a supervisor to confirm the Square backend status before continuing.</value></data>
+  <data name="cardRecovery.square.checking" xml:space="preserve"><value>A previous Square card transaction for {0:C2} was in progress before the POS closed. Checking the card terminal status.</value></data>
+  <data name="cardRecovery.square.missingCheckoutId" xml:space="preserve"><value>The previous Square card request may not have been submitted. Please take payment again.</value></data>
+  <data name="cardRecovery.square.cancelled" xml:space="preserve"><value>The previous Square card payment was not completed: {0}. The order has been restored. Select a payment method again.</value></data>
+  <data name="cardRecovery.square.amountMismatch" xml:space="preserve"><value>The payment amount returned by Square does not match the order amount. The order was not saved automatically. Ask a supervisor to confirm.</value></data>
+  <data name="cardRecovery.square.approved" xml:space="preserve"><value>The previous Square card payment was successful. The order has been recovered and saved automatically.</value></data>
 </root>

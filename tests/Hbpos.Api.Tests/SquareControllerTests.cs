@@ -186,6 +186,9 @@ public sealed class SquareControllerTests
                 services.RemoveAll<ILinklyCloudCredentialSchemaInitializer>();
                 services.AddSingleton<ILinklyCloudCredentialSchemaInitializer>(
                     new NoOpLinklyCloudCredentialSchemaInitializer());
+
+                services.RemoveAll<IAdvertisementSchemaInitializer>();
+                services.AddSingleton<IAdvertisementSchemaInitializer>(new NoOpAdvertisementSchemaInitializer());
             });
         }
     }
@@ -207,6 +210,14 @@ public sealed class SquareControllerTests
     }
 
     private sealed class NoOpLinklyCloudCredentialSchemaInitializer : ILinklyCloudCredentialSchemaInitializer
+    {
+        public Task InitializeAsync(CancellationToken cancellationToken = default)
+        {
+            return Task.CompletedTask;
+        }
+    }
+
+    private sealed class NoOpAdvertisementSchemaInitializer : IAdvertisementSchemaInitializer
     {
         public Task InitializeAsync(CancellationToken cancellationToken = default)
         {

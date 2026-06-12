@@ -1,4 +1,5 @@
-using System.Text.Json;
+﻿using System.Text.Json;
+using Hbpos.Client.Wpf.Localization;
 using Hbpos.Client.Wpf.Models;
 using Hbpos.Contracts.Orders;
 
@@ -17,10 +18,9 @@ public sealed class SquarePaymentRecoveryService(
     ICardTerminalSettingsProvider settingsProvider,
     ISquareTerminalPaymentClient squareTerminalPaymentClient,
     CashCheckoutService checkout,
-    ILocalOrderRepository orderRepository) : ISquarePaymentRecoveryService
+    ILocalOrderRepository orderRepository,
+    ILocalizationService? localization = null) : ISquarePaymentRecoveryService
 {
-    private const string CurrentCartNotEmptyMessage = "检测到上一笔 Square 刷卡结果需要处理，但当前购物车已有商品。请先完成或清空当前购物车后再恢复上一笔订单。";
-    private const string UnknownResultMessage = "无法确认上一笔 Square 刷卡结果。请联系主管确认 Square 后台状态后再继续。";
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
 
     public async Task<CardPaymentRecoveryResult> RecoverLatestAsync(
@@ -47,7 +47,7 @@ public sealed class SquarePaymentRecoveryService(
 
         var draft = DeserializeDraft(attempt);
         await attemptRepository.MarkRecoveringAsync(attempt.AttemptGuid, DateTimeOffset.UtcNow, cancellationToken);
-        var checkingMessage = $"检测到上次程序关闭前有一笔 {attempt.Amount:C2} Square 刷卡交易正在处理，正在查询刷卡机状态。";
+        var checkingMessage = Format("cardRecovery.square.checking", "A previous Square card transaction for {0:C2} was in progress before the POS closed. Checking the card terminal status.", attempt.Amount);
 
         if (string.IsNullOrWhiteSpace(attempt.CheckoutId))
         {
@@ -68,7 +68,7 @@ public sealed class SquarePaymentRecoveryService(
                 cancellationToken);
             return new CardPaymentRecoveryResult(
                 CardPaymentRecoveryOutcome.DraftRestored,
-                "上次 Square 刷卡请求可能未成功发出，请重新付款。");
+                T("cardRecovery.square.missingCheckoutId", "The previous Square card request may not have been submitted. Please take payment again."));
         }
 
         if (attempt.Status == LocalSquarePaymentAttemptStatus.PaymentVerified &&
@@ -93,7 +93,7 @@ public sealed class SquarePaymentRecoveryService(
             ConsoleLog.Write("SquareRecovery", $"checkout lookup failed attemptGuid={attempt.AttemptGuid} checkoutId={attempt.CheckoutId} error={ex.GetType().Name}");
             return new CardPaymentRecoveryResult(
                 CardPaymentRecoveryOutcome.Unknown,
-                UnknownResultMessage);
+                UnknownResultMessage());
         }
 
         if (IsSquarePendingStatus(checkoutStatus.Status))
@@ -125,7 +125,7 @@ public sealed class SquarePaymentRecoveryService(
                 cancellationToken);
             return new CardPaymentRecoveryResult(
                 CardPaymentRecoveryOutcome.DraftRestored,
-                $"上一笔 Square 刷卡未完成：{checkoutStatus.CancelReason ?? "CANCELED"}。订单已恢复，请重新选择付款方式。");
+                Format("cardRecovery.square.cancelled", "The previous Square card payment was not completed: {0}. The order has been restored. Select a payment method again.", checkoutStatus.CancelReason ?? "CANCELED"));
         }
 
         if (!string.Equals(checkoutStatus.Status, "COMPLETED", StringComparison.OrdinalIgnoreCase))
@@ -141,7 +141,7 @@ public sealed class SquarePaymentRecoveryService(
                 cancellationToken);
             return new CardPaymentRecoveryResult(
                 CardPaymentRecoveryOutcome.Unknown,
-                UnknownResultMessage);
+                UnknownResultMessage());
         }
 
         var paymentId = checkoutStatus.PaymentIds.FirstOrDefault();
@@ -158,7 +158,7 @@ public sealed class SquarePaymentRecoveryService(
                 cancellationToken);
             return new CardPaymentRecoveryResult(
                 CardPaymentRecoveryOutcome.Unknown,
-                UnknownResultMessage);
+                UnknownResultMessage());
         }
 
         SquarePaymentStatusResult payment;
@@ -171,7 +171,7 @@ public sealed class SquarePaymentRecoveryService(
             ConsoleLog.Write("SquareRecovery", $"payment lookup failed attemptGuid={attempt.AttemptGuid} checkoutId={attempt.CheckoutId} paymentId={paymentId} error={ex.GetType().Name}");
             return new CardPaymentRecoveryResult(
                 CardPaymentRecoveryOutcome.Unknown,
-                UnknownResultMessage);
+                UnknownResultMessage());
         }
 
         var verification = SquarePaymentVerifier.Verify(
@@ -194,8 +194,8 @@ public sealed class SquarePaymentRecoveryService(
             return new CardPaymentRecoveryResult(
                 CardPaymentRecoveryOutcome.Unknown,
                 verification.Failure == SquarePaymentVerificationFailure.Amount
-                    ? "Square 返回的付款金额与订单金额不一致。订单未自动保存，请联系主管确认。"
-                    : UnknownResultMessage);
+                    ? T("cardRecovery.square.amountMismatch", "The payment amount returned by Square does not match the order amount. The order was not saved automatically. Ask a supervisor to confirm.")
+                    : UnknownResultMessage());
         }
 
         await attemptRepository.MarkPaymentVerifiedAsync(
@@ -259,11 +259,11 @@ public sealed class SquarePaymentRecoveryService(
         await attemptRepository.MarkOrderCompletedAsync(attempt.AttemptGuid, DateTimeOffset.UtcNow, cancellationToken);
         return new CardPaymentRecoveryResult(
             CardPaymentRecoveryOutcome.OrderCompleted,
-            "上一笔 Square 刷卡已成功，订单已自动恢复并保存。",
+            T("cardRecovery.square.approved", "The previous Square card payment was successful. The order has been recovered and saved automatically."),
             order);
     }
 
-    private static bool TryDeferForCurrentCart(
+    private bool TryDeferForCurrentCart(
         PosCartService cart,
         LocalSquarePaymentAttempt attempt,
         string reason,
@@ -275,11 +275,11 @@ public sealed class SquarePaymentRecoveryService(
             return false;
         }
 
-        // 当前购物车已有新订单时，不恢复旧草稿、不保存订单，也不把旧 attempt 标记为已处理。
+        // 褰撳墠璐墿杞﹀凡鏈夋柊璁㈠崟鏃讹紝涓嶆仮澶嶆棫鑽夌銆佷笉淇濆瓨璁㈠崟锛屼篃涓嶆妸鏃?attempt 鏍囪涓哄凡澶勭悊銆?
         ConsoleLog.Write(
             "SquareRecovery",
             $"defer recovery because current cart is not empty attemptGuid={attempt.AttemptGuid} checkoutId={attempt.CheckoutId ?? "<null>"} reason={reason}");
-        result = new CardPaymentRecoveryResult(CardPaymentRecoveryOutcome.Unknown, CurrentCartNotEmptyMessage);
+        result = new CardPaymentRecoveryResult(CardPaymentRecoveryOutcome.Unknown, CurrentCartNotEmptyMessage());
         return true;
     }
 
@@ -294,5 +294,27 @@ public sealed class SquarePaymentRecoveryService(
         return string.Equals(status, "PENDING", StringComparison.OrdinalIgnoreCase) ||
             string.Equals(status, "IN_PROGRESS", StringComparison.OrdinalIgnoreCase) ||
             string.Equals(status, "CANCEL_REQUESTED", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private string CurrentCartNotEmptyMessage()
+    {
+        return T("cardRecovery.square.currentCartNotEmpty", "The previous Square card result needs handling, but the current cart already contains items. Complete or clear the current cart before recovering the previous order.");
+    }
+
+    private string UnknownResultMessage()
+    {
+        return T("cardRecovery.square.unknown", "The previous Square card result cannot be confirmed. Ask a supervisor to confirm the Square backend status before continuing.");
+    }
+
+    private string T(string key, string fallback)
+    {
+        var value = localization?.T(key);
+        return string.IsNullOrWhiteSpace(value) || value == $"[[{key}]]" ? fallback : value;
+    }
+
+    private string Format(string key, string fallback, params object[] args)
+    {
+        var template = T(key, fallback);
+        return string.Format(localization?.CurrentCulture ?? System.Globalization.CultureInfo.CurrentCulture, template, args);
     }
 }

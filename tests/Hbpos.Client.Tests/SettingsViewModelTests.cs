@@ -532,6 +532,110 @@ public sealed class SettingsViewModelTests
         Assert.True(backendViewModel.IsLinklyCloudBackendAsyncMode);
     }
 
+    [Fact]
+    public async Task LoadAsync_uses_saved_linkly_mode_as_first_priority()
+    {
+        var viewModel = new SettingsViewModel(new FakeCardTerminalSetupService(
+            CardTerminalConfiguration.Default with
+            {
+                LinklyConnectionMode = LinklyConnectionMode.CloudBackendAsync,
+                LinklyConnectionModePriority =
+                [
+                    LinklyConnectionMode.CloudBackendAsync,
+                    LinklyConnectionMode.CloudDirectSync,
+                    LinklyConnectionMode.LocalIp
+                ]
+            }));
+
+        await viewModel.LoadAsync();
+
+        Assert.Equal(LinklySettingsMode.CloudBackendAsync, viewModel.PrimaryLinklyMode);
+        Assert.Equal(
+            [
+                LinklySettingsMode.CloudBackendAsync,
+                LinklySettingsMode.CloudDirectSync,
+                LinklySettingsMode.LocalIp
+            ],
+            viewModel.LinklyModePriorityItems.Select(item => item.Mode));
+    }
+
+    [Fact]
+    public async Task MoveLinklyPriorityUpCommand_promotes_fallback_and_save_persists_priority()
+    {
+        var service = new FakeCardTerminalSetupService(
+            CardTerminalConfiguration.Default with
+            {
+                LinklyConnectionMode = LinklyConnectionMode.LocalIp,
+                LinklyConnectionModePriority =
+                [
+                    LinklyConnectionMode.LocalIp,
+                    LinklyConnectionMode.CloudDirectSync,
+                    LinklyConnectionMode.CloudBackendAsync
+                ]
+            })
+        {
+            LinklyCloudTestResult = new LinklyConnectionTestResult(true, "cloud ready")
+        };
+        service.LinklyCloudSecretStatuses[CardTerminalEnvironment.Production] = true;
+        var viewModel = new SettingsViewModel(service);
+
+        await viewModel.LoadAsync();
+        var cloudDirect = viewModel.LinklyModePriorityItems.Single(item => item.Mode == LinklySettingsMode.CloudDirectSync);
+        viewModel.MoveLinklyPriorityUpCommand.Execute(cloudDirect);
+        await viewModel.TestLinklyCommand.ExecuteAsync(null);
+        await viewModel.SaveLinklyCommand.ExecuteAsync(null);
+
+        Assert.Equal(LinklySettingsMode.CloudDirectSync, viewModel.PrimaryLinklyMode);
+        Assert.NotNull(service.SavedConfiguration);
+        Assert.Equal(LinklyConnectionMode.CloudDirectSync, service.SavedConfiguration!.LinklyConnectionMode);
+        Assert.Equal(
+            [
+                LinklyConnectionMode.CloudDirectSync,
+                LinklyConnectionMode.LocalIp,
+                LinklyConnectionMode.CloudBackendAsync
+            ],
+            service.SavedConfiguration.LinklyConnectionModePriority);
+    }
+
+    [Fact]
+    public async Task SelectLinklyPriorityModeCommand_promotes_mode_so_test_and_save_target_match()
+    {
+        var service = new FakeCardTerminalSetupService(
+            CardTerminalConfiguration.Default with
+            {
+                LinklyConnectionMode = LinklyConnectionMode.LocalIp,
+                LinklyConnectionModePriority =
+                [
+                    LinklyConnectionMode.LocalIp,
+                    LinklyConnectionMode.CloudDirectSync,
+                    LinklyConnectionMode.CloudBackendAsync
+                ]
+            })
+        {
+            LinklyCloudBackendTestResult = new LinklyConnectionTestResult(true, "backend ready")
+        };
+        var viewModel = new SettingsViewModel(service);
+
+        await viewModel.LoadAsync();
+        var backend = viewModel.LinklyModePriorityItems.Single(item => item.Mode == LinklySettingsMode.CloudBackendAsync);
+        viewModel.SelectLinklyPriorityModeCommand.Execute(backend);
+        await viewModel.TestLinklyCommand.ExecuteAsync(null);
+        await viewModel.SaveLinklyCommand.ExecuteAsync(null);
+
+        Assert.Equal(LinklySettingsMode.CloudBackendAsync, viewModel.PrimaryLinklyMode);
+        Assert.Equal(1, service.LinklyCloudBackendTestCallCount);
+        Assert.Equal(1, service.SaveLinklyCloudCallCount);
+        Assert.NotNull(service.SavedConfiguration);
+        Assert.Equal(LinklyConnectionMode.CloudBackendAsync, service.SavedConfiguration!.LinklyConnectionMode);
+        Assert.Equal(
+            [
+                LinklyConnectionMode.CloudBackendAsync,
+                LinklyConnectionMode.LocalIp,
+                LinklyConnectionMode.CloudDirectSync
+            ],
+            service.SavedConfiguration.LinklyConnectionModePriority);
+    }
+
     [Theory]
     [InlineData("LocalIp", "LocalIp", 1, 0, false)]
     [InlineData("CloudDirectSync", "CloudDirectSync", 0, 1, true)]
@@ -665,6 +769,8 @@ public sealed class SettingsViewModelTests
     [Fact]
     public async Task CloudBackendAsync_status_test_failed_last_transaction_requests_friendly_dialog()
     {
+        var localization = new LocalizationService();
+        localization.SetCulture("zh-CN");
         var dialogService = new RecordingCardRecoveryResultDialogService();
         var service = new FakeCardTerminalSetupService
         {
@@ -680,6 +786,7 @@ public sealed class SettingsViewModelTests
         };
         var viewModel = new SettingsViewModel(
             service,
+            localization,
             cardRecoveryResultDialogService: dialogService)
         {
             SelectedLinklyMode = LinklySettingsMode.CloudBackendAsync,
@@ -695,6 +802,40 @@ public sealed class SettingsViewModelTests
         Assert.Equal("TM", dialog.ResponseCode);
         Assert.Equal("OPERATOR TIMEOUT", dialog.ResponseText);
         Assert.False(dialog.CanPrintReceipt);
+    }
+
+    [Fact]
+    public async Task CloudBackendAsync_status_test_failed_last_transaction_dialog_uses_english_culture()
+    {
+        var localization = new LocalizationService();
+        localization.SetCulture("en-US");
+        var dialogService = new RecordingCardRecoveryResultDialogService();
+        var service = new FakeCardTerminalSetupService
+        {
+            LinklyCloudBackendStatusTestResult = new LinklyConnectionTestResult(
+                false,
+                "OPERATOR TIMEOUT",
+                new LinklyStatusTestDetails(
+                    "session-last",
+                    new DateTimeOffset(2026, 6, 10, 9, 30, 0, TimeSpan.Zero),
+                    "TM",
+                    "OPERATOR TIMEOUT",
+                    "txn-last"))
+        };
+        var viewModel = new SettingsViewModel(
+            service,
+            localization,
+            cardRecoveryResultDialogService: dialogService)
+        {
+            SelectedLinklyMode = LinklySettingsMode.CloudBackendAsync,
+            IsSandbox = true
+        };
+
+        await viewModel.TestLinklyTransactionStatusCommand.ExecuteAsync(null);
+
+        var dialog = Assert.Single(dialogService.RequestedDialogs);
+        Assert.Equal("Previous card transaction was not successful", dialog.Title);
+        Assert.Contains("Transaction Status", dialog.Message);
     }
 
     [Fact]

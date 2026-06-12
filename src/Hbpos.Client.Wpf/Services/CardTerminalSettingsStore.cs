@@ -10,6 +10,7 @@ public sealed class CardTerminalSettingsStore(
     private const string LinklyHostKey = "CardTerminal:LinklyHost";
     private const string LinklyPortKey = "CardTerminal:LinklyPort";
     private const string LinklyConnectionModeKey = "CardTerminal:LinklyConnectionMode";
+    private const string LinklyConnectionModePriorityKey = "CardTerminal:LinklyConnectionModePriority";
     private const string LinklyCloudSecretKeyPrefix = "CardTerminal:LinklyCloudSecretProtected:";
     private const string LinklyCloudUsernameKeyPrefix = "CardTerminal:LinklyCloudUsername:";
     private const string LinklyCloudPasswordKeyPrefix = "CardTerminal:LinklyCloudPasswordProtected:";
@@ -39,6 +40,10 @@ public sealed class CardTerminalSettingsStore(
         var linklyConnectionMode = ParseLinklyConnectionMode(
             await settingsRepository.GetValueAsync(LinklyConnectionModeKey, cancellationToken),
             environmentSettings.LinklyConnectionMode);
+        var linklyConnectionModePriority = CardTerminalSettings.ParseLinklyConnectionModePriority(
+            await settingsRepository.GetValueAsync(LinklyConnectionModePriorityKey, cancellationToken),
+            linklyConnectionMode);
+        linklyConnectionMode = linklyConnectionModePriority[0];
         var squareLocationId = NormalizeText(
             await settingsRepository.GetValueAsync(SquareLocationIdKey, cancellationToken),
             environmentSettings.SquareLocationId);
@@ -61,7 +66,8 @@ public sealed class CardTerminalSettingsStore(
             !string.IsNullOrWhiteSpace(protectedToken),
             timeoutSeconds,
             linklyConnectionMode,
-            !string.IsNullOrWhiteSpace(protectedLinklySecret));
+            !string.IsNullOrWhiteSpace(protectedLinklySecret),
+            linklyConnectionModePriority);
     }
 
     public async Task SaveAsync(
@@ -73,9 +79,20 @@ public sealed class CardTerminalSettingsStore(
         await settingsRepository.SetValueAsync(EnvironmentKey, configuration.Environment.ToString(), cancellationToken);
         await settingsRepository.SetValueAsync(LinklyHostKey, NormalizeText(configuration.LinklyHost, CardTerminalConfiguration.Default.LinklyHost), cancellationToken);
         await settingsRepository.SetValueAsync(LinklyPortKey, NormalizePort(configuration.LinklyPort).ToString(), cancellationToken);
+        var linklyPriority = configuration.LinklyConnectionModePriority is null ||
+            configuration.LinklyConnectionModePriority.Count == 0
+            ? CardTerminalSettings.NormalizeLinklyConnectionModePriority(null, configuration.LinklyConnectionMode)
+            : CardTerminalSettings.NormalizeLinklyConnectionModePriority(
+                configuration.LinklyConnectionModePriority,
+                configuration.LinklyConnectionModePriority[0]);
+        var primaryLinklyMode = linklyPriority[0];
         await settingsRepository.SetValueAsync(
             LinklyConnectionModeKey,
-            CardTerminalSettings.FormatLinklyConnectionMode(configuration.LinklyConnectionMode),
+            CardTerminalSettings.FormatLinklyConnectionMode(primaryLinklyMode),
+            cancellationToken);
+        await settingsRepository.SetValueAsync(
+            LinklyConnectionModePriorityKey,
+            CardTerminalSettings.FormatLinklyConnectionModePriority(linklyPriority),
             cancellationToken);
         await settingsRepository.SetValueAsync(SquareLocationIdKey, configuration.SquareLocationId?.Trim() ?? string.Empty, cancellationToken);
         await settingsRepository.SetValueAsync(SquareDeviceIdKey, configuration.SquareDeviceId?.Trim() ?? string.Empty, cancellationToken);
@@ -372,7 +389,10 @@ public sealed class CardTerminalSettingsStore(
             environmentSettings.LinklyPosVersion,
             CardTerminalSettings.ResolveLinklyPosVendorId(
                 configuration.Environment,
-                environmentSettings.LinklyPosVendorId));
+                environmentSettings.LinklyPosVendorId),
+            CardTerminalSettings.NormalizeLinklyConnectionModePriority(
+                configuration.LinklyConnectionModePriority,
+                configuration.LinklyConnectionMode));
     }
 
     private static CardProcessorKind ParseProcessor(string? value, CardProcessorKind fallback)

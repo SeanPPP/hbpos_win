@@ -334,6 +334,96 @@ public sealed class DeviceRegistrationTests
         Assert.NotNull(reregistered);
     }
 
+    [Fact]
+    public void DeviceRegistrationViewModel_ReregisterMode_AllowsCancelWhileLoading()
+    {
+        var viewModel = new DeviceRegistrationViewModel(new FakeDeviceRegistrationWorkflowService());
+        var cancelRequested = false;
+
+        viewModel.CancelRequested += (_, _) => cancelRequested = true;
+        viewModel.PrepareReregister("1002");
+        viewModel.IsBusy = true;
+
+        Assert.True(viewModel.CancelCommand.CanExecute(null));
+
+        viewModel.CancelCommand.Execute(null);
+
+        Assert.True(cancelRequested);
+    }
+
+    [Fact]
+    public async Task DeviceRegistrationViewModel_ReregisterMode_CancelDuringSubmitIgnoresLaterResult()
+    {
+        var pendingReregister = new TaskCompletionSource<DeviceRegistrationActionResult>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var workflow = new FakeDeviceRegistrationWorkflowService
+        {
+            LoadResult = new DeviceRegistrationLoadResult(
+                [new StoreSelectionItem("1003", "Zillmere", true)],
+                new StoreSelectionItem("1003", "Zillmere", true),
+                string.Empty,
+                false,
+                "Select a new store and submit device reregistration."),
+            PendingReregisterResult = pendingReregister
+        };
+        var viewModel = new DeviceRegistrationViewModel(workflow);
+        var cancelRequested = false;
+        DeviceReregisteredEventArgs? reregistered = null;
+
+        viewModel.CancelRequested += (_, _) => cancelRequested = true;
+        viewModel.DeviceReregistered += (_, args) => reregistered = args;
+        viewModel.PrepareReregister("1002");
+        await viewModel.LoadStoresAsync(cachedDevice: null);
+        viewModel.SelectedStore = Assert.Single(viewModel.Stores);
+
+        var submitTask = viewModel.RegisterCommand.ExecuteAsync(null);
+        await workflow.WaitForReregisterStartedAsync();
+
+        Assert.True(viewModel.IsBusy);
+        Assert.True(viewModel.CancelCommand.CanExecute(null));
+
+        viewModel.CancelCommand.Execute(null);
+        pendingReregister.SetResult(new DeviceRegistrationActionResult(
+            "POS-NEW",
+            "1003",
+            "Zillmere",
+            "HW-001",
+            true,
+            "Pending approval",
+            null,
+            false,
+            true));
+        await submitTask;
+
+        Assert.True(cancelRequested);
+        Assert.Null(reregistered);
+        Assert.True(viewModel.IsReregisterMode);
+        Assert.True(viewModel.CanCancel);
+    }
+
+    [Fact]
+    public async Task DeviceRegistrationViewModel_ReregisterMode_EmptyStoresKeepsSubmitDisabled()
+    {
+        var workflow = new FakeDeviceRegistrationWorkflowService
+        {
+            LoadResult = new DeviceRegistrationLoadResult(
+                [],
+                null,
+                string.Empty,
+                false,
+                "No other stores are available for device reregistration.")
+        };
+        var viewModel = new DeviceRegistrationViewModel(workflow);
+
+        viewModel.PrepareReregister("1002");
+        await viewModel.LoadStoresAsync(cachedDevice: null);
+
+        Assert.Empty(viewModel.Stores);
+        Assert.Null(viewModel.SelectedStore);
+        Assert.False(viewModel.RegisterCommand.CanExecute(null));
+        Assert.Equal("No other stores are available for device reregistration.", viewModel.StatusMessage);
+        Assert.True(viewModel.CancelCommand.CanExecute(null));
+    }
+
     private static string CreateTempDatabasePath()
     {
         return Path.Combine(Path.GetTempPath(), $"hbpos-client-device-{Guid.NewGuid():N}.db");
@@ -358,6 +448,10 @@ public sealed class DeviceRegistrationTests
         public DeviceRegistrationActionResult VerifyResult { get; init; } = new(string.Empty, string.Empty, string.Empty, string.Empty, false, string.Empty, null, false, false);
 
         public DeviceRegistrationActionResult ReregisterResult { get; init; } = new(string.Empty, string.Empty, string.Empty, string.Empty, false, string.Empty, null, false, false);
+
+        public TaskCompletionSource<DeviceRegistrationActionResult>? PendingReregisterResult { get; init; }
+
+        private TaskCompletionSource ReregisterStarted { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
 
         public string? LastLoadExcludedStoreCode { get; private set; }
 
@@ -410,8 +504,11 @@ public sealed class DeviceRegistrationTests
             CancellationToken cancellationToken = default)
         {
             LastReregisterStoreCode = selectedStore.StoreCode;
-            return Task.FromResult(ReregisterResult);
+            ReregisterStarted.TrySetResult();
+            return PendingReregisterResult?.Task ?? Task.FromResult(ReregisterResult);
         }
+
+        public Task WaitForReregisterStartedAsync() => ReregisterStarted.Task;
     }
 
     private sealed class FakeAuthorizationProtector : IDeviceAuthorizationProtector

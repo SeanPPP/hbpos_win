@@ -25,7 +25,6 @@ public sealed partial class MainViewModel : ObservableObject
 {
     private const string DefaultTestStoreCode = "1002";
     private static readonly TimeSpan StartupCatalogIndexLoadTimeout = TimeSpan.FromSeconds(30);
-    private static readonly TimeSpan InitialCatalogSyncTimeout = TimeSpan.FromSeconds(20);
 
     private readonly LocalSellableItemIndex _priceIndex;
     private readonly PosCartService _cart;
@@ -422,7 +421,13 @@ public sealed partial class MainViewModel : ObservableObject
 
     public CustomerDisplayViewModel CustomerDisplay { get; } = new();
 
-    public DeviceRegistrationViewModel? DeviceRegistration { get; private set; }
+    private DeviceRegistrationViewModel? _deviceRegistration;
+
+    public DeviceRegistrationViewModel? DeviceRegistration
+    {
+        get => _deviceRegistration;
+        private set => SetProperty(ref _deviceRegistration, value);
+    }
 
     public SettingsViewModel? Settings { get; private set; }
 
@@ -1098,7 +1103,8 @@ public sealed partial class MainViewModel : ObservableObject
                 Session,
                 _localization,
                 ShowPos,
-                ShowInstallmentCenter);
+                ShowInstallmentCenter,
+                RecoverActiveCardPaymentSessionFromPaymentAsync);
             CashPayment.PaymentCompleted += OnPaymentCompleted;
             CashPayment.PropertyChanged += OnCashPaymentPropertyChanged;
         }
@@ -1169,6 +1175,21 @@ public sealed partial class MainViewModel : ObservableObject
 
             return isOnline;
         }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (Exception ex)
+        {
+            // API 探测失败只代表当前离线，不能阻断已授权设备继续使用本地缓存收银。
+            ConsoleLog.Write("Connectivity", $"online check failed; fallback offline error={ex.Message}");
+            if (Session.IsOnline)
+            {
+                Session = Session with { IsOnline = false };
+            }
+
+            return false;
+        }
         finally
         {
             _isRefreshingConnectivity = false;
@@ -1177,23 +1198,50 @@ public sealed partial class MainViewModel : ObservableObject
 
     private async Task TryInitialCatalogSyncAsync()
     {
-        using var syncTimeoutCts = new CancellationTokenSource(InitialCatalogSyncTimeout);
+        var hasLocalCatalogItems = await HasLocalCatalogItemsAsync();
+        var syncMode = hasLocalCatalogItems ? "background-refresh" : "initial-full-download";
         try
         {
-            ConsoleLog.Write("CatalogSync", $"initial sync timeout configured seconds={InitialCatalogSyncTimeout.TotalSeconds:0}");
-            var cachedItems = await SyncCatalogAndReloadAsync(syncTimeoutCts.Token);
+            // 启动后的商品同步已在 POS 显示之后执行，不能再用启动超时截断，避免半包缓存反复无法补全。
+            ConsoleLog.Write(
+                "CatalogSync",
+                $"initial sync mode={syncMode} localItemCount={(hasLocalCatalogItems ? ">0" : "0")} timeoutSeconds=none");
+            var cachedItems = await SyncCatalogAndReloadAsync(CancellationToken.None);
             PosTerminal?.LoadMatches(cachedItems);
             PosTerminal?.RefreshCart();
             CashPayment?.RefreshCart();
         }
         catch (OperationCanceledException)
         {
-            ConsoleLog.Write("CatalogSync", $"initial sync canceled or timed out after seconds={InitialCatalogSyncTimeout.TotalSeconds:0}");
-            StatusMessage = _localization.T("main.catalogSync.timedOut");
+            ConsoleLog.Write("CatalogSync", $"initial sync canceled mode={syncMode} timeoutSeconds=none");
+            StatusMessage = hasLocalCatalogItems
+                ? _localization.T("main.catalogSync.timedOut")
+                : _localization.T("main.catalogSync.initialDownloadTimedOut");
         }
         catch (Exception ex)
         {
-            StatusMessage = string.Format(_localization.CurrentCulture, _localization.T("main.catalogSync.failed"), ex.Message);
+            var statusKey = hasLocalCatalogItems
+                ? "main.catalogSync.failed"
+                : "main.catalogSync.initialDownloadFailed";
+            StatusMessage = string.Format(_localization.CurrentCulture, _localization.T(statusKey), ex.Message);
+        }
+    }
+
+    private async Task<bool> HasLocalCatalogItemsAsync()
+    {
+        try
+        {
+            var firstPage = await _catalogRepository.LoadSellableItemComparePageAsync(
+                Session.StoreCode,
+                afterLookupCodeNormalized: null,
+                pageSize: 1);
+            return firstPage.Count > 0;
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            // 本地探测失败只影响提示文案，不阻止后台同步继续尝试。
+            ConsoleLog.Write("CatalogSync", $"initial sync local cache probe failed store={Session.StoreCode} error={ex.Message}");
+            return true;
         }
     }
 
@@ -1412,6 +1460,12 @@ public sealed partial class MainViewModel : ObservableObject
         // 弹窗打开后立即加载可切换分店，避免用户首次看到空列表。
         _deviceRegistrationStoreLoadTask = DeviceRegistration.LoadStoresAsync(null);
         await _deviceRegistrationStoreLoadTask;
+        if (DeviceRegistration is null || !IsDeviceReregistrationDialogOpen)
+        {
+            // 用户可能在门店加载完成前已经取消，后台加载结束后不再恢复或读取弹窗状态。
+            return DeviceReregistrationStartResult.Blocked(StatusMessage);
+        }
+
         return DeviceReregistrationStartResult.StartedWith(DeviceRegistration.StatusMessage);
     }
 
@@ -1620,6 +1674,42 @@ public sealed partial class MainViewModel : ObservableObject
         return false;
     }
 
+    private async Task RecoverActiveCardPaymentSessionFromPaymentAsync()
+    {
+        if (_cardPaymentRecoveryService is null)
+        {
+            return;
+        }
+
+        var result = await _cardPaymentRecoveryService.RecoverActiveSessionAsync(_cart, Session, CancellationToken.None);
+        if (!string.IsNullOrWhiteSpace(result.Message))
+        {
+            StatusMessage = result.Message;
+        }
+
+        if (result.UpdatedSession is not null)
+        {
+            Session = result.UpdatedSession;
+        }
+
+        if (result.Outcome == CardPaymentRecoveryOutcome.None)
+        {
+            return;
+        }
+
+        if (result.Outcome == CardPaymentRecoveryOutcome.DraftRestored)
+        {
+            // 付款页主动恢复的是旧 active session，不能把恢复结果自动混入当前购物车。
+            ShowRecoveredCardDraftDialog(result);
+            return;
+        }
+
+        if (result.Outcome is CardPaymentRecoveryOutcome.Unknown or CardPaymentRecoveryOutcome.Checking)
+        {
+            ShowRecoveredCardFailureDialog(result);
+        }
+    }
+
     private async Task<ReceiptPrintResult> PrintRecoveredCardReceiptAsync(LocalOrder order)
     {
         var evidence = GetCardRecoveryEvidence(order);
@@ -1689,11 +1779,14 @@ public sealed partial class MainViewModel : ObservableObject
         var previewRows = await BuildReceiptPreviewRowsAsync(receipt);
         var details = result.DialogDetails;
         var printMessage = printResult.Succeeded
-            ? "小票已自动打印。可在此预览并按需重新打印。"
-            : $"订单已恢复，但自动打印失败：{printResult.Message}。请检查打印机后点击打印。";
+            ? _localization.T("cardRecovery.dialog.message.autoPrintSucceeded")
+            : string.Format(
+                _localization.CurrentCulture,
+                _localization.T("cardRecovery.dialog.message.autoPrintFailed"),
+                printResult.Message);
 
         ShowCardRecoveryResultDialog(new CardRecoveryResultDialogViewModel(
-            "刷卡交易已恢复成功",
+            _localization.T("cardRecovery.dialog.title.completed"),
             printMessage,
             printResult.Succeeded ? CardRecoveryResultSeverity.Success : CardRecoveryResultSeverity.Warning,
             result.Order.OrderGuid,
@@ -1705,16 +1798,16 @@ public sealed partial class MainViewModel : ObservableObject
             details?.Timestamp ?? DateTimeOffset.Now,
             previewRows,
             canPrintReceipt: true,
-            printButtonText: "打印小票"));
+            printButtonText: _localization.T("cardRecovery.dialog.action.printReceipt")));
     }
 
     private void ShowRecoveredCardDraftDialog(CardPaymentRecoveryResult result)
     {
         var details = result.DialogDetails;
         ShowCardRecoveryResultDialog(new CardRecoveryResultDialogViewModel(
-            "上一笔刷卡未完成",
+            _localization.T("cardRecovery.dialog.title.draftRestored"),
             string.IsNullOrWhiteSpace(result.Message)
-                ? "购物车已恢复，请重新确认付款。"
+                ? _localization.T("cardRecovery.dialog.message.draftRestoredFallback")
                 : result.Message,
             CardRecoveryResultSeverity.Warning,
             orderGuid: null,
@@ -1730,9 +1823,9 @@ public sealed partial class MainViewModel : ObservableObject
     {
         var details = result.DialogDetails;
         ShowCardRecoveryResultDialog(new CardRecoveryResultDialogViewModel(
-            "上一笔刷卡未成功",
+            _localization.T("cardRecovery.dialog.title.failed"),
             string.IsNullOrWhiteSpace(result.Message)
-                ? "已确认终端结果，请按提示人工处理。"
+                ? _localization.T("cardRecovery.dialog.message.failedFallback")
                 : result.Message,
             CardRecoveryResultSeverity.Error,
             orderGuid: null,

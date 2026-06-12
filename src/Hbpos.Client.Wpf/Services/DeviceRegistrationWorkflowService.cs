@@ -236,7 +236,9 @@ public sealed class DeviceRegistrationWorkflowService(
 
     private static bool CanShowStore(StoreSelectionItem store, string? excludedStoreCode)
     {
-        return string.IsNullOrWhiteSpace(excludedStoreCode)
-            || !string.Equals(store.StoreCode, excludedStoreCode, StringComparison.OrdinalIgnoreCase);
+        // 门店列表只允许启用分店，重新注册时再排除当前分店。
+        return store.IsActive
+            && (string.IsNullOrWhiteSpace(excludedStoreCode)
+                || !string.Equals(store.StoreCode, excludedStoreCode, StringComparison.OrdinalIgnoreCase));
     }
 }

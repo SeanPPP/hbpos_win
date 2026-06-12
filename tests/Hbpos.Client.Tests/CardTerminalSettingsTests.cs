@@ -564,6 +564,48 @@ public sealed class CardTerminalSettingsTests
         Assert.Equal(LinklyMode(expectedMode), configuration.LinklyConnectionMode);
     }
 
+    [Fact]
+    public async Task LoadAsync_uses_saved_linkly_mode_as_first_priority_when_priority_is_missing()
+    {
+        var repository = new InMemorySettingsRepository(new Dictionary<string, string?>
+        {
+            ["CardTerminal:LinklyConnectionMode"] = nameof(LinklyConnectionMode.CloudBackendAsync)
+        });
+        var store = new CardTerminalSettingsStore(repository, new FakeAuthorizationProtector());
+
+        var configuration = await store.LoadAsync();
+
+        Assert.Equal(
+            [
+                LinklyConnectionMode.CloudBackendAsync,
+                LinklyConnectionMode.CloudDirectSync,
+                LinklyConnectionMode.LocalIp
+            ],
+            configuration.LinklyConnectionModePriority);
+    }
+
+    [Fact]
+    public async Task LoadAsync_normalizes_linkly_priority_and_removes_duplicates()
+    {
+        var repository = new InMemorySettingsRepository(new Dictionary<string, string?>
+        {
+            ["CardTerminal:LinklyConnectionMode"] = nameof(LinklyConnectionMode.LocalIp),
+            ["CardTerminal:LinklyConnectionModePriority"] = "CloudDirectSync,Cloud,Unknown,LocalIp"
+        });
+        var store = new CardTerminalSettingsStore(repository, new FakeAuthorizationProtector());
+
+        var configuration = await store.LoadAsync();
+
+        Assert.Equal(
+            [
+                LinklyConnectionMode.CloudDirectSync,
+                LinklyConnectionMode.LocalIp,
+                LinklyConnectionMode.CloudBackendAsync
+            ],
+            configuration.LinklyConnectionModePriority);
+        Assert.Equal(LinklyConnectionMode.CloudDirectSync, configuration.LinklyConnectionMode);
+    }
+
     [Theory]
     [InlineData("Local", "LocalIp")]
     [InlineData("LocalIp", "LocalIp")]
@@ -583,6 +625,30 @@ public sealed class CardTerminalSettingsTests
             squareAccessToken: null);
 
         Assert.Equal(expectedStoredMode, repository.GetStoredValue("CardTerminal:LinklyConnectionMode"));
+    }
+
+    [Fact]
+    public async Task SaveAsync_persists_linkly_priority_and_keeps_legacy_mode_as_first_priority()
+    {
+        var repository = new InMemorySettingsRepository();
+        var store = new CardTerminalSettingsStore(repository, new FakeAuthorizationProtector());
+
+        await store.SaveAsync(
+            CardTerminalConfiguration.Default with
+            {
+                LinklyConnectionModePriority =
+                [
+                    LinklyConnectionMode.CloudBackendAsync,
+                    LinklyConnectionMode.LocalIp,
+                    LinklyConnectionMode.CloudDirectSync
+                ]
+            },
+            squareAccessToken: null);
+
+        Assert.Equal("CloudBackendAsync", repository.GetStoredValue("CardTerminal:LinklyConnectionMode"));
+        Assert.Equal(
+            "CloudBackendAsync,LocalIp,CloudDirectSync",
+            repository.GetStoredValue("CardTerminal:LinklyConnectionModePriority"));
     }
 
     private sealed class EnvironmentVariableScope : IDisposable

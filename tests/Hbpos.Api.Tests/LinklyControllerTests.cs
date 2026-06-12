@@ -826,6 +826,9 @@ public sealed class LinklyControllerTests
 
                 services.RemoveAll<ISquareTokenSchemaInitializer>();
                 services.AddSingleton<ISquareTokenSchemaInitializer>(new NoOpSquareTokenSchemaInitializer());
+
+                services.RemoveAll<IAdvertisementSchemaInitializer>();
+                services.AddSingleton<IAdvertisementSchemaInitializer>(new NoOpAdvertisementSchemaInitializer());
             });
         }
     }
@@ -855,6 +858,14 @@ public sealed class LinklyControllerTests
     }
 
     private sealed class NoOpSquareTokenSchemaInitializer : ISquareTokenSchemaInitializer
+    {
+        public Task InitializeAsync(CancellationToken cancellationToken = default)
+        {
+            return Task.CompletedTask;
+        }
+    }
+
+    private sealed class NoOpAdvertisementSchemaInitializer : IAdvertisementSchemaInitializer
     {
         public Task InitializeAsync(CancellationToken cancellationToken = default)
         {

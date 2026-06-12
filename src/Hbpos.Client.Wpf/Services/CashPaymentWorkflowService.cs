@@ -1,6 +1,7 @@
 using System.Globalization;
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using Hbpos.Client.Wpf.Localization;
 using Hbpos.Client.Wpf.Models;
 using Hbpos.Contracts.Orders;
 
@@ -533,7 +534,7 @@ public sealed class CashPaymentWorkflowService(
             }
 
             return PaymentTenderAttemptResult.Fail(
-                declinedStatusKey,
+                string.IsNullOrWhiteSpace(authorization.StatusKey) ? declinedStatusKey : authorization.StatusKey,
                 authorization.Message);
         }
 
@@ -597,6 +598,18 @@ public sealed class CashPaymentWorkflowService(
         var reference = isRefund
             ? CardRefundReference.Format(authorization.Reference, referenceText!)
             : authorization.Reference;
+        var successStatusKey = authorization.FallbackSucceeded
+            ? "payment.linklyFallback.succeeded"
+            : approvedStatusKey;
+        var successStatusMessage = authorization.FallbackSucceeded
+            ? string.Format(
+                CultureInfo.CurrentCulture,
+                T("payment.linklyFallback.succeeded"),
+                FormatLinklyModeDisplayName(authorization.RequestedConnectionMode),
+                FormatLinklyModeDisplayName(authorization.ActualConnectionMode),
+                T("payment.linklyFallback.promotePrimary"))
+            : null;
+
         return PaymentTenderAttemptResult.Success(
             new PaymentTender(
                 PaymentMethodKind.Card,
@@ -608,7 +621,8 @@ public sealed class CashPaymentWorkflowService(
                     : squareAttempt is not null
                         ? FormatSquareAttemptTenderKey(squareAttempt.AttemptGuid)
                         : null),
-            approvedStatusKey);
+            successStatusKey,
+            successStatusMessage);
     }
 
     private async Task<LocalCardPaymentAttempt?> TryCreateCardPaymentAttemptAsync(
@@ -961,7 +975,7 @@ public sealed class CashPaymentWorkflowService(
         if (!authorization.Approved)
         {
             return PaymentTenderAttemptResult.Fail(
-                declinedStatusKey,
+                string.IsNullOrWhiteSpace(authorization.StatusKey) ? declinedStatusKey : authorization.StatusKey,
                 authorization.Message);
         }
 
@@ -1307,6 +1321,25 @@ public sealed class CashPaymentWorkflowService(
     {
         return decimal.Round(amount, 2, MidpointRounding.AwayFromZero);
     }
+
+    private static string T(string key)
+    {
+        return LocalizationResourceProvider.Instance[key];
+    }
+
+    private static string FormatLinklyModeDisplayName(string? modeText)
+    {
+        var mode = CardTerminalSettings.NormalizeLinklyConnectionMode(modeText, LinklyConnectionMode.LocalIp);
+        var key = mode switch
+        {
+            LinklyConnectionMode.CloudDirectSync => "settings.linkly.mode.cloudDirectSync",
+            LinklyConnectionMode.CloudBackendAsync => "settings.linkly.mode.cloudBackendAsync",
+            _ => "settings.linkly.mode.localIp"
+        };
+
+        // 支付页提示面向收银员，不能暴露 CloudBackendAsync 这类内部配置值。
+        return T(key);
+    }
 }
 
 public interface ICardTerminalClient
@@ -1353,7 +1386,14 @@ public sealed record PaymentAuthorizationResult(
     string? SessionId = null,
     string? TxnRef = null,
     string? ResponseCode = null,
-    string? ResponseText = null);
+    string? ResponseText = null,
+    string? StatusKey = null,
+    string? RequestedConnectionMode = null,
+    string? ActualConnectionMode = null,
+    IReadOnlyList<string>? FallbackAttemptedModes = null,
+    bool FallbackSucceeded = false,
+    bool FallbackAllowed = false,
+    bool ResultUnknown = false);
 
 public sealed record CardPaymentOrderDraft(
     Guid OrderGuid,
@@ -1372,9 +1412,9 @@ public sealed record PaymentTenderAttemptResult(
     PaymentTender? Tender = null,
     string? StatusMessage = null)
 {
-    public static PaymentTenderAttemptResult Success(PaymentTender tender, string statusKey)
+    public static PaymentTenderAttemptResult Success(PaymentTender tender, string statusKey, string? statusMessage = null)
     {
-        return new PaymentTenderAttemptResult(true, statusKey, tender);
+        return new PaymentTenderAttemptResult(true, statusKey, tender, statusMessage);
     }
 
     public static PaymentTenderAttemptResult Fail(string statusKey, string? statusMessage = null)

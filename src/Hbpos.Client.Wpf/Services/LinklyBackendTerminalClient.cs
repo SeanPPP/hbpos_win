@@ -289,6 +289,7 @@ public sealed class LinklyBackendTerminalClient(
         using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         timeoutCts.CancelAfter(settings.TerminalTimeout <= TimeSpan.Zero ? TimeSpan.FromSeconds(180) : settings.TerminalTimeout);
         var keepDialogOpen = false;
+        var transactionSubmitted = false;
         Log($"transaction request start txnType={txnType} environment={settings.Environment} componentVersion={GetComponentVersion()}");
 
         try
@@ -297,7 +298,7 @@ public sealed class LinklyBackendTerminalClient(
             var activeStatus = await GetActiveSessionAsync(settings, timeoutCts.Token);
             if (activeStatus is not null)
             {
-                keepDialogOpen = true;
+                // 已有旧 active session 时必须先恢复旧交易，不能继续创建新的付款请求。
                 return await RejectActiveSessionForNewPaymentAsync(activeStatus, cancellationToken);
             }
 
@@ -310,6 +311,7 @@ public sealed class LinklyBackendTerminalClient(
             LinklyCloudBackendSessionResponse status;
             try
             {
+                transactionSubmitted = true;
                 status = await StartTransactionAsync(request, timeoutCts.Token);
                 await NotifyPaymentAttemptSessionStartedAsync(status, cancellationToken);
             }
@@ -325,8 +327,17 @@ public sealed class LinklyBackendTerminalClient(
                     return new PaymentAuthorizationResult(false, null, message);
                 }
 
-                keepDialogOpen = true;
+                // 409 同样代表旧 active session 阻塞当前交易，交给付款页恢复入口处理。
                 return await RejectActiveSessionForNewPaymentAsync(activeStatus, cancellationToken);
+            }
+            catch (LinklyBackendHttpException ex) when (IsBackendStartRejectedBeforeSession(ex))
+            {
+                // 后端明确在创建 session 前拒绝请求时，说明交易没有提交到 Linkly，可以切换到下一个模式兜底。
+                var message = string.IsNullOrWhiteSpace(ex.Message)
+                    ? T("linkly.backend.configIncomplete", "ANZ Linkly Cloud backend configuration is incomplete.")
+                    : ex.Message;
+                await PresentFinalFailureAsync("backend-start-rejected", message, cancellationToken);
+                return FallbackAllowed("linkly.backend.configIncomplete", message);
             }
 
             status = await PollUntilFinalAsync(settings, status, timeoutCts.Token);
@@ -339,21 +350,27 @@ public sealed class LinklyBackendTerminalClient(
             var message = T("linkly.backend.timeout", "ANZ Linkly Cloud transaction timed out.");
             await PresentFinalFailureAsync("backend-timeout", message, cancellationToken);
             keepDialogOpen = true;
-            return new PaymentAuthorizationResult(false, null, message);
+            return transactionSubmitted
+                ? ResultUnknown("linkly.backend.resultUnknown", BuildResultUnknownMessage(message))
+                : FallbackAllowed("linkly.backend.timeout", message);
         }
         catch (HttpRequestException)
         {
             var message = T("linkly.backend.communicationFailed", "ANZ Linkly Cloud backend communication failed.");
             await PresentFinalFailureAsync("backend-http-error", message, cancellationToken);
             keepDialogOpen = true;
-            return new PaymentAuthorizationResult(false, null, message);
+            return transactionSubmitted
+                ? ResultUnknown("linkly.backend.resultUnknown", BuildResultUnknownMessage(message))
+                : FallbackAllowed("linkly.backend.communicationFailed", message);
         }
         catch (JsonException)
         {
             var message = T("linkly.backend.invalidResponse", "ANZ Linkly Cloud backend returned an invalid response.");
             await PresentFinalFailureAsync("backend-json-error", message, cancellationToken);
             keepDialogOpen = true;
-            return new PaymentAuthorizationResult(false, null, message);
+            return transactionSubmitted
+                ? ResultUnknown("linkly.backend.resultUnknown", BuildResultUnknownMessage(message))
+                : FallbackAllowed("linkly.backend.invalidResponse", message);
         }
         finally
         {
@@ -402,7 +419,36 @@ public sealed class LinklyBackendTerminalClient(
             $"active session rejected for new payment sessionId={activeStatus.SessionId} " +
             $"txnRef={LogValue(activeStatus.TxnRef)} status={activeStatus.Status}");
         await PresentFinalFailureAsync(activeStatus.SessionId, message, cancellationToken);
-        return new PaymentAuthorizationResult(false, null, message);
+        return new PaymentAuthorizationResult(
+            false,
+            null,
+            message,
+            StatusKey: "linkly.backend.activeSessionRequiresRecovery");
+    }
+
+    private PaymentAuthorizationResult FallbackAllowed(string statusKey, string message)
+    {
+        return new PaymentAuthorizationResult(false, null, message, StatusKey: statusKey, FallbackAllowed: true);
+    }
+
+    private PaymentAuthorizationResult ResultUnknown(string statusKey, string message)
+    {
+        return new PaymentAuthorizationResult(false, null, message, StatusKey: statusKey, ResultUnknown: true);
+    }
+
+    private static bool IsBackendStartRejectedBeforeSession(LinklyBackendHttpException ex)
+    {
+        return ex.HttpStatus is HttpStatusCode.BadRequest or HttpStatusCode.UnprocessableEntity;
+    }
+
+    private string BuildResultUnknownMessage(string detail)
+    {
+        var guidance = T(
+            "linkly.backend.resultUnknown",
+            "ANZ Linkly Cloud backend transaction result is unknown. Confirm the Linkly transaction status before retrying.");
+        return string.IsNullOrWhiteSpace(detail)
+            ? guidance
+            : $"{detail} {guidance}";
     }
 
     private async Task<LinklyCloudBackendSessionResponse> PollUntilFinalAsync(

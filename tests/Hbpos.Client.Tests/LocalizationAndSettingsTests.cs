@@ -343,6 +343,25 @@ public sealed class LocalizationAndSettingsTests
     }
 
     [Fact]
+    public async Task Scanner_binding_service_can_read_before_full_schema_initialization()
+    {
+        var databasePath = CreateTempDatabasePath();
+
+        try
+        {
+            var store = new LocalSqliteStore(databasePath);
+            var settings = new LocalAppSettingsRepository(store);
+            var binding = new ScannerBindingService(settings);
+
+            Assert.Null(await binding.GetBoundDevicePathAsync());
+        }
+        finally
+        {
+            DeleteTempDatabase(databasePath);
+        }
+    }
+
+    [Fact]
     public async Task Local_schema_creates_app_settings_table()
     {
         var databasePath = CreateTempDatabasePath();

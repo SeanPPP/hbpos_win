@@ -44,4 +44,15 @@ public sealed class ServiceRegistrationTests
         var options = provider.GetRequiredService<IOptions<LinklyCloudBackendAsyncOptions>>().Value;
         Assert.Equal("https://legacy-public.example/callback/", options.PublicNotificationBaseUrl);
     }
+
+    [Fact]
+    public void AddHbposApiServices_RegistersAdvertisementSchemaInitializer()
+    {
+        var services = new ServiceCollection();
+
+        services.AddHbposApiServices();
+
+        var descriptor = Assert.Single(services, x => x.ServiceType == typeof(IAdvertisementSchemaInitializer));
+        Assert.Equal(typeof(SqlSugarAdvertisementSchemaInitializer), descriptor.ImplementationType);
+    }
 }

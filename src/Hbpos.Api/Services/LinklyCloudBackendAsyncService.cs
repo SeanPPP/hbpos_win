@@ -161,6 +161,8 @@ public class LinklyCloudBackendAsyncService(
             $"store={LogValue(normalizedStoreCode)} device={LogValue(normalizedDeviceCode)} " +
             $"componentVersion={GetComponentVersion()}");
         var notificationBaseUri = GetPublicNotificationBaseUri();
+        // 配置缺失必须在创建本地 Pending 前失败，避免产生未提交但占用终端的假 active session。
+        _ = GetRequiredNotificationBearer(environment);
         var activeSession = await repository.GetActiveSessionAsync(
             environment,
             normalizedStoreCode,
@@ -1041,11 +1043,7 @@ public class LinklyCloudBackendAsyncService(
         string sessionId,
         Uri notificationBaseUri)
     {
-        var bearer = GetNotificationBearer(environment);
-        if (string.IsNullOrWhiteSpace(bearer))
-        {
-            throw new LinklyCloudBackendValidationException("Linkly Cloud notification bearer is not configured.");
-        }
+        var bearer = GetRequiredNotificationBearer(environment);
 
         var relativePath = string.Join(
             '/',
@@ -1063,6 +1061,17 @@ public class LinklyCloudBackendAsyncService(
         return string.Equals(environment, "Sandbox", StringComparison.Ordinal)
             ? NormalizeOptional(options.Value.SandboxNotificationBearer)
             : NormalizeOptional(options.Value.ProductionNotificationBearer);
+    }
+
+    private string GetRequiredNotificationBearer(string environment)
+    {
+        var bearer = GetNotificationBearer(environment);
+        if (string.IsNullOrWhiteSpace(bearer))
+        {
+            throw new LinklyCloudBackendValidationException("Linkly Cloud notification bearer is not configured.");
+        }
+
+        return bearer;
     }
 
     private Uri GetPublicNotificationBaseUri()

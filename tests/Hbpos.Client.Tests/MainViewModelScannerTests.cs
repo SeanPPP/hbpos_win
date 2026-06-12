@@ -560,6 +560,192 @@ public sealed class MainViewModelScannerTests
     }
 
     [Fact]
+    public async Task ContinueStartupAfterShownAsync_WithAuthorizedDeviceAndConnectivityFailure_KeepsOfflinePosAvailable()
+    {
+        var authorizationState = new DeviceAuthorizationState();
+        var connectivity = new FakeConnectivityApiClient
+        {
+            CheckOnlineException = new InvalidOperationException("API unavailable")
+        };
+        var viewModel = new MainViewModel(
+            new LocalSellableItemIndex(),
+            new PosCartService(),
+            new CashCheckoutService(),
+            new FakeLocalSchemaService(),
+            new FakeSettingsRepository(),
+            new FakeCatalogRepository { Items = [CreateItem("1042", "SKU-001", "9528502522381")] },
+            new FakeCatalogSyncService(),
+            new FakeRemoteLookupRefreshService(),
+            new FakeSpecialProductService(),
+            connectivity,
+            new FakeLocalDeviceRepository { Latest = CreateAllowedDevice("1042") },
+            new FakeDeviceApiClient(),
+            new FakeDeviceFingerprintService(),
+            authorizationState,
+            new FakeLocalOrderRepository(),
+            new FakeSyncQueueRepository(),
+            new LocalizationService(),
+            new FakeCustomerDisplayWindowService(),
+            new FakeRawScannerService());
+        var startupOptions = new AppStartupOptions([], false, null, null);
+
+        await viewModel.InitializeAsync(startupOptions);
+        await viewModel.ContinueStartupAfterShownAsync(startupOptions);
+
+        Assert.Same(viewModel.PosTerminal, viewModel.CurrentScreen);
+        Assert.True(viewModel.IsPosTerminalScreenActive);
+        Assert.Equal("1042", viewModel.Session.StoreCode);
+        Assert.Equal("POS-001", viewModel.Session.DeviceCode);
+        Assert.False(viewModel.Session.IsOnline);
+        Assert.NotNull(authorizationState.Current);
+        Assert.Equal(1, connectivity.CheckOnlineCallCount);
+    }
+
+    [Fact]
+    public async Task ContinueStartupAfterShownAsync_WithCatalogSyncFailure_KeepsLocalCatalogAndPosScreen()
+    {
+        var index = new LocalSellableItemIndex();
+        var catalogSync = new FakeCatalogSyncService
+        {
+            FullSyncException = new InvalidOperationException("catalog API unavailable")
+        };
+        var viewModel = new MainViewModel(
+            index,
+            new PosCartService(),
+            new CashCheckoutService(),
+            new FakeLocalSchemaService(),
+            new FakeSettingsRepository(),
+            new FakeCatalogRepository { Items = [CreateItem("1042", "SKU-001", "9528502522381")] },
+            catalogSync,
+            new FakeRemoteLookupRefreshService(),
+            new FakeSpecialProductService(),
+            new FakeConnectivityApiClient(true),
+            new FakeLocalDeviceRepository { Latest = CreateAllowedDevice("1042") },
+            new FakeDeviceApiClient(),
+            new FakeDeviceFingerprintService(),
+            new DeviceAuthorizationState(),
+            new FakeLocalOrderRepository(),
+            new FakeSyncQueueRepository(),
+            new LocalizationService(),
+            new FakeCustomerDisplayWindowService(),
+            new FakeRawScannerService());
+        var startupOptions = new AppStartupOptions([], false, null, null);
+
+        await viewModel.InitializeAsync(startupOptions);
+        await viewModel.ContinueStartupAfterShownAsync(startupOptions);
+        await WaitUntilAsync(() => catalogSync.FullSyncCallCount > 0);
+
+        Assert.Same(viewModel.PosTerminal, viewModel.CurrentScreen);
+        Assert.True(viewModel.IsPosTerminalScreenActive);
+        Assert.Equal("SKU-001", Assert.Single(index.FindExactMatches("1042", "9528502522381")).ProductCode);
+        Assert.Equal(1, catalogSync.FullSyncCallCount);
+    }
+
+    [Fact]
+    public async Task ContinueStartupAfterShownAsync_WithEmptyLocalCatalog_RunsInitialSyncWithoutStartupTimeout()
+    {
+        var shellCatalog = new RecordingShellCatalogService
+        {
+            SyncItems = [CreateItem("1042", "SKU-DOWNLOADED", "9528502522381")]
+        };
+        var viewModel = CreateMainViewModelWithShellCatalog(
+            new FakeCatalogRepository(),
+            shellCatalog,
+            new FakeConnectivityApiClient(true));
+        var startupOptions = new AppStartupOptions([], false, null, null);
+
+        await viewModel.InitializeAsync(startupOptions);
+        await viewModel.ContinueStartupAfterShownAsync(startupOptions);
+        await WaitUntilAsync(() => shellCatalog.SyncCallCount > 0);
+
+        Assert.Equal(1, shellCatalog.SyncCallCount);
+        Assert.False(shellCatalog.LastSyncCancellationToken.CanBeCanceled);
+        Assert.Equal("SKU-DOWNLOADED", Assert.Single(viewModel.PosTerminal!.Matches).ProductCode);
+    }
+
+    [Fact]
+    public async Task ContinueStartupAfterShownAsync_WithExistingLocalCatalog_RunsBackgroundRefreshWithoutStartupTimeout()
+    {
+        var shellCatalog = new RecordingShellCatalogService
+        {
+            SyncItems = [CreateItem("1042", "SKU-REFRESHED", "9528502522381")]
+        };
+        var viewModel = CreateMainViewModelWithShellCatalog(
+            new FakeCatalogRepository { Items = [CreateItem("1042", "SKU-CACHED", "9528502522380")] },
+            shellCatalog,
+            new FakeConnectivityApiClient(true));
+        var startupOptions = new AppStartupOptions([], false, null, null);
+
+        await viewModel.InitializeAsync(startupOptions);
+        await viewModel.ContinueStartupAfterShownAsync(startupOptions);
+        await WaitUntilAsync(() => shellCatalog.SyncCallCount > 0);
+
+        Assert.Equal(1, shellCatalog.SyncCallCount);
+        Assert.False(shellCatalog.LastSyncCancellationToken.CanBeCanceled);
+    }
+
+    [Fact]
+    public async Task ContinueStartupAfterShownAsync_WithEmptyLocalCatalogSyncFailure_ShowsInitialDownloadFailure()
+    {
+        var shellCatalog = new RecordingShellCatalogService
+        {
+            SyncException = new InvalidOperationException("catalog API unavailable")
+        };
+        var viewModel = CreateMainViewModelWithShellCatalog(
+            new FakeCatalogRepository(),
+            shellCatalog,
+            new FakeConnectivityApiClient(true));
+        var startupOptions = new AppStartupOptions([], false, null, null);
+
+        await viewModel.InitializeAsync(startupOptions);
+        await viewModel.ContinueStartupAfterShownAsync(startupOptions);
+        await WaitUntilAsync(() => shellCatalog.SyncCallCount > 0 && viewModel.StatusMessage.Length > 0);
+
+        Assert.Equal(1, shellCatalog.SyncCallCount);
+        Assert.Contains("initial catalog", viewModel.StatusMessage, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("catalog API unavailable", viewModel.StatusMessage, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task ContinueStartupAfterShownAsync_WithRegistrationStoreLoadFailure_StaysOnRegistrationScreen()
+    {
+        var deviceApi = new FakeDeviceApiClient
+        {
+            GetStoresException = new InvalidOperationException("store API unavailable")
+        };
+        var viewModel = new MainViewModel(
+            new LocalSellableItemIndex(),
+            new PosCartService(),
+            new CashCheckoutService(),
+            new FakeLocalSchemaService(),
+            new FakeSettingsRepository(),
+            new FakeCatalogRepository(),
+            new FakeCatalogSyncService(),
+            new FakeRemoteLookupRefreshService(),
+            new FakeSpecialProductService(),
+            new FakeConnectivityApiClient(),
+            new FakeLocalDeviceRepository(),
+            deviceApi,
+            new FakeDeviceFingerprintService(),
+            new DeviceAuthorizationState(),
+            new FakeLocalOrderRepository(),
+            new FakeSyncQueueRepository(),
+            new LocalizationService(),
+            new FakeCustomerDisplayWindowService(),
+            new FakeRawScannerService());
+        var startupOptions = new AppStartupOptions([], false, null, null);
+
+        await viewModel.InitializeAsync(startupOptions);
+        await viewModel.ContinueStartupAfterShownAsync(startupOptions);
+
+        Assert.NotNull(viewModel.DeviceRegistration);
+        Assert.Same(viewModel.DeviceRegistration, viewModel.CurrentScreen);
+        Assert.Equal("store API unavailable", viewModel.DeviceRegistration.StatusMessage);
+        Assert.Equal(1, deviceApi.GetStoresCallCount);
+        Assert.Null(viewModel.PosTerminal);
+    }
+
+    [Fact]
     public async Task InitializeAsync_LoadsSpecialProductsDataBeforeNavigatingToPos()
     {
         var catalog = new FakeCatalogRepository
@@ -1282,6 +1468,105 @@ public sealed class MainViewModelScannerTests
         var store = Assert.Single(viewModel.DeviceRegistration.Stores);
         Assert.Equal("2042", store.StoreCode);
         Assert.Null(viewModel.DeviceRegistration.SelectedStore);
+    }
+
+    [Fact]
+    public async Task Settings_ReregisterDeviceCommand_NotifiesDeviceRegistrationForDialogBinding()
+    {
+        var deviceApi = new FakeDeviceApiClient
+        {
+            Stores =
+            [
+                new StoreSelectionItem("1042", "Old Store", true),
+                new StoreSelectionItem("2042", "New Store", true)
+            ]
+        };
+        var viewModel = CreateAuthorizedMainViewModelWithSettings(deviceApiClient: deviceApi);
+        var changedProperties = new List<string?>();
+        viewModel.PropertyChanged += (_, args) => changedProperties.Add(args.PropertyName);
+
+        await viewModel.InitializeAsync(new AppStartupOptions([], false, null, null));
+        await viewModel.ShowSettingsCommand.ExecuteAsync(null);
+        var settings = Assert.IsType<SettingsViewModel>(viewModel.CurrentScreen);
+        changedProperties.Clear();
+
+        await settings.ReregisterDeviceCommand.ExecuteAsync(null);
+
+        Assert.Contains(nameof(MainViewModel.DeviceRegistration), changedProperties);
+        Assert.True(viewModel.IsDeviceReregistrationDialogOpen);
+        Assert.NotNull(viewModel.DeviceRegistration);
+        var store = Assert.Single(viewModel.DeviceRegistration.Stores);
+        Assert.Equal("2042", store.StoreCode);
+        Assert.True(viewModel.DeviceRegistration.CancelCommand.CanExecute(null));
+
+        changedProperties.Clear();
+        viewModel.DeviceRegistration.CancelCommand.Execute(null);
+
+        Assert.Contains(nameof(MainViewModel.DeviceRegistration), changedProperties);
+        Assert.False(viewModel.IsDeviceReregistrationDialogOpen);
+        Assert.Null(viewModel.DeviceRegistration);
+    }
+
+    [Fact]
+    public async Task Settings_ReregisterDeviceCommand_CancelWhileLoadingStoresClosesDialog()
+    {
+        var pendingStores = new TaskCompletionSource<IReadOnlyList<StoreSelectionItem>>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var deviceApi = new FakeDeviceApiClient
+        {
+            PendingStoresResult = pendingStores
+        };
+        var viewModel = CreateAuthorizedMainViewModelWithSettings(deviceApiClient: deviceApi);
+
+        await viewModel.InitializeAsync(new AppStartupOptions([], false, null, null));
+        await viewModel.ShowSettingsCommand.ExecuteAsync(null);
+        var settings = Assert.IsType<SettingsViewModel>(viewModel.CurrentScreen);
+
+        var openTask = settings.ReregisterDeviceCommand.ExecuteAsync(null);
+        await WaitUntilAsync(() => viewModel.IsDeviceReregistrationDialogOpen && viewModel.DeviceRegistration is not null);
+
+        Assert.True(viewModel.DeviceRegistration!.CancelCommand.CanExecute(null));
+
+        viewModel.DeviceRegistration.CancelCommand.Execute(null);
+
+        Assert.False(viewModel.IsDeviceReregistrationDialogOpen);
+        Assert.Null(viewModel.DeviceRegistration);
+        Assert.Same(settings, viewModel.CurrentScreen);
+
+        pendingStores.SetResult(
+        [
+            new StoreSelectionItem("1042", "Old Store", true),
+            new StoreSelectionItem("2042", "New Store", true)
+        ]);
+        await openTask;
+
+        Assert.False(viewModel.IsDeviceReregistrationDialogOpen);
+        Assert.Null(viewModel.DeviceRegistration);
+        Assert.Same(settings, viewModel.CurrentScreen);
+    }
+
+    [Fact]
+    public async Task Settings_ReregisterDeviceCommand_WithOnlyCurrentStoreShowsEmptyStateAndCanCancel()
+    {
+        var deviceApi = new FakeDeviceApiClient
+        {
+            Stores = [new StoreSelectionItem("1042", "Old Store", true)]
+        };
+        var viewModel = CreateAuthorizedMainViewModelWithSettings(deviceApiClient: deviceApi);
+
+        await viewModel.InitializeAsync(new AppStartupOptions([], false, null, null));
+        await viewModel.ShowSettingsCommand.ExecuteAsync(null);
+        var settings = Assert.IsType<SettingsViewModel>(viewModel.CurrentScreen);
+
+        await settings.ReregisterDeviceCommand.ExecuteAsync(null);
+
+        Assert.True(viewModel.IsDeviceReregistrationDialogOpen);
+        Assert.NotNull(viewModel.DeviceRegistration);
+        Assert.Empty(viewModel.DeviceRegistration.Stores);
+        Assert.Null(viewModel.DeviceRegistration.SelectedStore);
+        Assert.False(viewModel.DeviceRegistration.RegisterCommand.CanExecute(null));
+        Assert.Contains("No other", viewModel.DeviceRegistration.StatusMessage, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("stores", viewModel.DeviceRegistration.StatusMessage, StringComparison.OrdinalIgnoreCase);
+        Assert.True(viewModel.DeviceRegistration.CancelCommand.CanExecute(null));
     }
 
     [Fact]
@@ -2057,7 +2342,7 @@ public sealed class MainViewModelScannerTests
         await InvokeRecoverCardPaymentAttemptAsync(viewModel, navigateToPaymentOnDraft: true);
         await InvokeRecoverCardPaymentAttemptAsync(viewModel, navigateToPaymentOnDraft: true);
 
-        Assert.Equal(1, recovery.CallCount);
+        Assert.Equal(2, recovery.CallCount);
     }
 
     [Fact]
@@ -2128,8 +2413,9 @@ public sealed class MainViewModelScannerTests
         Assert.Equal(ReceiptPrintReason.CardAuto, call.Reason);
         Assert.True(viewModel.IsCardRecoveryResultDialogOpen);
         Assert.NotNull(viewModel.CardRecoveryResultDialog);
-        Assert.Equal("刷卡交易已恢复成功", viewModel.CardRecoveryResultDialog!.Title);
+        Assert.Equal("Card transaction recovered successfully", viewModel.CardRecoveryResultDialog!.Title);
         Assert.True(viewModel.CardRecoveryResultDialog.CanPrintReceipt);
+        Assert.Equal("Print receipt", viewModel.CardRecoveryResultDialog.PrintButtonText);
         Assert.True(viewModel.CardRecoveryResultDialog.HasReceiptPreview);
 
         await viewModel.PrintRecoveredReceiptCommand.ExecuteAsync(null);
@@ -2141,7 +2427,6 @@ public sealed class MainViewModelScannerTests
     public async Task Card_payment_recovery_draft_restored_during_startup_keeps_pos_screen_and_surfaces_status()
     {
         var cart = new PosCartService();
-        cart.AddItem(CreateItem("1042", "SKU-CURRENT-PAYMENT", "930CURRENTPAYMENT"));
         var recovery = new FakeCardPaymentRecoveryService((recoveredCart, _, _) =>
         {
             // 模拟恢复服务在返回结果前已经把草稿购物车恢复到当前会话。
@@ -2167,7 +2452,7 @@ public sealed class MainViewModelScannerTests
         Assert.Single(cart.Lines);
         Assert.True(viewModel.IsCardRecoveryResultDialogOpen);
         Assert.NotNull(viewModel.CardRecoveryResultDialog);
-        Assert.Equal("上一笔刷卡未完成", viewModel.CardRecoveryResultDialog!.Title);
+        Assert.Equal("Previous card transaction was not completed", viewModel.CardRecoveryResultDialog!.Title);
         Assert.False(viewModel.CardRecoveryResultDialog.CanPrintReceipt);
     }
 
@@ -2196,7 +2481,7 @@ public sealed class MainViewModelScannerTests
         Assert.True(viewModel.IsCardRecoveryResultDialogOpen);
         var dialog = viewModel.CardRecoveryResultDialog;
         Assert.NotNull(dialog);
-        Assert.Equal("上一笔刷卡未成功", dialog.Title);
+        Assert.Equal("Previous card transaction was not successful", dialog.Title);
         Assert.Equal("session-review", dialog.SessionId);
         Assert.Equal("txn-review", dialog.TxnRef);
         Assert.Equal("TM", dialog.ResponseCode);
@@ -2277,6 +2562,68 @@ public sealed class MainViewModelScannerTests
         Assert.Null(authorizationState.Current);
         Assert.True(viewModel.IsDeviceReregistrationDialogOpen);
         Assert.Equal("POS-NEW", viewModel.DeviceRegistration.DeviceCode);
+        Assert.Equal("2042", deviceApi.LastReregisterRequest?.TargetStoreCode);
+    }
+
+    [Fact]
+    public async Task ReregisterDevice_CancelWhileSubmittingKeepsCurrentAuthorization()
+    {
+        var authorizationState = new DeviceAuthorizationState();
+        var pendingReregister = new TaskCompletionSource<DeviceReregisterResponse>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var deviceApi = new FakeDeviceApiClient
+        {
+            Stores =
+            [
+                new StoreSelectionItem("1042", "Old Store", true),
+                new StoreSelectionItem("2042", "New Store", true)
+            ],
+            PendingReregisterResponse = pendingReregister
+        };
+        var viewModel = new MainViewModel(
+            new LocalSellableItemIndex(),
+            new PosCartService(),
+            new CashCheckoutService(),
+            new FakeLocalSchemaService(),
+            new FakeSettingsRepository(),
+            new FakeCatalogRepository(),
+            new FakeCatalogSyncService(),
+            new FakeRemoteLookupRefreshService(),
+            new FakeSpecialProductService(),
+            new FakeConnectivityApiClient(),
+            new FakeLocalDeviceRepository { Latest = CreateAllowedDevice("1042") },
+            deviceApi,
+            new FakeDeviceFingerprintService(),
+            authorizationState,
+            new FakeLocalOrderRepository(),
+            new FakeSyncQueueRepository(),
+            new LocalizationService(),
+            new FakeCustomerDisplayWindowService(),
+            new FakeRawScannerService());
+
+        await viewModel.InitializeAsync(new AppStartupOptions([], false, null, null));
+        var originalAuthorization = Assert.IsType<DeviceAuthorizationContext>(authorizationState.Current);
+
+        await viewModel.PosTerminal!.ReregisterDeviceCommand.ExecuteAsync(null);
+        viewModel.DeviceRegistration!.SelectedStore = viewModel.DeviceRegistration.Stores.Single(store => store.StoreCode == "2042");
+        var submitTask = viewModel.DeviceRegistration.RegisterCommand.ExecuteAsync(null);
+        await deviceApi.WaitForReregisterStartedAsync();
+
+        Assert.True(viewModel.DeviceRegistration.CancelCommand.CanExecute(null));
+
+        viewModel.DeviceRegistration.CancelCommand.Execute(null);
+
+        Assert.False(viewModel.IsDeviceReregistrationDialogOpen);
+        Assert.Null(viewModel.DeviceRegistration);
+        Assert.Same(viewModel.PosTerminal, viewModel.CurrentScreen);
+
+        pendingReregister.SetResult(new DeviceReregisterResponse("POS-NEW", "2042", "New Store", -1, false, "Pending approval"));
+        await submitTask;
+
+        Assert.Same(originalAuthorization, authorizationState.Current);
+        Assert.NotNull(viewModel.PosTerminal);
+        Assert.Same(viewModel.PosTerminal, viewModel.CurrentScreen);
+        Assert.False(viewModel.IsDeviceReregistrationDialogOpen);
+        Assert.Null(viewModel.DeviceRegistration);
         Assert.Equal("2042", deviceApi.LastReregisterRequest?.TargetStoreCode);
     }
 
@@ -2379,6 +2726,48 @@ public sealed class MainViewModelScannerTests
             applicationExitService: applicationExitService,
             confirmationDialogService: confirmationDialogService,
             cardPaymentRecoveryService: cardPaymentRecoveryService);
+    }
+
+    private static MainViewModel CreateMainViewModelWithShellCatalog(
+        FakeCatalogRepository catalogRepository,
+        IShellCatalogService shellCatalogService,
+        IConnectivityApiClient connectivityApiClient)
+    {
+        var localization = new LocalizationService();
+        var priceIndex = new LocalSellableItemIndex();
+        var cart = new PosCartService();
+        var checkout = new CashCheckoutService();
+        var deviceRepository = new FakeLocalDeviceRepository { Latest = CreateAllowedDevice("1042") };
+        var fingerprintService = new FakeDeviceFingerprintService();
+        var orderRepository = new FakeLocalOrderRepository();
+        var syncQueue = new FakeSyncQueueRepository();
+
+        return new MainViewModel(
+            priceIndex,
+            cart,
+            checkout,
+            new FakeLocalSchemaService(),
+            new ShellCultureService(localization, new FakeSettingsRepository()),
+            shellCatalogService,
+            catalogRepository,
+            new FakeRemoteLookupRefreshService(),
+            new FakeSpecialProductService(),
+            connectivityApiClient,
+            new MainShellStartupService(deviceRepository, fingerprintService, new DeviceAuthorizationState()),
+            orderRepository,
+            new ShellSyncCenterService(syncQueue),
+            localization,
+            new CustomerDisplayOrchestrator(new FakeCustomerDisplayWindowService()),
+            new FakeRawScannerService(),
+            new ReceiptQueryService(orderRepository),
+            new CashPaymentWorkflowService(checkout, orderRepository, syncQueue),
+            new DeviceRegistrationWorkflowService(new FakeDeviceApiClient(), deviceRepository, fingerprintService),
+            new SpecialProductsWorkflowService(priceIndex, cart, catalogRepository, new FakeSpecialProductService()),
+            (remoteLookupRefreshAsync, reloadCatalogAsync) => new PosTerminalWorkflowService(
+                priceIndex,
+                cart,
+                remoteLookupRefreshAsync,
+                reloadCatalogAsync));
     }
 
     private static async Task<bool> InvokeRecoverCardPaymentAttemptAsync(
@@ -3001,7 +3390,19 @@ public sealed class MainViewModelScannerTests
             int pageSize,
             CancellationToken cancellationToken = default)
         {
-            return Task.FromResult<IReadOnlyList<LocalSellableItemCompareRow>>([]);
+            var rows = Items
+                .Where(item => string.Equals(item.StoreCode, storeCode, StringComparison.OrdinalIgnoreCase))
+                .Select(item => new LocalSellableItemCompareRow(
+                    item.StoreCode,
+                    item.LookupCode,
+                    item.ProductCode,
+                    item.UpdatedAt))
+                .OrderBy(row => row.LookupCodeNormalized, StringComparer.Ordinal)
+                .Where(row => string.IsNullOrWhiteSpace(afterLookupCodeNormalized)
+                    || string.Compare(row.LookupCodeNormalized, afterLookupCodeNormalized, StringComparison.Ordinal) > 0)
+                .Take(pageSize)
+                .ToArray();
+            return Task.FromResult<IReadOnlyList<LocalSellableItemCompareRow>>(rows);
         }
 
         public Task<IReadOnlyList<SellableItemDto>> LoadSellableItemsAsync(CancellationToken cancellationToken = default)
@@ -3047,13 +3448,60 @@ public sealed class MainViewModelScannerTests
 
     private sealed class FakeCatalogSyncService : ILocalCatalogSyncService
     {
+        public int FullSyncCallCount { get; private set; }
+
+        public Exception? FullSyncException { get; init; }
+
         public Task<LocalCatalogSyncResult> FullSyncAsync(
             string storeCode,
             CancellationToken cancellationToken = default,
             IProgress<CatalogSyncProgress>? progress = null,
             bool forceFullDownload = false)
         {
-            return Task.FromResult(new LocalCatalogSyncResult(storeCode, 0, 0, 0, 0));
+            FullSyncCallCount++;
+            return FullSyncException is null
+                ? Task.FromResult(new LocalCatalogSyncResult(storeCode, 0, 0, 0, 0))
+                : Task.FromException<LocalCatalogSyncResult>(FullSyncException);
+        }
+    }
+
+    private sealed class RecordingShellCatalogService : IShellCatalogService
+    {
+        public IReadOnlyList<SellableItemDto> LocalItems { get; init; } = [];
+
+        public IReadOnlyList<SellableItemDto> SyncItems { get; init; } = [];
+
+        public Exception? SyncException { get; init; }
+
+        public int SyncCallCount { get; private set; }
+
+        public CancellationToken LastSyncCancellationToken { get; private set; }
+
+        public bool IsCatalogSyncActive => false;
+
+        public Task ReplacePreviewCatalogAsync(IEnumerable<SellableItemDto> items, CancellationToken cancellationToken = default)
+        {
+            return Task.CompletedTask;
+        }
+
+        public Task<IReadOnlyList<SellableItemDto>> LoadLocalCatalogAsync(
+            string storeCode,
+            CancellationToken cancellationToken = default)
+        {
+            return Task.FromResult(LocalItems);
+        }
+
+        public Task<IReadOnlyList<SellableItemDto>> SyncCatalogAndReloadAsync(
+            string storeCode,
+            bool forceFullDownload,
+            IProgress<CatalogSyncProgress>? progress = null,
+            CancellationToken cancellationToken = default)
+        {
+            SyncCallCount++;
+            LastSyncCancellationToken = cancellationToken;
+            return SyncException is null
+                ? Task.FromResult(SyncItems)
+                : Task.FromException<IReadOnlyList<SellableItemDto>>(SyncException);
         }
     }
 
@@ -3092,11 +3540,18 @@ public sealed class MainViewModelScannerTests
     {
         private readonly Queue<bool> _responses = new(responses);
 
+        public Exception? CheckOnlineException { get; init; }
+
         public int CheckOnlineCallCount { get; private set; }
 
         public Task<bool> CheckOnlineAsync(CancellationToken cancellationToken = default)
         {
             CheckOnlineCallCount++;
+            if (CheckOnlineException is not null)
+            {
+                return Task.FromException<bool>(CheckOnlineException);
+            }
+
             return Task.FromResult(_responses.Count > 0 && _responses.Dequeue());
         }
     }
@@ -3132,14 +3587,29 @@ public sealed class MainViewModelScannerTests
 
         public IReadOnlyList<StoreSelectionItem> Stores { get; init; } = [];
 
+        public TaskCompletionSource<IReadOnlyList<StoreSelectionItem>>? PendingStoresResult { get; init; }
+
+        public Exception? GetStoresException { get; init; }
+
         public DeviceReregisterResponse? ReregisterResponse { get; init; }
+
+        public TaskCompletionSource<DeviceReregisterResponse>? PendingReregisterResponse { get; init; }
+
+        private TaskCompletionSource ReregisterStarted { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
 
         public DeviceReregisterRequest? LastReregisterRequest { get; private set; }
 
         public Task<IReadOnlyList<StoreSelectionItem>> GetStoresAsync(CancellationToken cancellationToken = default)
         {
             GetStoresCallCount++;
-            return Task.FromResult(Stores);
+            if (PendingStoresResult is not null)
+            {
+                return PendingStoresResult.Task;
+            }
+
+            return GetStoresException is null
+                ? Task.FromResult(Stores)
+                : Task.FromException<IReadOnlyList<StoreSelectionItem>>(GetStoresException);
         }
 
         public Task<DeviceRegisterResponse> RegisterAsync(DeviceRegisterRequest request, CancellationToken cancellationToken = default)
@@ -3155,8 +3625,12 @@ public sealed class MainViewModelScannerTests
         public Task<DeviceReregisterResponse> ReregisterAsync(DeviceReregisterRequest request, CancellationToken cancellationToken = default)
         {
             LastReregisterRequest = request;
-            return Task.FromResult(ReregisterResponse ?? new DeviceReregisterResponse("POS-NEW", request.TargetStoreCode, "New Store", -1, false, "Pending approval"));
+            ReregisterStarted.TrySetResult();
+            return PendingReregisterResponse?.Task
+                ?? Task.FromResult(ReregisterResponse ?? new DeviceReregisterResponse("POS-NEW", request.TargetStoreCode, "New Store", -1, false, "Pending approval"));
         }
+
+        public Task WaitForReregisterStartedAsync() => ReregisterStarted.Task;
     }
 
     private sealed class FakeDeviceFingerprintService : IDeviceFingerprintService
@@ -3563,6 +4037,17 @@ public sealed class MainViewModelScannerTests
         public int CallCount { get; private set; }
 
         public Task<CardPaymentRecoveryResult> RecoverLatestAsync(
+            PosCartService cart,
+            PosSessionState session,
+            CancellationToken cancellationToken = default)
+        {
+            CallCount++;
+            return _results.Count > 0
+                ? _results.Dequeue()(cart, session, cancellationToken)
+                : Task.FromResult(CardPaymentRecoveryResult.None);
+        }
+
+        public Task<CardPaymentRecoveryResult> RecoverActiveSessionAsync(
             PosCartService cart,
             PosSessionState session,
             CancellationToken cancellationToken = default)

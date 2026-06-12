@@ -552,6 +552,54 @@
   <data name="payment.card.squareRefundStatus" xml:space="preserve">
     <value>Square 退款状态为 {0}。</value>
   </data>
+  <data name="payment.card.error.overlay.connectionFailed.title" xml:space="preserve">
+    <value>刷卡机连接失败</value>
+  </data>
+  <data name="payment.card.error.overlay.connectionFailed.message" xml:space="preserve">
+    <value>无法连接到刷卡机。请检查刷卡机电源和网络连接，确认正常后重试。</value>
+  </data>
+  <data name="payment.card.error.overlay.cloudCommunicationFailed.title" xml:space="preserve">
+    <value>云刷卡通讯失败</value>
+  </data>
+  <data name="payment.card.error.overlay.cloudCommunicationFailed.message" xml:space="preserve">
+    <value>与云刷卡服务通讯失败。请检查网络连接后重试。</value>
+  </data>
+  <data name="payment.card.error.overlay.timeout.title" xml:space="preserve">
+    <value>刷卡交易超时</value>
+  </data>
+  <data name="payment.card.error.overlay.timeout.message" xml:space="preserve">
+    <value>刷卡交易超时未响应。请检查刷卡机状态后重试。</value>
+  </data>
+  <data name="payment.card.error.overlay.squareCommunicationFailed.title" xml:space="preserve">
+    <value>Square 刷卡机通讯失败</value>
+  </data>
+  <data name="payment.card.error.overlay.squareCommunicationFailed.message" xml:space="preserve">
+    <value>与 Square 刷卡机通讯失败。请检查 Square 终端及网络连接后重试。</value>
+  </data>
+  <data name="payment.card.error.overlay.unexpected.title" xml:space="preserve">
+    <value>刷卡支付异常</value>
+  </data>
+  <data name="payment.card.error.overlay.unexpected.message" xml:space="preserve">
+    <value>刷卡支付时发生意外错误。请重试，如仍失败请联系技术支持。</value>
+  </data>
+  <data name="payment.card.error.overlay.close" xml:space="preserve">
+    <value>知道了</value>
+  </data>
+  <data name="payment.card.error.overlay.activeSession.title" xml:space="preserve">
+    <value>上一笔刷卡需要恢复</value>
+  </data>
+  <data name="payment.card.error.overlay.activeSession.message" xml:space="preserve">
+    <value>当前订单尚未发到 Linkly。请先恢复或确认上一笔交易，再开始新的刷卡付款。</value>
+  </data>
+  <data name="payment.card.error.overlay.activeSession.recover" xml:space="preserve">
+    <value>恢复上一笔</value>
+  </data>
+  <data name="payment.card.error.overlay.activeSession.close" xml:space="preserve">
+    <value>关闭</value>
+  </data>
+  <data name="payment.card.error.overlay.activeSession.recovering" xml:space="preserve">
+    <value>正在恢复上一笔 Linkly 交易...</value>
+  </data>
   <data name="success.subtitle" xml:space="preserve">
     <value>本次交易已成功处理。</value>
   </data>
@@ -1119,6 +1167,15 @@
   <data name="payment.status.cardTenderAdded" xml:space="preserve">
     <value>银行卡支付已授权。</value>
   </data>
+  <data name="payment.linklyFallback.succeeded" xml:space="preserve">
+    <value>已从 {0} 自动切换到 {1} 完成收款。{2}</value>
+  </data>
+  <data name="payment.linklyFallback.allFailed" xml:space="preserve">
+    <value>所有已配置的 Linkly 模式都未能在产生最终支付结果前完成通信。</value>
+  </data>
+  <data name="payment.linklyFallback.promotePrimary" xml:space="preserve">
+    <value>如需要，请主管到设置页调整首选 Linkly 模式。</value>
+  </data>
   <data name="payment.status.voucherTenderAdded" xml:space="preserve">
     <value>已添加代金券支付。</value>
   </data>
@@ -1440,6 +1497,12 @@
   <data name="main.catalogSync.failed" xml:space="preserve">
     <value>商品目录同步失败：{0}</value>
   </data>
+  <data name="main.catalogSync.initialDownloadTimedOut" xml:space="preserve">
+    <value>首次商品数据下载未完成，当前本地目录可能不完整。</value>
+  </data>
+  <data name="main.catalogSync.initialDownloadFailed" xml:space="preserve">
+    <value>首次商品数据下载失败：{0}</value>
+  </data>
   <data name="main.settingsUnavailable" xml:space="preserve">
     <value>设置服务不可用。</value>
   </data>
@@ -1456,7 +1519,7 @@
     <value>分店切换申请已提交，请重新注册设备后继续使用。</value>
   </data>
   <data name="main.reregister.cancelled" xml:space="preserve">
-    <value>已取消设备重新注册。</value>
+    <value>已取消更换分店注册。</value>
   </data>
   <data name="main.suspendedUnavailable" xml:space="preserve">
     <value>挂单服务不可用。</value>
@@ -1944,4 +2007,42 @@
   <data name="installment.create.payment.status.voucher.ready" xml:space="preserve">
     <value>代金券券码和锁定令牌已准备完成。</value>
   </data>
+  <data name="cardRecovery.dialog.title.completed" xml:space="preserve"><value>刷卡交易已恢复成功</value></data>
+  <data name="cardRecovery.dialog.title.draftRestored" xml:space="preserve"><value>上一笔刷卡未完成</value></data>
+  <data name="cardRecovery.dialog.title.failed" xml:space="preserve"><value>上一笔刷卡未成功</value></data>
+  <data name="cardRecovery.dialog.title.failedLastTransaction" xml:space="preserve"><value>上一笔刷卡交易未成功</value></data>
+  <data name="cardRecovery.dialog.message.failedLastTransaction" xml:space="preserve"><value>已完成不带 TxnRef 的 Transaction Status 查询，终端返回上一笔交易未成功。请按认证表记录 TxnRef、时间和响应码。</value></data>
+  <data name="cardRecovery.dialog.message.autoPrintSucceeded" xml:space="preserve"><value>小票已自动打印。可在此预览并按需重新打印。</value></data>
+  <data name="cardRecovery.dialog.message.autoPrintFailed" xml:space="preserve"><value>订单已恢复，但自动打印失败：{0}。请检查打印机后点击打印。</value></data>
+  <data name="cardRecovery.dialog.message.draftRestoredFallback" xml:space="preserve"><value>购物车已恢复，请重新确认付款。</value></data>
+  <data name="cardRecovery.dialog.message.failedFallback" xml:space="preserve"><value>已确认终端结果，请按提示人工处理。</value></data>
+  <data name="cardRecovery.dialog.action.printReceipt" xml:space="preserve"><value>打印小票</value></data>
+  <data name="cardRecovery.dialog.action.close" xml:space="preserve"><value>关闭</value></data>
+  <data name="cardRecovery.dialog.section.certFields" xml:space="preserve"><value>认证字段</value></data>
+  <data name="cardRecovery.dialog.section.receiptPreview" xml:space="preserve"><value>小票预览</value></data>
+  <data name="cardRecovery.dialog.field.order" xml:space="preserve"><value>Order</value></data>
+  <data name="cardRecovery.dialog.field.amount" xml:space="preserve"><value>Amount</value></data>
+  <data name="cardRecovery.dialog.field.txnRef" xml:space="preserve"><value>TxnRef</value></data>
+  <data name="cardRecovery.dialog.field.sessionId" xml:space="preserve"><value>Session ID</value></data>
+  <data name="cardRecovery.dialog.field.responseCode" xml:space="preserve"><value>Response Code</value></data>
+  <data name="cardRecovery.dialog.field.responseText" xml:space="preserve"><value>Response Text</value></data>
+  <data name="cardRecovery.dialog.field.timestamp" xml:space="preserve"><value>Timestamp</value></data>
+  <data name="cardRecovery.linkly.requiresReview" xml:space="preserve"><value>上一笔刷卡金额与订单金额不一致。请主管确认 Linkly 后台状态后处理。</value></data>
+  <data name="cardRecovery.linkly.checking" xml:space="preserve"><value>检测到上次程序关闭前有一笔 {0:C2} 刷卡交易正在处理，正在查询刷卡机状态。</value></data>
+  <data name="cardRecovery.linkly.unknown" xml:space="preserve"><value>无法确认上一笔刷卡结果。请联系主管确认 Linkly 后台状态后再继续。</value></data>
+  <data name="cardRecovery.linkly.currentCartNotEmpty" xml:space="preserve"><value>检测到上一笔刷卡结果需要处理，但当前购物车已有商品。请先完成或清空当前购物车后再恢复上一笔订单。</value></data>
+  <data name="cardRecovery.linkly.approved" xml:space="preserve"><value>上一笔刷卡已成功，订单已自动恢复并保存。</value></data>
+  <data name="cardRecovery.linkly.failed" xml:space="preserve"><value>上一笔刷卡失败：{0}。订单已恢复，请重新选择付款方式。</value></data>
+  <data name="cardRecovery.linkly.noActiveSession" xml:space="preserve"><value>未找到未完成的 Linkly 交易。可以重新尝试刷卡付款。</value></data>
+  <data name="cardRecovery.linkly.activeSessionUnknown" xml:space="preserve"><value>无法确认上一笔 Linkly 交易结果。请主管检查 Linkly 后再重新收款。</value></data>
+  <data name="cardRecovery.linkly.activeSessionStillPending" xml:space="preserve"><value>上一笔 Linkly 交易仍在处理中。请再次尝试恢复，或请主管检查 Linkly。</value></data>
+  <data name="cardRecovery.linkly.activeSessionApproved" xml:space="preserve"><value>上一笔 Linkly 交易可能已成功。请主管核对 txnRef {0} 后再决定是否重新收款。</value></data>
+  <data name="cardRecovery.linkly.activeSessionCleared" xml:space="preserve"><value>上一笔 Linkly 交易未提交或已失败，已清理；可以重新尝试当前订单刷卡付款。</value></data>
+  <data name="cardRecovery.square.currentCartNotEmpty" xml:space="preserve"><value>检测到上一笔 Square 刷卡结果需要处理，但当前购物车已有商品。请先完成或清空当前购物车后再恢复上一笔订单。</value></data>
+  <data name="cardRecovery.square.unknown" xml:space="preserve"><value>无法确认上一笔 Square 刷卡结果。请联系主管确认 Square 后台状态后再继续。</value></data>
+  <data name="cardRecovery.square.checking" xml:space="preserve"><value>检测到上次程序关闭前有一笔 {0:C2} Square 刷卡交易正在处理，正在查询刷卡机状态。</value></data>
+  <data name="cardRecovery.square.missingCheckoutId" xml:space="preserve"><value>上次 Square 刷卡请求可能未成功发出，请重新付款。</value></data>
+  <data name="cardRecovery.square.cancelled" xml:space="preserve"><value>上一笔 Square 刷卡未完成：{0}。订单已恢复，请重新选择付款方式。</value></data>
+  <data name="cardRecovery.square.amountMismatch" xml:space="preserve"><value>Square 返回的付款金额与订单金额不一致。订单未自动保存，请联系主管确认。</value></data>
+  <data name="cardRecovery.square.approved" xml:space="preserve"><value>上一笔 Square 刷卡已成功，订单已自动恢复并保存。</value></data>
 </root>

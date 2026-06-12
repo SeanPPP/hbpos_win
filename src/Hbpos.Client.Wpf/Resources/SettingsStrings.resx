@@ -60,6 +60,12 @@
   <data name="settings.linkly.mode.cloudDirectSync.help" xml:space="preserve"><value>Pair directly to Linkly Cloud. This mode only returns transaction status results.</value></data>
   <data name="settings.linkly.mode.cloudBackendAsync" xml:space="preserve"><value>Cloud backend async</value></data>
   <data name="settings.linkly.mode.cloudBackendAsync.help" xml:space="preserve"><value>Use the backend async workflow with display, receipt, sendkey, and signature authorization support.</value></data>
+  <data name="settings.linkly.priority.title" xml:space="preserve"><value>Connection priority</value></data>
+  <data name="settings.linkly.priority.primary" xml:space="preserve"><value>Primary</value></data>
+  <data name="settings.linkly.priority.fallback" xml:space="preserve"><value>Fallback</value></data>
+  <data name="settings.linkly.priority.configure" xml:space="preserve"><value>Make primary and show settings</value></data>
+  <data name="settings.linkly.priority.moveUp" xml:space="preserve"><value>Move up</value></data>
+  <data name="settings.linkly.priority.moveDown" xml:space="preserve"><value>Move down</value></data>
   <data name="settings.linkly.localIp.title" xml:space="preserve"><value>Local Linkly IP Gateway</value></data>
   <data name="settings.linkly.localIp.description" xml:space="preserve"><value>Connect this POS to the Windows Linkly EFT-Client on the same PC or LAN by IP address and port.</value></data>
   <data name="settings.linkly.localIp.ipAddress" xml:space="preserve"><value>IP Address</value></data>
