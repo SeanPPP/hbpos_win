@@ -337,6 +337,82 @@ public sealed class LinklyBackendTerminalClientTests
     }
 
     [Fact]
+    public async Task PurchaseAsync_returns_result_unknown_when_status_poll_fails_after_backend_start()
+    {
+        var requests = new List<HttpRequestMessage>();
+        var handler = new StubHttpMessageHandler(request =>
+        {
+            requests.Add(CloneRequestWithBody(request));
+            return requests.Count switch
+            {
+                1 => new HttpResponseMessage(HttpStatusCode.NotFound),
+                2 => JsonResponse(
+                    """
+                    {
+                      "success": true,
+                      "data": {
+                        "environment": "Sandbox",
+                        "storeCode": "S01",
+                        "deviceCode": "TERM-1",
+                        "sessionId": "backend-session-unknown",
+                        "status": "Pending",
+                        "txnRef": "260601120099",
+                        "displayText": "PRESENT CARD",
+                        "receiptText": null,
+                        "recoveryCount": 0,
+                        "receiptPrintedAt": null,
+                        "lastHttpStatus": 200,
+                        "notifications": []
+                      }
+                    }
+                    """),
+                _ => throw new HttpRequestException("backend status offline")
+            };
+        });
+        var client = CreateClient(handler, new FakeLinklyTerminalDialogService());
+
+        var result = await client.PurchaseAsync(10m, CreateSession(), CreateSettings());
+
+        Assert.False(result.Approved);
+        Assert.True(result.ResultUnknown);
+        Assert.False(result.FallbackAllowed);
+        Assert.Equal("linkly.backend.resultUnknown", result.StatusKey);
+        Assert.Equal(3, requests.Count);
+    }
+
+    [Fact]
+    public async Task PurchaseAsync_allows_fallback_when_backend_rejects_start_before_session()
+    {
+        var requests = new List<HttpRequestMessage>();
+        var handler = new StubHttpMessageHandler(request =>
+        {
+            requests.Add(CloneRequestWithBody(request));
+            return requests.Count switch
+            {
+                1 => new HttpResponseMessage(HttpStatusCode.NotFound),
+                _ => JsonResponse(
+                    """
+                    {
+                      "success": false,
+                      "message": "Linkly Cloud notification bearer is not configured."
+                    }
+                    """,
+                    HttpStatusCode.BadRequest)
+            };
+        });
+        var client = CreateClient(handler, new FakeLinklyTerminalDialogService());
+
+        var result = await client.PurchaseAsync(10m, CreateSession(), CreateSettings());
+
+        Assert.False(result.Approved);
+        Assert.True(result.FallbackAllowed);
+        Assert.False(result.ResultUnknown);
+        Assert.Equal("linkly.backend.configIncomplete", result.StatusKey);
+        Assert.Contains("notification bearer", result.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Equal(2, requests.Count);
+    }
+
+    [Fact]
     public async Task PurchaseAsync_binds_local_attempt_when_backend_returns_session_before_final_status()
     {
         var bindCount = 0;
@@ -929,6 +1005,7 @@ public sealed class LinklyBackendTerminalClientTests
         Assert.Equal("active-session-1", finalState.SessionId);
         Assert.True(finalState.IsFinal);
         Assert.Contains("unfinished card transaction", finalState.DisplayText, StringComparison.OrdinalIgnoreCase);
+        Assert.Equal(1, dialog.CloseCallCount);
     }
 
     [Fact]
@@ -989,6 +1066,7 @@ public sealed class LinklyBackendTerminalClientTests
         Assert.Equal("conflict-session-1", finalState.SessionId);
         Assert.True(finalState.IsFinal);
         Assert.Contains("unfinished card transaction", finalState.DisplayText, StringComparison.OrdinalIgnoreCase);
+        Assert.Equal(1, dialog.CloseCallCount);
     }
 
     [Fact]

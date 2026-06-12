@@ -740,34 +740,34 @@
                             </Grid.ColumnDefinitions>
 
                             <StackPanel Grid.Column="0">
-                                <TextBlock Text="认证字段"
+                                <TextBlock Text="{loc:Loc cardRecovery.dialog.section.certFields}"
                                            FontSize="13"
                                            FontWeight="Black"
                                            Foreground="{StaticResource PosTextBrush}"
                                            Margin="0,0,0,10" />
                                 <UniformGrid Columns="2">
                                     <StackPanel Margin="0,0,10,12" Visibility="{Binding HasOrderGuid, Converter={StaticResource BoolToVis}}">
-                                        <TextBlock Text="Order" FontSize="10" FontWeight="Black" Foreground="{StaticResource PosMutedForegroundBrush}" />
+                                        <TextBlock Text="{loc:Loc cardRecovery.dialog.field.order}" FontSize="10" FontWeight="Black" Foreground="{StaticResource PosMutedForegroundBrush}" />
                                         <TextBlock Text="{Binding OrderGuidDisplay}" FontSize="11" TextWrapping="Wrap" Foreground="{StaticResource PosTextBrush}" />
                                     </StackPanel>
                                     <StackPanel Margin="0,0,10,12" Visibility="{Binding HasAmount, Converter={StaticResource BoolToVis}}">
-                                        <TextBlock Text="Amount" FontSize="10" FontWeight="Black" Foreground="{StaticResource PosMutedForegroundBrush}" />
+                                        <TextBlock Text="{loc:Loc cardRecovery.dialog.field.amount}" FontSize="10" FontWeight="Black" Foreground="{StaticResource PosMutedForegroundBrush}" />
                                         <TextBlock Text="{Binding AmountDisplay}" FontSize="13" FontWeight="Black" Foreground="{StaticResource PosPrimaryBrush}" />
                                     </StackPanel>
                                     <StackPanel Margin="0,0,10,12" Visibility="{Binding HasTxnRef, Converter={StaticResource BoolToVis}}">
-                                        <TextBlock Text="TxnRef" FontSize="10" FontWeight="Black" Foreground="{StaticResource PosMutedForegroundBrush}" />
+                                        <TextBlock Text="{loc:Loc cardRecovery.dialog.field.txnRef}" FontSize="10" FontWeight="Black" Foreground="{StaticResource PosMutedForegroundBrush}" />
                                         <TextBlock Text="{Binding TxnRef}" FontSize="12" FontFamily="Consolas" TextWrapping="Wrap" Foreground="{StaticResource PosTextBrush}" />
                                     </StackPanel>
                                     <StackPanel Margin="0,0,10,12" Visibility="{Binding HasSessionId, Converter={StaticResource BoolToVis}}">
-                                        <TextBlock Text="Session ID" FontSize="10" FontWeight="Black" Foreground="{StaticResource PosMutedForegroundBrush}" />
+                                        <TextBlock Text="{loc:Loc cardRecovery.dialog.field.sessionId}" FontSize="10" FontWeight="Black" Foreground="{StaticResource PosMutedForegroundBrush}" />
                                         <TextBlock Text="{Binding SessionId}" FontSize="11" FontFamily="Consolas" TextWrapping="Wrap" Foreground="{StaticResource PosTextBrush}" />
                                     </StackPanel>
                                     <StackPanel Margin="0,0,10,12" Visibility="{Binding HasResponseCode, Converter={StaticResource BoolToVis}}">
-                                        <TextBlock Text="Response Code" FontSize="10" FontWeight="Black" Foreground="{StaticResource PosMutedForegroundBrush}" />
+                                        <TextBlock Text="{loc:Loc cardRecovery.dialog.field.responseCode}" FontSize="10" FontWeight="Black" Foreground="{StaticResource PosMutedForegroundBrush}" />
                                         <TextBlock Text="{Binding ResponseCode}" FontSize="13" FontWeight="Black" Foreground="{StaticResource PosAccentBrush}" />
                                     </StackPanel>
                                     <StackPanel Margin="0,0,10,12" Visibility="{Binding HasResponseText, Converter={StaticResource BoolToVis}}">
-                                        <TextBlock Text="Response Text" FontSize="10" FontWeight="Black" Foreground="{StaticResource PosMutedForegroundBrush}" />
+                                        <TextBlock Text="{loc:Loc cardRecovery.dialog.field.responseText}" FontSize="10" FontWeight="Black" Foreground="{StaticResource PosMutedForegroundBrush}" />
                                         <TextBlock Text="{Binding ResponseText}" FontSize="12" TextWrapping="Wrap" Foreground="{StaticResource PosTextBrush}" />
                                     </StackPanel>
                                 </UniformGrid>
@@ -779,7 +779,7 @@
                                         BorderThickness="1"
                                         CornerRadius="8">
                                     <StackPanel>
-                                        <TextBlock Text="Timestamp" FontSize="10" FontWeight="Black" Foreground="{StaticResource PosMutedForegroundBrush}" />
+                                        <TextBlock Text="{loc:Loc cardRecovery.dialog.field.timestamp}" FontSize="10" FontWeight="Black" Foreground="{StaticResource PosMutedForegroundBrush}" />
                                         <TextBlock Text="{Binding TimestampDisplay}" FontSize="12" FontFamily="Consolas" Foreground="{StaticResource PosTextBrush}" />
                                     </StackPanel>
                                 </Border>
@@ -795,7 +795,7 @@
                                 <StackPanel>
                                     <StackPanel Orientation="Horizontal" Margin="0,0,0,12">
                                         <materialDesign:PackIcon Kind="Receipt" Width="18" Height="18" Foreground="{StaticResource PosPrimaryBrush}" Margin="0,0,6,0" />
-                                        <TextBlock Text="小票预览" FontSize="13" FontWeight="Black" Foreground="{StaticResource PosTextBrush}" />
+                                        <TextBlock Text="{loc:Loc cardRecovery.dialog.section.receiptPreview}" FontSize="13" FontWeight="Black" Foreground="{StaticResource PosTextBrush}" />
                                     </StackPanel>
                                     <ItemsControl ItemsSource="{Binding ReceiptPreviewRows}">
                                         <ItemsControl.ItemTemplate>
@@ -857,7 +857,7 @@
                                     MinWidth="112"
                                     Height="44"
                                     Style="{StaticResource PosSecondaryButtonStyle}">
-                                <TextBlock Text="关闭" FontWeight="Bold" />
+                                <TextBlock Text="{loc:Loc cardRecovery.dialog.action.close}" FontWeight="Bold" />
                             </Button>
                         </StackPanel>
                     </Border>

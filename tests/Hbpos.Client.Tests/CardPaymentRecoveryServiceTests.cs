@@ -1,4 +1,4 @@
-using System.Text.Json;
+﻿using System.Text.Json;
 using Hbpos.Client.Wpf.Models;
 using Hbpos.Client.Wpf.Services;
 using Hbpos.Contracts.Catalog;
@@ -106,6 +106,54 @@ public sealed class CardPaymentRecoveryServiceTests
         Assert.Equal(LocalCardPaymentAttemptStatus.OrderCompleted, attempts.Status);
     }
 
+    [Theory]
+    [InlineData("Failed")]
+    [InlineData("NotSubmitted")]
+    public async Task RecoverActiveSessionAsync_without_local_attempt_recovers_and_acknowledges_failed_session(string finalStatus)
+    {
+        var attempts = new FakeCardPaymentAttemptRepository(null);
+        var orders = new FakeLocalOrderRepository();
+        var backend = new FakeLinklyBackendTerminalClient
+        {
+            ResumableStatus = CreateStatus("Pending", sessionId: "ACTIVE-SESSION", txnRef: "TXN-ACTIVE", responseCode: null, responseText: null),
+            Status = CreateStatus(finalStatus, sessionId: "ACTIVE-SESSION", txnRef: "TXN-ACTIVE", responseCode: "05", responseText: finalStatus)
+        };
+        var cart = CreateCurrentCart();
+        var service = CreateService(attempts, orders, backend);
+
+        var result = await service.RecoverActiveSessionAsync(cart, Session);
+
+        Assert.Equal(CardPaymentRecoveryOutcome.DraftRestored, result.Outcome);
+        Assert.Equal(1, backend.ResumeCallCount);
+        Assert.Equal("ACTIVE-SESSION", backend.ResumedSessionId);
+        Assert.Equal(1, backend.AcknowledgeCallCount);
+        Assert.Equal("ACTIVE-SESSION", backend.AcknowledgedSessionId);
+        Assert.Single(cart.Lines);
+        Assert.Equal("CURRENT-SKU", cart.Lines[0].ProductCode);
+        Assert.Equal(0, orders.SaveCount);
+        Assert.Contains("previous Linkly session", result.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task RecoverActiveSessionAsync_without_local_attempt_completed_session_requires_supervisor_review()
+    {
+        var attempts = new FakeCardPaymentAttemptRepository(null);
+        var orders = new FakeLocalOrderRepository();
+        var backend = new FakeLinklyBackendTerminalClient
+        {
+            ResumableStatus = CreateStatus("Completed", sessionId: "ACTIVE-APPROVED", txnRef: "TXN-APPROVED", responseCode: "00", responseText: "APPROVED")
+        };
+        var service = CreateService(attempts, orders, backend);
+
+        var result = await service.RecoverActiveSessionAsync(new PosCartService(), Session);
+
+        Assert.Equal(CardPaymentRecoveryOutcome.Unknown, result.Outcome);
+        Assert.Equal(0, backend.AcknowledgeCallCount);
+        Assert.Equal(0, orders.SaveCount);
+        Assert.Contains("supervisor", result.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Equal("TXN-APPROVED", result.DialogDetails?.TxnRef);
+    }
+
     [Fact]
     public async Task RecoverLatestAsync_requires_review_returns_unknown_without_status_query_or_acknowledge()
     {
@@ -122,7 +170,7 @@ public sealed class CardPaymentRecoveryServiceTests
         var result = await service.RecoverLatestAsync(cart, Session);
 
         Assert.Equal(CardPaymentRecoveryOutcome.Unknown, result.Outcome);
-        Assert.Contains("金额与订单金额不一致", result.Message);
+        Assert.Contains("does not match the order amount", result.Message);
         Assert.Equal(0, orders.SaveCount);
         Assert.Equal(0, backend.AcknowledgeCallCount);
         Assert.Equal(LocalCardPaymentAttemptStatus.RequiresReview, attempts.Status);
@@ -249,7 +297,7 @@ public sealed class CardPaymentRecoveryServiceTests
         var result = await service.RecoverLatestAsync(new PosCartService(), Session);
 
         Assert.Equal(CardPaymentRecoveryOutcome.Unknown, result.Outcome);
-        Assert.Contains("无法确认上一笔刷卡结果", result.Message);
+        Assert.Contains("cannot be confirmed", result.Message);
         Assert.Equal(1, backend.ResumeCallCount);
         Assert.Null(attempts.SessionId);
         Assert.Null(attempts.TxnRef);
@@ -345,7 +393,7 @@ public sealed class CardPaymentRecoveryServiceTests
         var result = await service.RecoverLatestAsync(cart, Session);
 
         Assert.Equal(CardPaymentRecoveryOutcome.Unknown, result.Outcome);
-        Assert.Contains("当前购物车已有商品", result.Message);
+        Assert.Contains("current cart already contains items", result.Message);
         Assert.Single(cart.Lines);
         Assert.Equal("CURRENT-SKU", cart.Lines[0].ProductCode);
         Assert.Equal(0, orders.SaveCount);
@@ -370,7 +418,7 @@ public sealed class CardPaymentRecoveryServiceTests
         var result = await service.RecoverLatestAsync(cart, Session);
 
         Assert.Equal(CardPaymentRecoveryOutcome.Unknown, result.Outcome);
-        Assert.Contains("当前购物车已有商品", result.Message);
+        Assert.Contains("current cart already contains items", result.Message);
         Assert.Single(cart.Lines);
         Assert.Equal("CURRENT-SKU", cart.Lines[0].ProductCode);
         Assert.Equal(0, orders.SaveCount);
@@ -560,17 +608,17 @@ public sealed class CardPaymentRecoveryServiceTests
             []);
     }
 
-    private sealed class FakeCardPaymentAttemptRepository(LocalCardPaymentAttempt attempt) : ILocalCardPaymentAttemptRepository
+    private sealed class FakeCardPaymentAttemptRepository(LocalCardPaymentAttempt? attempt) : ILocalCardPaymentAttemptRepository
     {
-        private LocalCardPaymentAttempt _attempt = attempt;
+        private LocalCardPaymentAttempt? _attempt = attempt;
 
-        public LocalCardPaymentAttemptStatus Status => _attempt.Status;
+        public LocalCardPaymentAttemptStatus Status => _attempt?.Status ?? LocalCardPaymentAttemptStatus.Failed;
 
-        public string? SessionId => _attempt.SessionId;
+        public string? SessionId => _attempt?.SessionId;
 
-        public string? TxnRef => _attempt.TxnRef;
+        public string? TxnRef => _attempt?.TxnRef;
 
-        public DateTimeOffset? AcknowledgedAt => _attempt.AcknowledgedAt;
+        public DateTimeOffset? AcknowledgedAt => _attempt?.AcknowledgedAt;
 
         public Task CreateAsync(LocalCardPaymentAttempt attempt, CancellationToken cancellationToken = default)
         {
@@ -579,7 +627,7 @@ public sealed class CardPaymentRecoveryServiceTests
 
         public Task UpdateSessionAsync(Guid attemptGuid, string sessionId, string? txnRef, DateTimeOffset updatedAt, CancellationToken cancellationToken = default)
         {
-            _attempt = _attempt with
+            _attempt = _attempt! with
             {
                 SessionId = sessionId,
                 TxnRef = txnRef ?? _attempt.TxnRef,
@@ -598,7 +646,7 @@ public sealed class CardPaymentRecoveryServiceTests
             DateTimeOffset completedAt,
             CancellationToken cancellationToken = default)
         {
-            _attempt = _attempt with
+            _attempt = _attempt! with
             {
                 Status = status,
                 ResponseCode = responseCode,
@@ -612,7 +660,7 @@ public sealed class CardPaymentRecoveryServiceTests
 
         public Task MarkOrderCompletedAsync(Guid attemptGuid, DateTimeOffset completedAt, CancellationToken cancellationToken = default)
         {
-            _attempt = _attempt with
+            _attempt = _attempt! with
             {
                 Status = LocalCardPaymentAttemptStatus.OrderCompleted,
                 CompletedAt = completedAt,
@@ -623,7 +671,7 @@ public sealed class CardPaymentRecoveryServiceTests
 
         public Task MarkAcknowledgedAsync(Guid attemptGuid, DateTimeOffset acknowledgedAt, CancellationToken cancellationToken = default)
         {
-            _attempt = _attempt with
+            _attempt = _attempt! with
             {
                 AcknowledgedAt = acknowledgedAt,
                 UpdatedAt = acknowledgedAt
@@ -633,7 +681,7 @@ public sealed class CardPaymentRecoveryServiceTests
 
         public Task MarkRecoveringAsync(Guid attemptGuid, DateTimeOffset updatedAt, CancellationToken cancellationToken = default)
         {
-            _attempt = _attempt with
+            _attempt = _attempt! with
             {
                 Status = LocalCardPaymentAttemptStatus.Recovering,
                 UpdatedAt = updatedAt

@@ -20,4 +20,17 @@ public sealed class CardPaymentRecoveryCoordinator(
             _ => CardPaymentRecoveryResult.None
         };
     }
+
+    public async Task<CardPaymentRecoveryResult> RecoverActiveSessionAsync(
+        PosCartService cart,
+        PosSessionState session,
+        CancellationToken cancellationToken = default)
+    {
+        var settings = await settingsProvider.GetSettingsAsync(cancellationToken);
+        return settings.Processor switch
+        {
+            CardProcessorKind.Linkly => await linklyRecoveryService.RecoverActiveSessionAsync(cart, session, cancellationToken),
+            _ => CardPaymentRecoveryResult.None
+        };
+    }
 }

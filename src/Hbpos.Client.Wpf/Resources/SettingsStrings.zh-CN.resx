@@ -60,6 +60,12 @@
   <data name="settings.linkly.mode.cloudDirectSync.help" xml:space="preserve"><value>直接配对 Linkly Cloud，但 POS 侧只返回交易状态结果。</value></data>
   <data name="settings.linkly.mode.cloudBackendAsync" xml:space="preserve"><value>Cloud 后端异步</value></data>
   <data name="settings.linkly.mode.cloudBackendAsync.help" xml:space="preserve"><value>走后端异步流程，支持 display、receipt、sendkey 和签名授权。</value></data>
+  <data name="settings.linkly.priority.title" xml:space="preserve"><value>连接优先级</value></data>
+  <data name="settings.linkly.priority.primary" xml:space="preserve"><value>首选</value></data>
+  <data name="settings.linkly.priority.fallback" xml:space="preserve"><value>兜底</value></data>
+  <data name="settings.linkly.priority.configure" xml:space="preserve"><value>设为首选并查看配置</value></data>
+  <data name="settings.linkly.priority.moveUp" xml:space="preserve"><value>上移</value></data>
+  <data name="settings.linkly.priority.moveDown" xml:space="preserve"><value>下移</value></data>
   <data name="settings.linkly.localIp.title" xml:space="preserve"><value>本地 Linkly IP Gateway</value></data>
   <data name="settings.linkly.localIp.description" xml:space="preserve"><value>通过 IP 地址和端口连接本机或局域网内的 Windows Linkly EFT-Client。</value></data>
   <data name="settings.linkly.localIp.ipAddress" xml:space="preserve"><value>IP 地址</value></data>

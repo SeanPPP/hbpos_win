@@ -16,6 +16,7 @@ public partial class PaymentViewModel : ObservableObject
     private readonly ILocalizationService? _localization;
     private readonly Action? _onBackToPos;
     private readonly Action? _onShowInstallmentCenter;
+    private readonly Func<Task>? _recoverPreviousCardTransactionAsync;
     private string _statusKey = "payment.status.ready";
     private string? _statusTextOverride;
     private Guid? _pendingVoucherUploadOrderGuid;
@@ -62,6 +63,9 @@ public partial class PaymentViewModel : ObservableObject
     [ObservableProperty]
     private PaymentEntryMode _paymentMode;
 
+    [ObservableProperty]
+    private CardPaymentErrorOverlayViewModel? _cardPaymentErrorOverlay;
+
     public PaymentViewModel(
         PosCartService cart,
         CashCheckoutService checkout,
@@ -70,14 +74,16 @@ public partial class PaymentViewModel : ObservableObject
         PosSessionState session,
         ILocalizationService? localization = null,
         Action? onBackToPos = null,
-        Action? onShowInstallmentCenter = null)
+        Action? onShowInstallmentCenter = null,
+        Func<Task>? recoverPreviousCardTransactionAsync = null)
         : this(
             cart,
             new CashPaymentWorkflowService(checkout, orderRepository, syncQueueRepository),
             session,
             localization,
             onBackToPos,
-            onShowInstallmentCenter)
+            onShowInstallmentCenter,
+            recoverPreviousCardTransactionAsync)
     {
     }
 
@@ -87,7 +93,8 @@ public partial class PaymentViewModel : ObservableObject
         PosSessionState session,
         ILocalizationService? localization = null,
         Action? onBackToPos = null,
-        Action? onShowInstallmentCenter = null)
+        Action? onShowInstallmentCenter = null,
+        Func<Task>? recoverPreviousCardTransactionAsync = null)
     {
         _cart = cart;
         _workflowService = workflowService;
@@ -95,6 +102,7 @@ public partial class PaymentViewModel : ObservableObject
         _localization = localization;
         _onBackToPos = onBackToPos;
         _onShowInstallmentCenter = onShowInstallmentCenter;
+        _recoverPreviousCardTransactionAsync = recoverPreviousCardTransactionAsync;
         if (_localization is not null)
         {
             _localization.CultureChanged += (_, _) => RaiseLocalizedProperties();
@@ -113,6 +121,10 @@ public partial class PaymentViewModel : ObservableObject
         CancelCommand = new RelayCommand(CancelPayment, CanCancelPayment);
         BackToPosCommand = new RelayCommand(BackToPos, CanBackToPos);
         ShowInstallmentCenterCommand = new RelayCommand(ShowInstallmentCenter, CanShowInstallmentCenter);
+        CloseCardPaymentErrorOverlayCommand = new RelayCommand(CloseCardPaymentErrorOverlay);
+        CardPaymentErrorPrimaryActionCommand = new AsyncRelayCommand(
+            ExecuteCardPaymentErrorPrimaryActionAsync,
+            CanExecuteCardPaymentErrorPrimaryAction);
 
         RefreshCart();
     }
@@ -142,6 +154,10 @@ public partial class PaymentViewModel : ObservableObject
     public IRelayCommand BackToPosCommand { get; }
 
     public IRelayCommand ShowInstallmentCenterCommand { get; }
+
+    public IRelayCommand CloseCardPaymentErrorOverlayCommand { get; }
+
+    public IAsyncRelayCommand CardPaymentErrorPrimaryActionCommand { get; }
 
     public event EventHandler<PaymentCompletedEventArgs>? PaymentCompleted;
 
@@ -468,6 +484,20 @@ public partial class PaymentViewModel : ObservableObject
 
             return;
         }
+        catch (Exception ex) when (method == PaymentMethodKind.Card && ex is not OperationCanceledException)
+        {
+            ConsoleLog.Write("CardPayment", $"unexpected card payment exception: {ex}");
+            if (IsCurrentPaymentEntry(paymentEntryVersion))
+            {
+                var overlay = CardPaymentErrorOverlayViewModel.Unexpected();
+                overlay.IsOpen = true;
+                CardPaymentErrorOverlay = overlay;
+                SetStatus("payment.card.status.failed", ex.Message);
+                NotifyPaymentCommandStates();
+            }
+
+            return;
+        }
         finally
         {
             if (method == PaymentMethodKind.Card)
@@ -520,6 +550,11 @@ public partial class PaymentViewModel : ObservableObject
                     $"payment view card refund tender failed statusKey={result.StatusKey} message={LogValue(result.StatusMessage)}");
             }
 
+            if (method == PaymentMethodKind.Card)
+            {
+                ShowOverlayIfTerminalError(result);
+            }
+
             if (method == PaymentMethodKind.Card && TrySetCardTerminalFailureStatus(result))
             {
                 ResetManualCardCancellationState();
@@ -542,7 +577,7 @@ public partial class PaymentViewModel : ObservableObject
 
         TenderAmountText = string.Empty;
         RecalculateTenderSummary();
-        SetStatus(result.StatusKey);
+        SetStatus(result.StatusKey, result.StatusMessage);
         NotifyPaymentCommandStates();
         if (method == PaymentMethodKind.Card &&
             !cardPaymentWasManuallyCancelled &&
@@ -1415,6 +1450,112 @@ public partial class PaymentViewModel : ObservableObject
         OnPropertyChanged(nameof(InstallmentMethodText));
         OnPropertyChanged(nameof(CancelText));
         OnPropertyChanged(nameof(StatusMessage));
+    }
+
+    private void CloseCardPaymentErrorOverlay()
+    {
+        if (CardPaymentErrorOverlay is not null)
+        {
+            CardPaymentErrorOverlay.IsOpen = false;
+        }
+
+        CardPaymentErrorPrimaryActionCommand.NotifyCanExecuteChanged();
+    }
+
+    private bool CanExecuteCardPaymentErrorPrimaryAction()
+    {
+        return CardPaymentErrorOverlay is { IsOpen: true, HasPrimaryAction: true } &&
+            _recoverPreviousCardTransactionAsync is not null;
+    }
+
+    private async Task ExecuteCardPaymentErrorPrimaryActionAsync()
+    {
+        if (!CanExecuteCardPaymentErrorPrimaryAction() || _recoverPreviousCardTransactionAsync is null)
+        {
+            return;
+        }
+
+        SetStatus("payment.card.error.overlay.activeSession.recovering");
+        await _recoverPreviousCardTransactionAsync();
+        if (CardPaymentErrorOverlay is not null)
+        {
+            CardPaymentErrorOverlay.IsOpen = false;
+        }
+
+        CardPaymentErrorPrimaryActionCommand.NotifyCanExecuteChanged();
+    }
+
+    private static CardPaymentErrorOverlayViewModel? ClassifyCardPaymentError(
+        string statusKey,
+        string? statusMessage)
+    {
+        var overlay = ClassifyCardPaymentErrorByStatusKey(statusKey);
+        if (overlay is not null)
+        {
+            return overlay;
+        }
+
+        if (string.IsNullOrWhiteSpace(statusMessage))
+            return null;
+
+        var message = statusMessage;
+
+        if (message.Contains("unfinished card transaction", StringComparison.OrdinalIgnoreCase))
+            return CardPaymentErrorOverlayViewModel.ActiveSessionRequiresRecovery();
+
+        if (message.Contains("connection failed", StringComparison.OrdinalIgnoreCase) ||
+            message.Contains("connection was closed", StringComparison.OrdinalIgnoreCase) ||
+            message.Contains("could not be sent", StringComparison.OrdinalIgnoreCase))
+            return CardPaymentErrorOverlayViewModel.ConnectionFailed();
+
+        if (message.Contains("communication failed", StringComparison.OrdinalIgnoreCase))
+        {
+            if (message.Contains("Square", StringComparison.OrdinalIgnoreCase))
+                return CardPaymentErrorOverlayViewModel.SquareCommunicationFailed();
+            return CardPaymentErrorOverlayViewModel.CloudCommunicationFailed();
+        }
+
+        if (message.Contains("timed out", StringComparison.OrdinalIgnoreCase) ||
+            message.Contains("timeout", StringComparison.OrdinalIgnoreCase))
+            return CardPaymentErrorOverlayViewModel.Timeout();
+
+        if (message.Contains("unavailable", StringComparison.OrdinalIgnoreCase))
+            return CardPaymentErrorOverlayViewModel.ConnectionFailed();
+
+        return null;
+    }
+
+    private static CardPaymentErrorOverlayViewModel? ClassifyCardPaymentErrorByStatusKey(string statusKey)
+    {
+        return statusKey switch
+        {
+            "linkly.local.connectionFailed" or
+            "payment.card.linklyUnavailable" => CardPaymentErrorOverlayViewModel.ConnectionFailed(),
+
+            "linkly.cloud.communicationFailed" or
+            "linkly.backend.communicationFailed" => CardPaymentErrorOverlayViewModel.CloudCommunicationFailed(),
+
+            "linkly.backend.activeSessionRequiresRecovery" => CardPaymentErrorOverlayViewModel.ActiveSessionRequiresRecovery(),
+
+            "payment.card.squareCommunicationFailed" => CardPaymentErrorOverlayViewModel.SquareCommunicationFailed(),
+
+            "linkly.local.timeout" or
+            "linkly.cloud.timeout" or
+            "linkly.backend.timeout" => CardPaymentErrorOverlayViewModel.Timeout(),
+
+            _ => null
+        };
+    }
+
+    private void ShowOverlayIfTerminalError(PaymentTenderAttemptResult result)
+    {
+        var overlay = ClassifyCardPaymentError(result.StatusKey, result.StatusMessage);
+        if (overlay is null)
+            return;
+
+        overlay.IsOpen = true;
+        CardPaymentErrorOverlay = overlay;
+        CardPaymentErrorPrimaryActionCommand.NotifyCanExecuteChanged();
     }
 }
 

@@ -23,6 +23,9 @@ var app = builder.Build();
 
 using (var scope = app.Services.CreateScope())
 {
+    var advertisementSchemaInitializer = scope.ServiceProvider.GetRequiredService<IAdvertisementSchemaInitializer>();
+    await advertisementSchemaInitializer.InitializeAsync();
+
     var linklyCloudCredentialSchemaInitializer = scope.ServiceProvider.GetRequiredService<ILinklyCloudCredentialSchemaInitializer>();
     await linklyCloudCredentialSchemaInitializer.InitializeAsync();
 

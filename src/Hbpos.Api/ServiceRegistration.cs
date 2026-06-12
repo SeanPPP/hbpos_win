@@ -30,6 +30,7 @@ public static class ServiceRegistration
         services.AddScoped<ICashierService, CashierService>();
         services.AddScoped<ICatalogService, CatalogService>();
         services.AddScoped<IAdvertisementPlaybackService, AdvertisementPlaybackService>();
+        services.AddScoped<IAdvertisementSchemaInitializer, SqlSugarAdvertisementSchemaInitializer>();
         services.AddScoped<IOrderRepository, SqlSugarOrderRepository>();
         services.AddScoped<IOrderSyncService, OrderSyncService>();
         services.AddScoped<IOrderHistoryRepository, SqlSugarOrderHistoryRepository>();

@@ -47,6 +47,30 @@ public sealed class DeviceRegistrationWorkflowServiceTests
     }
 
     [Fact]
+    public async Task LoadStoresAsync_ReregisterMode_HidesCurrentAndInactiveStores()
+    {
+        var api = new FakeDeviceApiClient
+        {
+            Stores =
+            [
+                new StoreSelectionItem("1002", "Current", true),
+                new StoreSelectionItem("1003", "Inactive Target", false),
+                new StoreSelectionItem("1004", "Active Target", true)
+            ]
+        };
+        var service = new DeviceRegistrationWorkflowService(api, new FakeLocalDeviceRepository(), new FakeFingerprintService("HW-001"));
+
+        var result = await service.LoadStoresAsync(
+            cachedDevice: null,
+            isReregisterMode: true,
+            excludedStoreCode: "1002");
+
+        var store = Assert.Single(result.Stores);
+        Assert.Equal("1004", store.StoreCode);
+        Assert.Equal("1004", result.SelectedStore?.StoreCode);
+    }
+
+    [Fact]
     public async Task RegisterAsync_SavesResponseAndReturnsPendingResult()
     {
         var api = new FakeDeviceApiClient

@@ -2856,6 +2856,97 @@ public sealed class PosTerminalCashPaymentViewModelTests
     }
 
     [Fact]
+    public async Task Payment_page_card_terminal_error_overlay_uses_status_key_for_localized_messages()
+    {
+        var cart = new PosCartService();
+        cart.AddItem(CreateItem("SKU-158A", "Localized Error Tea", "930158A", PriceSourceKind.StoreRetailPrice, 10m));
+        var workflow = new FakeCashPaymentWorkflowService
+        {
+            AddTenderResult = new(TaskCreationOptions.RunContinuationsAsynchronously)
+        };
+        workflow.AddTenderResult.SetResult(PaymentTenderAttemptResult.Fail(
+            "linkly.cloud.communicationFailed",
+            "Linkly Cloud 通讯失败。"));
+        var viewModel = new PaymentViewModel(cart, workflow, Session);
+
+        await viewModel.SelectCardCommand.ExecuteAsync(null);
+
+        Assert.NotNull(viewModel.CardPaymentErrorOverlay);
+        Assert.True(viewModel.CardPaymentErrorOverlay!.IsOpen);
+        Assert.Equal(
+            "payment.card.error.overlay.cloudCommunicationFailed.title",
+            viewModel.CardPaymentErrorOverlay.TitleKey);
+    }
+
+    [Fact]
+    public async Task Payment_page_active_linkly_session_error_shows_recovery_action()
+    {
+        var cart = new PosCartService();
+        cart.AddItem(CreateItem("SKU-158B", "Active Session Tea", "930158B", PriceSourceKind.StoreRetailPrice, 10m));
+        var workflow = new FakeCashPaymentWorkflowService
+        {
+            AddTenderResult = new(TaskCreationOptions.RunContinuationsAsynchronously)
+        };
+        workflow.AddTenderResult.SetResult(PaymentTenderAttemptResult.Fail(
+            "linkly.backend.activeSessionRequiresRecovery",
+            "Current terminal already has an unfinished card transaction."));
+        var recoverCallCount = 0;
+        var viewModel = new PaymentViewModel(
+            cart,
+            workflow,
+            Session,
+            recoverPreviousCardTransactionAsync: () =>
+            {
+                recoverCallCount++;
+                return Task.CompletedTask;
+            });
+
+        await viewModel.SelectCardCommand.ExecuteAsync(null);
+
+        Assert.NotNull(viewModel.CardPaymentErrorOverlay);
+        Assert.True(viewModel.CardPaymentErrorOverlay!.IsOpen);
+        Assert.Equal(
+            "payment.card.error.overlay.activeSession.title",
+            viewModel.CardPaymentErrorOverlay.TitleKey);
+        Assert.True(viewModel.CardPaymentErrorOverlay.HasPrimaryAction);
+        Assert.Equal(
+            "payment.card.error.overlay.activeSession.recover",
+            viewModel.CardPaymentErrorOverlay.PrimaryButtonTextKey);
+
+        await viewModel.CardPaymentErrorPrimaryActionCommand.ExecuteAsync(null);
+
+        Assert.Equal(1, recoverCallCount);
+        Assert.False(viewModel.CardPaymentErrorOverlay.IsOpen);
+    }
+
+    [Fact]
+    public async Task Payment_page_active_linkly_session_message_fallback_shows_recovery_action()
+    {
+        var cart = new PosCartService();
+        cart.AddItem(CreateItem("SKU-158C", "Active Session Message Tea", "930158C", PriceSourceKind.StoreRetailPrice, 10m));
+        var workflow = new FakeCashPaymentWorkflowService
+        {
+            AddTenderResult = new(TaskCreationOptions.RunContinuationsAsynchronously)
+        };
+        workflow.AddTenderResult.SetResult(PaymentTenderAttemptResult.Fail(
+            "payment.status.cardDeclined",
+            "Current terminal already has an unfinished card transaction. Recover the previous transaction."));
+        var viewModel = new PaymentViewModel(
+            cart,
+            workflow,
+            Session,
+            recoverPreviousCardTransactionAsync: () => Task.CompletedTask);
+
+        await viewModel.SelectCardCommand.ExecuteAsync(null);
+
+        Assert.NotNull(viewModel.CardPaymentErrorOverlay);
+        Assert.Equal(
+            "payment.card.error.overlay.activeSession.title",
+            viewModel.CardPaymentErrorOverlay!.TitleKey);
+        Assert.True(viewModel.CardPaymentErrorOverlay.HasPrimaryAction);
+    }
+
+    [Fact]
     public async Task Payment_page_requires_voucher_code_before_adding_voucher()
     {
         var cart = new PosCartService();

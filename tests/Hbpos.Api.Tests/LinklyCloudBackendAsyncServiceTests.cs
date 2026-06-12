@@ -148,6 +148,31 @@ namespace Hbpos.Api.Tests;
     }
 
     [Fact]
+    public async Task StartTransactionAsync_requires_notification_bearer_before_creating_pending_session()
+    {
+        var repository = new InMemoryLinklyCloudBackendAsyncRepository();
+        var transport = new CapturingLinklyCloudBackendAsyncTransport(HttpStatusCode.Accepted);
+        var tokenProvider = new CapturingLinklyCloudBackendTokenProvider();
+        var service = CreateService(
+            transport,
+            tokenProvider,
+            repository: repository,
+            sandboxNotificationBearer: "");
+
+        var exception = await Assert.ThrowsAsync<LinklyCloudBackendValidationException>(() =>
+            service.StartTransactionAsync(
+                "S01",
+                "POS-01",
+                CreateTransactionRequest(),
+                CancellationToken.None));
+
+        Assert.Equal("Linkly Cloud notification bearer is not configured.", exception.Message);
+        Assert.Empty(tokenProvider.Calls);
+        Assert.Null(transport.LastTransaction);
+        Assert.Null(await repository.GetActiveSessionAsync("Sandbox", "S01", "POS-01", CancellationToken.None));
+    }
+
+    [Fact]
     public void Sql_repository_upsert_does_not_overwrite_completed_with_non_completed()
     {
         Assert.Contains("target.[Status] = 'Completed'", SqlSugarLinklyCloudBackendAsyncRepository.UpsertSessionSql, StringComparison.OrdinalIgnoreCase);
@@ -1522,6 +1547,7 @@ namespace Hbpos.Api.Tests;
         ILinklyCloudBackendAsyncRepository? repository = null,
         ILinklyCloudCredentialRepository? credentialRepository = null,
         ILinklyCloudBackendTerminalCredentialRepository? terminalCredentialRepository = null,
+        string? sandboxNotificationBearer = "sandbox-notify",
         ILogger<LinklyCloudBackendAsyncService>? logger = null)
     {
         repository ??= new InMemoryLinklyCloudBackendAsyncRepository();
@@ -1550,7 +1576,7 @@ namespace Hbpos.Api.Tests;
             Options.Create(new LinklyCloudBackendAsyncOptions
             {
                 ProductionNotificationBearer = "production-notify",
-                SandboxNotificationBearer = "sandbox-notify",
+                SandboxNotificationBearer = sandboxNotificationBearer,
                 PublicNotificationBaseUrl = publicNotificationBaseUrl
             }),
             logger);

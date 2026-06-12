@@ -14,6 +14,7 @@ public sealed class LocalAppSettingsRepository(LocalSqliteStore store) : ILocalA
     public async Task<string?> GetValueAsync(string key, CancellationToken cancellationToken = default)
     {
         await using var connection = await store.OpenConnectionAsync(cancellationToken);
+        await EnsureAppSettingsTableAsync(connection, cancellationToken);
         await using var command = connection.CreateCommand();
         command.CommandText = """
             SELECT Value
@@ -28,6 +29,7 @@ public sealed class LocalAppSettingsRepository(LocalSqliteStore store) : ILocalA
     public async Task SetValueAsync(string key, string value, CancellationToken cancellationToken = default)
     {
         await using var connection = await store.OpenConnectionAsync(cancellationToken);
+        await EnsureAppSettingsTableAsync(connection, cancellationToken);
         await using var command = connection.CreateCommand();
         command.CommandText = """
             INSERT INTO AppSettings (Key, Value, UpdatedAt)
@@ -46,6 +48,7 @@ public sealed class LocalAppSettingsRepository(LocalSqliteStore store) : ILocalA
     public async Task DeleteValueAsync(string key, CancellationToken cancellationToken = default)
     {
         await using var connection = await store.OpenConnectionAsync(cancellationToken);
+        await EnsureAppSettingsTableAsync(connection, cancellationToken);
         await using var command = connection.CreateCommand();
         command.CommandText = """
             DELETE FROM AppSettings
@@ -53,6 +56,23 @@ public sealed class LocalAppSettingsRepository(LocalSqliteStore store) : ILocalA
             """;
         command.Parameters.AddWithValue("$Key", key);
 
+        await command.ExecuteNonQueryAsync(cancellationToken);
+    }
+
+    private static async Task EnsureAppSettingsTableAsync(
+        Microsoft.Data.Sqlite.SqliteConnection connection,
+        CancellationToken cancellationToken)
+    {
+        await using var command = connection.CreateCommand();
+        command.CommandText = """
+            CREATE TABLE IF NOT EXISTS AppSettings (
+                Key TEXT PRIMARY KEY,
+                Value TEXT NOT NULL,
+                UpdatedAt TEXT NOT NULL
+            );
+            """;
+
+        // 设置读取可能早于完整本地库初始化，先保证自己的轻量配置表存在。
         await command.ExecuteNonQueryAsync(cancellationToken);
     }
 }

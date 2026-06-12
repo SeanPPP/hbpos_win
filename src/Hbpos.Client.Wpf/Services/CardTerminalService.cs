@@ -44,7 +44,8 @@ public sealed record CardTerminalConfiguration(
     bool HasProtectedSquareAccessToken,
     int TerminalTimeoutSeconds,
     LinklyConnectionMode LinklyConnectionMode = LinklyConnectionMode.LocalIp,
-    bool HasProtectedLinklyCloudSecret = false)
+    bool HasProtectedLinklyCloudSecret = false,
+    IReadOnlyList<LinklyConnectionMode>? LinklyConnectionModePriority = null)
 {
     public static CardTerminalConfiguration Default { get; } = new(
         CardProcessorKind.None,
@@ -75,12 +76,25 @@ public sealed record CardTerminalSettings(
     string LinklyCloudRestBaseUrl = "https://rest.pos.cloud.pceftpos.com/v1/",
     string LinklyPosName = "HBPOS",
     string LinklyPosVersion = "1.0.0",
-    string? LinklyPosVendorId = null)
+    string? LinklyPosVendorId = null,
+    IReadOnlyList<LinklyConnectionMode>? LinklyConnectionModePriority = null)
 {
     public const string SquareVersion = "2026-01-22";
     public const string DefaultLinklyPosName = "HotBargainPOS";
     public const string DefaultLinklyPosVersion = "2026.5.1";
     public const string SandboxPlaceholderLinklyPosVendorId = "11111111-1111-4111-8111-111111111111";
+    public static readonly IReadOnlyList<LinklyConnectionMode> DefaultLinklyConnectionModePriority =
+    [
+        LinklyConnectionMode.LocalIp,
+        LinklyConnectionMode.CloudDirectSync,
+        LinklyConnectionMode.CloudBackendAsync
+    ];
+    private static readonly IReadOnlyList<LinklyConnectionMode> FallbackLinklyConnectionModeOrder =
+    [
+        LinklyConnectionMode.CloudDirectSync,
+        LinklyConnectionMode.LocalIp,
+        LinklyConnectionMode.CloudBackendAsync
+    ];
 
     public static CardTerminalSettings FromEnvironment()
     {
@@ -116,7 +130,8 @@ public sealed record CardTerminalSettings(
             ResolveLinklyCloudRestBaseUrl(terminalEnvironment),
             ReadText("HBPOS_LINKLY_POS_NAME", DefaultLinklyPosName),
             ReadText("HBPOS_LINKLY_POS_VERSION", DefaultLinklyPosVersion),
-            ResolveLinklyPosVendorId(terminalEnvironment));
+            ResolveLinklyPosVendorId(terminalEnvironment),
+            NormalizeLinklyConnectionModePriority(null, ReadLinklyConnectionMode()));
     }
 
     public static string GetSquareApiBaseUrl(CardTerminalEnvironment environment)
@@ -235,6 +250,67 @@ public sealed record CardTerminalSettings(
             LinklyConnectionMode.CloudBackendAsync => nameof(LinklyConnectionMode.CloudBackendAsync),
             _ => nameof(LinklyConnectionMode.LocalIp)
         };
+    }
+
+    public static IReadOnlyList<LinklyConnectionMode> NormalizeLinklyConnectionModePriority(
+        IEnumerable<LinklyConnectionMode>? priority,
+        LinklyConnectionMode firstFallback)
+    {
+        var modes = new List<LinklyConnectionMode>();
+        if (priority is not null)
+        {
+            foreach (var mode in priority)
+            {
+                AddIfMissing(modes, NormalizeLinklyConnectionMode(mode));
+            }
+        }
+
+        AddIfMissing(modes, NormalizeLinklyConnectionMode(firstFallback));
+        foreach (var mode in FallbackLinklyConnectionModeOrder)
+        {
+            AddIfMissing(modes, mode);
+        }
+
+        return modes;
+    }
+
+    public static IReadOnlyList<LinklyConnectionMode> ParseLinklyConnectionModePriority(
+        string? value,
+        LinklyConnectionMode firstFallback)
+    {
+        var parsed = new List<LinklyConnectionMode>();
+        if (!string.IsNullOrWhiteSpace(value))
+        {
+            foreach (var token in value.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+            {
+                var modeKey = NormalizeLinklyConnectionModeKey(token);
+                var isKnown = modeKey is "LOCAL" or "LOCALIP" or "CLOUD" or "CLOUDDIRECTSYNC" or "CLOUDBACKENDASYNC" or "CLOUDAPIASYNC";
+                if (!isKnown)
+                {
+                    continue;
+                }
+
+                AddIfMissing(parsed, NormalizeLinklyConnectionMode(token, firstFallback));
+            }
+        }
+
+        return NormalizeLinklyConnectionModePriority(parsed, firstFallback);
+    }
+
+    public static string FormatLinklyConnectionModePriority(IEnumerable<LinklyConnectionMode>? priority)
+    {
+        return string.Join(
+            ",",
+            NormalizeLinklyConnectionModePriority(priority, LinklyConnectionMode.LocalIp)
+                .Select(FormatLinklyConnectionMode));
+    }
+
+    private static void AddIfMissing(List<LinklyConnectionMode> modes, LinklyConnectionMode mode)
+    {
+        if (!modes.Contains(mode))
+        {
+            modes.Add(mode);
+        }
     }
 
     public static string? ResolveLinklyPosVendorId(

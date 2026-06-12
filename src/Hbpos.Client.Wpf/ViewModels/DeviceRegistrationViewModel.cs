@@ -15,6 +15,7 @@ public sealed partial class DeviceRegistrationViewModel : ObservableObject
     private readonly ILocalizationService? _localization;
     private string? _excludedStoreCode;
     private PendingRegistrationState? _pendingRegistration;
+    private bool _isReregisterCancelRequested;
 
     [ObservableProperty]
     private StoreSelectionItem? _selectedStore;
@@ -62,7 +63,7 @@ public sealed partial class DeviceRegistrationViewModel : ObservableObject
 
         RegisterCommand = new AsyncRelayCommand(RegisterAsync, CanRegister);
         VerifyCommand = new AsyncRelayCommand(VerifyAsync, CanVerify);
-        CancelCommand = new RelayCommand(Cancel, () => CanCancel && !IsBusy);
+        CancelCommand = new RelayCommand(Cancel, CanExecuteCancel);
     }
 
     public ObservableCollection<StoreSelectionItem> Stores { get; } = [];
@@ -107,6 +108,7 @@ public sealed partial class DeviceRegistrationViewModel : ObservableObject
     {
         IsReregisterMode = false;
         CanCancel = false;
+        _isReregisterCancelRequested = false;
         _excludedStoreCode = null;
         HardwareId = _workflowService.GetHardwareId();
         Stores.Clear();
@@ -139,6 +141,7 @@ public sealed partial class DeviceRegistrationViewModel : ObservableObject
     {
         IsReregisterMode = true;
         CanCancel = true;
+        _isReregisterCancelRequested = false;
         _excludedStoreCode = currentStoreCode;
         _pendingRegistration = null;
         HardwareId = _workflowService.GetHardwareId();
@@ -241,10 +244,22 @@ public sealed partial class DeviceRegistrationViewModel : ObservableObject
         {
             StatusMessage = T("deviceRegistration.status.submittingReregister", "Submitting device reregistration...");
             var result = await _workflowService.ReregisterAsync(SelectedStore, HardwareId);
+            if (_isReregisterCancelRequested)
+            {
+                // 用户已放弃本次更换分店流程，忽略后台返回，避免关闭后的弹窗继续改写界面状态。
+                return;
+            }
+
             await ApplyActionResultAsync(result);
         }
         catch (Exception ex)
         {
+            if (_isReregisterCancelRequested)
+            {
+                // 取消后不再把后台错误显示到已关闭流程，当前授权分店继续保持不变。
+                return;
+            }
+
             StatusMessage = ex.Message;
         }
         finally
@@ -369,6 +384,12 @@ public sealed partial class DeviceRegistrationViewModel : ObservableObject
         return !IsBusy && SelectedStore is not null && !string.IsNullOrWhiteSpace(DeviceCode);
     }
 
+    private bool CanExecuteCancel()
+    {
+        // 重新注册是可放弃流程，即使正在加载或提交，也允许用户退出弹窗。
+        return CanCancel && (IsReregisterMode || !IsBusy);
+    }
+
     private void ApplyPendingRegistrationSelection(StoreSelectionItem? selectedStore)
     {
         if (_pendingRegistration is null || IsReregisterMode || selectedStore is null)
@@ -411,8 +432,13 @@ public sealed partial class DeviceRegistrationViewModel : ObservableObject
 
     private void Cancel()
     {
-        if (CanCancel && !IsBusy)
+        if (CanExecuteCancel())
         {
+            if (IsReregisterMode)
+            {
+                _isReregisterCancelRequested = true;
+            }
+
             CancelRequested?.Invoke(this, EventArgs.Empty);
         }
     }

@@ -289,7 +289,12 @@ public sealed class LinklyTerminalClient(
                 });
             if (!connected)
             {
-                return new PaymentAuthorizationResult(false, null, T("linkly.local.connectionFailed", "ANZ Linkly EFT-Client connection failed."));
+                return new PaymentAuthorizationResult(
+                    false,
+                    null,
+                    T("linkly.local.connectionFailed", "ANZ Linkly EFT-Client connection failed."),
+                    StatusKey: "linkly.local.connectionFailed",
+                    FallbackAllowed: true);
             }
 
             // 保留终端原始交易报文，方便把 POS 请求与终端回包按 TxnRef 串起来排查。
@@ -311,7 +316,12 @@ public sealed class LinklyTerminalClient(
                     success: false,
                     reason: "write-request-failed",
                     request: request);
-                return new PaymentAuthorizationResult(false, null, T("linkly.local.requestSendFailed", "ANZ Linkly transaction request could not be sent."));
+                return new PaymentAuthorizationResult(
+                    false,
+                    null,
+                    T("linkly.local.requestSendFailed", "ANZ Linkly transaction request could not be sent."),
+                    StatusKey: "linkly.local.requestSendFailed",
+                    FallbackAllowed: true);
             }
 
             transactionRequestSent = true;
@@ -363,7 +373,12 @@ public sealed class LinklyTerminalClient(
 
             if (!transactionRequestSent)
             {
-                return new PaymentAuthorizationResult(false, null, fallbackMessage);
+                return new PaymentAuthorizationResult(
+                    false,
+                    null,
+                    fallbackMessage,
+                    StatusKey: ex is OperationCanceledException ? "linkly.local.timeout" : "linkly.local.connectionFailed",
+                    FallbackAllowed: true);
             }
 
             return await TryRecoverLastTransactionAsync(

@@ -402,6 +402,54 @@ public sealed class CashPaymentWorkflowServiceTests
     }
 
     [Fact]
+    public async Task Card_tender_fallback_success_tells_supervisor_to_change_primary_mode_in_settings()
+    {
+        var cart = new PosCartService();
+        cart.AddItem(CreateItem("SKU-399", "Fallback Card Tea", "930399", 10m));
+        var orders = new RecordingOrderRepository();
+        var terminal = new ObservingCardTerminalClient(() => { }, new PaymentAuthorizationResult(
+            true,
+            "ANZCLOUD:DIRECT-FALLBACK",
+            "APPROVED",
+            10m,
+            Processor: "ANZ",
+            Environment: "Sandbox",
+            ConnectionMode: LinklyConnectionMode.CloudDirectSync.ToString(),
+            RequestedConnectionMode: LinklyConnectionMode.CloudBackendAsync.ToString(),
+            ActualConnectionMode: LinklyConnectionMode.CloudDirectSync.ToString(),
+            FallbackAttemptedModes:
+            [
+                LinklyConnectionMode.CloudBackendAsync.ToString(),
+                LinklyConnectionMode.CloudDirectSync.ToString()
+            ],
+            FallbackSucceeded: true));
+        var workflow = new CashPaymentWorkflowService(
+            new CashCheckoutService(),
+            orders,
+            new StubSyncQueueRepository(pendingCount: 1),
+            cardTerminalClient: terminal,
+            cardTerminalSettingsProvider: new StaticCardTerminalSettingsProvider(CreateBackendLinklySettings()));
+        var session = new PosSessionState("HB POS", "S001", "Main Store", "POS-01", "C001", "Alice", true, 0);
+
+        var tenderResult = await workflow.AddTenderAsync(
+            PaymentMethodKind.Card,
+            session,
+            10m,
+            [],
+            "10.00",
+            cancellationToken: CancellationToken.None,
+            cartSnapshot: cart.CreateSnapshot());
+
+        Assert.True(tenderResult.Succeeded);
+        Assert.Equal("payment.linklyFallback.succeeded", tenderResult.StatusKey);
+        Assert.Contains("Cloud backend async", tenderResult.StatusMessage, StringComparison.Ordinal);
+        Assert.Contains("Cloud direct sync", tenderResult.StatusMessage, StringComparison.Ordinal);
+        Assert.DoesNotContain("CloudBackendAsync", tenderResult.StatusMessage, StringComparison.Ordinal);
+        Assert.DoesNotContain("CloudDirectSync", tenderResult.StatusMessage, StringComparison.Ordinal);
+        Assert.Contains("Settings", tenderResult.StatusMessage, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
     public async Task Cash_payment_workflow_keeps_local_payment_total_aligned_when_cash_rounds_down()
     {
         var cart = new PosCartService();

@@ -105,6 +105,43 @@ public sealed class LinklyCloudTerminalClientTests
     }
 
     [Fact]
+    public async Task PurchaseAsync_returns_result_unknown_when_status_poll_fails_after_direct_submission()
+    {
+        var apiClient = new FakeLinklyCloudApiClient();
+        apiClient.TransactionResultSequence.Enqueue(new LinklyCloudTransactionResult(
+            "session-pending",
+            false,
+            "TXN-PENDING",
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null)
+        {
+            Outcome = LinklyCloudTransactionOutcome.Pending
+        });
+        apiClient.TransactionStatusSequence.Enqueue(new HttpRequestException("status offline"));
+        var client = new LinklyCloudTerminalClient(
+            apiClient,
+            new FakeLinklyCloudSecretStore(),
+            TimeSpan.Zero);
+
+        var result = await client.PurchaseAsync(10m, CreateSession(), CreateSettings());
+
+        Assert.False(result.Approved);
+        Assert.True(result.ResultUnknown);
+        Assert.False(result.FallbackAllowed);
+        Assert.Equal("linkly.cloud.resultUnknown", result.StatusKey);
+        Assert.Equal(1, apiClient.SendTransactionCallCount);
+        Assert.Equal(1, apiClient.GetTransactionCallCount);
+    }
+
+    [Fact]
     public async Task RefundAsync_requires_original_rfn_reference()
     {
         var client = new LinklyCloudTerminalClient(
@@ -564,6 +601,11 @@ public sealed class LinklyCloudTerminalClientTests
             if (next is LinklyCloudApiException exception)
             {
                 throw exception;
+            }
+
+            if (next is Exception generalException)
+            {
+                throw generalException;
             }
 
             return Task.FromResult((LinklyCloudTransactionResult)next);

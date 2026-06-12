@@ -22,6 +22,37 @@ public enum LinklySettingsMode
     CloudBackendAsync
 }
 
+public sealed partial class LinklyModePriorityItem(LinklySettingsMode mode) : ObservableObject
+{
+    [ObservableProperty]
+    private int _rank;
+
+    public LinklySettingsMode Mode { get; } = mode;
+
+    public string ModeKey => Mode switch
+    {
+        LinklySettingsMode.CloudDirectSync => "settings.linkly.mode.cloudDirectSync",
+        LinklySettingsMode.CloudBackendAsync => "settings.linkly.mode.cloudBackendAsync",
+        _ => "settings.linkly.mode.localIp"
+    };
+
+    public string HelpKey => Mode switch
+    {
+        LinklySettingsMode.CloudDirectSync => "settings.linkly.mode.cloudDirectSync.help",
+        LinklySettingsMode.CloudBackendAsync => "settings.linkly.mode.cloudBackendAsync.help",
+        _ => "settings.linkly.mode.localIp.help"
+    };
+
+    public string RoleKey => Rank == 1
+        ? "settings.linkly.priority.primary"
+        : "settings.linkly.priority.fallback";
+
+    partial void OnRankChanged(int value)
+    {
+        OnPropertyChanged(nameof(RoleKey));
+    }
+}
+
 public sealed partial class SettingsViewModel : ObservableObject
 {
     private const string DefaultSquareDeviceCodeName = "HBPOS Terminal";
@@ -182,6 +213,9 @@ public sealed partial class SettingsViewModel : ObservableObject
         CancelLinklyCloudPairingCommand = new RelayCommand(CancelLinklyCloudPairing, CanCancelLinklyCloudPairing);
         TestLinklyCommand = new AsyncRelayCommand(TestLinklyAsync, CanTestLinkly);
         SaveLinklyCommand = new AsyncRelayCommand(SaveLinklyAsync, CanSaveLinkly);
+        MoveLinklyPriorityUpCommand = new RelayCommand<LinklyModePriorityItem>(MoveLinklyPriorityUp, CanMoveLinklyPriorityUp);
+        MoveLinklyPriorityDownCommand = new RelayCommand<LinklyModePriorityItem>(MoveLinklyPriorityDown, CanMoveLinklyPriorityDown);
+        SelectLinklyPriorityModeCommand = new RelayCommand<LinklyModePriorityItem>(SelectLinklyPriorityMode);
         SaveReceiptPrinterCommand = new AsyncRelayCommand(SaveReceiptPrinterAsync, CanSaveReceiptPrinter);
         TestReceiptPrinterCommand = new AsyncRelayCommand(TestReceiptPrinterAsync, CanTestReceiptPrinter);
         DownloadCatalogCommand = new AsyncRelayCommand(DownloadCatalogAsync, CanDownloadCatalog);
@@ -190,6 +224,7 @@ public sealed partial class SettingsViewModel : ObservableObject
         ReregisterDeviceCommand = new AsyncRelayCommand(ReregisterDeviceAsync, CanReregisterDevice);
         TestLinklyTransactionStatusCommand = new AsyncRelayCommand(TestLinklyTransactionStatusAsync, CanTestLinklyTransactionStatus);
         BackCommand = new RelayCommand(ReturnToPos, () => _returnToPos is not null);
+        ResetLinklyModePriority(CardTerminalConfiguration.Default.LinklyConnectionModePriority);
         RefreshLocalizedMessages();
     }
 
@@ -198,6 +233,8 @@ public sealed partial class SettingsViewModel : ObservableObject
     public ObservableCollection<SquareDeviceOption> SquareDevices { get; } = [];
 
     public ObservableCollection<SquareDeviceCodeOption> SquareDeviceCodes { get; } = [];
+
+    public ObservableCollection<LinklyModePriorityItem> LinklyModePriorityItems { get; } = [];
 
     public IAsyncRelayCommand LoadCommand { get; }
 
@@ -224,6 +261,12 @@ public sealed partial class SettingsViewModel : ObservableObject
     public IAsyncRelayCommand TestLinklyTransactionStatusCommand { get; }
 
     public IAsyncRelayCommand SaveLinklyCommand { get; }
+
+    public IRelayCommand<LinklyModePriorityItem> MoveLinklyPriorityUpCommand { get; }
+
+    public IRelayCommand<LinklyModePriorityItem> MoveLinklyPriorityDownCommand { get; }
+
+    public IRelayCommand<LinklyModePriorityItem> SelectLinklyPriorityModeCommand { get; }
 
     public IRelayCommand SelectDataMaintenanceCommand { get; }
 
@@ -302,6 +345,10 @@ public sealed partial class SettingsViewModel : ObservableObject
 
     public bool CanChangeEnvironment => !IsBusy;
 
+    public LinklySettingsMode PrimaryLinklyMode => LinklyModePriorityItems.Count == 0
+        ? SelectedLinklyMode
+        : LinklyModePriorityItems[0].Mode;
+
     public bool IsLinklyCloudMode
     {
         get => SelectedLinklyMode is LinklySettingsMode.CloudDirectSync or LinklySettingsMode.CloudBackendAsync;
@@ -369,6 +416,7 @@ public sealed partial class SettingsViewModel : ObservableObject
             IsSandbox = _loadedConfiguration.Environment == CardTerminalEnvironment.Sandbox;
             LinklyHostText = _loadedConfiguration.LinklyHost;
             LinklyPortText = _loadedConfiguration.LinklyPort.ToString();
+            ResetLinklyModePriority(_loadedConfiguration.LinklyConnectionModePriority);
             SelectedLinklyMode = ToSettingsMode(_loadedConfiguration.LinklyConnectionMode);
             await LoadLinklyCloudCredentialFieldsAsync(SelectedEnvironment);
             HasSavedLinklyCloudSecret = _loadedConfiguration.HasProtectedLinklyCloudSecret;
@@ -594,11 +642,12 @@ public sealed partial class SettingsViewModel : ObservableObject
                 LinklyConnectionSucceeded = false;
                 ClearLinklyTestStatus();
                 LinklyConnectionTestResult result;
-                if (IsLinklyCloudBackendAsyncMode)
+                var testMode = PrimaryLinklyMode;
+                if (testMode == LinklySettingsMode.CloudBackendAsync)
                 {
                     result = await _setupService.TestLinklyCloudBackendConnectionAsync(SelectedEnvironment);
                 }
-                else if (IsLinklyCloudDirectSyncMode)
+                else if (testMode == LinklySettingsMode.CloudDirectSync)
                 {
                     result = await _setupService.TestLinklyCloudConnectionAsync(SelectedEnvironment);
                 }
@@ -646,8 +695,8 @@ public sealed partial class SettingsViewModel : ObservableObject
         }
 
         _cardRecoveryResultDialogService?.Show(new CardRecoveryResultDialogViewModel(
-            "上一笔刷卡交易未成功",
-            "已完成不带 TxnRef 的 Transaction Status 查询，终端返回上一笔交易未成功。请按认证表记录 TxnRef、时间和响应码。",
+            T("cardRecovery.dialog.title.failedLastTransaction"),
+            T("cardRecovery.dialog.message.failedLastTransaction"),
             CardRecoveryResultSeverity.Warning,
             orderGuid: null,
             amount: null,
@@ -858,7 +907,8 @@ public sealed partial class SettingsViewModel : ObservableObject
             {
                 Processor = CardProcessorKind.Linkly,
                 Environment = SelectedEnvironment,
-                LinklyConnectionMode = ToConnectionMode(SelectedLinklyMode),
+                LinklyConnectionMode = ToConnectionMode(PrimaryLinklyMode),
+                LinklyConnectionModePriority = GetLinklyConnectionModePriority(),
                 LinklyHost = NormalizeHost(LinklyHostText),
                 LinklyPort = ParsePort(LinklyPortText),
                 TerminalTimeoutSeconds = ParseTimeoutSeconds(TimeoutSecondsText),
@@ -1037,7 +1087,7 @@ public sealed partial class SettingsViewModel : ObservableObject
 
     private bool CanTestLinkly()
     {
-        return !IsBusy && (!IsLinklyCloudDirectSyncMode || HasSavedLinklyCloudSecret);
+        return !IsBusy && (PrimaryLinklyMode != LinklySettingsMode.CloudDirectSync || HasSavedLinklyCloudSecret);
     }
 
     private bool CanTestLinklyTransactionStatus()
@@ -1233,6 +1283,8 @@ public sealed partial class SettingsViewModel : ObservableObject
 
     partial void OnSelectedLinklyModeChanged(LinklySettingsMode value)
     {
+        PromoteLinklyModeToPrimary(value);
+
         ResetLinklyConnectionTest();
         RaiseCommandStates();
         OnPropertyChanged(nameof(IsLinklyCloudMode));
@@ -1241,6 +1293,68 @@ public sealed partial class SettingsViewModel : ObservableObject
         OnPropertyChanged(nameof(IsLinklyCloudDirectSyncMode));
         OnPropertyChanged(nameof(IsLinklyCloudBackendAsyncMode));
         OnPropertyChanged(nameof(IsLinklyStandardActionMode));
+    }
+
+    private void SelectLinklyPriorityMode(LinklyModePriorityItem? item)
+    {
+        if (item is null)
+        {
+            return;
+        }
+
+        // 排序列表中的选择也代表“设为首选”，确保配置面板、测试连接和保存目标一致。
+        SelectedLinklyMode = item.Mode;
+    }
+
+    private bool CanMoveLinklyPriorityUp(LinklyModePriorityItem? item)
+    {
+        return !IsBusy && item is not null && LinklyModePriorityItems.IndexOf(item) > 0;
+    }
+
+    private bool CanMoveLinklyPriorityDown(LinklyModePriorityItem? item)
+    {
+        return !IsBusy &&
+            item is not null &&
+            LinklyModePriorityItems.IndexOf(item) is var index &&
+            index >= 0 &&
+            index < LinklyModePriorityItems.Count - 1;
+    }
+
+    private void MoveLinklyPriorityUp(LinklyModePriorityItem? item)
+    {
+        if (item is null)
+        {
+            return;
+        }
+
+        MoveLinklyPriority(item, -1);
+    }
+
+    private void MoveLinklyPriorityDown(LinklyModePriorityItem? item)
+    {
+        if (item is null)
+        {
+            return;
+        }
+
+        MoveLinklyPriority(item, 1);
+    }
+
+    private void MoveLinklyPriority(LinklyModePriorityItem item, int offset)
+    {
+        var oldIndex = LinklyModePriorityItems.IndexOf(item);
+        var newIndex = oldIndex + offset;
+        if (oldIndex < 0 || newIndex < 0 || newIndex >= LinklyModePriorityItems.Count)
+        {
+            return;
+        }
+
+        LinklyModePriorityItems.Move(oldIndex, newIndex);
+        RefreshLinklyPriorityRanks();
+        SelectedLinklyMode = PrimaryLinklyMode;
+        ResetLinklyConnectionTest();
+        RaiseCommandStates();
+        OnPropertyChanged(nameof(PrimaryLinklyMode));
     }
 
     partial void OnLinklyCloudUsernameTextChanged(string value)
@@ -1439,6 +1553,8 @@ public sealed partial class SettingsViewModel : ObservableObject
         TestLinklyCommand.NotifyCanExecuteChanged();
         TestLinklyTransactionStatusCommand.NotifyCanExecuteChanged();
         SaveLinklyCommand.NotifyCanExecuteChanged();
+        MoveLinklyPriorityUpCommand.NotifyCanExecuteChanged();
+        MoveLinklyPriorityDownCommand.NotifyCanExecuteChanged();
         SaveReceiptPrinterCommand.NotifyCanExecuteChanged();
         TestReceiptPrinterCommand.NotifyCanExecuteChanged();
         DownloadCatalogCommand.NotifyCanExecuteChanged();
@@ -1554,6 +1670,61 @@ public sealed partial class SettingsViewModel : ObservableObject
             LinklySettingsMode.CloudBackendAsync => LinklyConnectionMode.CloudBackendAsync,
             _ => LinklyConnectionMode.LocalIp
         };
+    }
+
+    private void ResetLinklyModePriority(IReadOnlyList<LinklyConnectionMode>? priority)
+    {
+        LinklyModePriorityItems.Clear();
+        var normalized = CardTerminalSettings.NormalizeLinklyConnectionModePriority(
+            priority,
+            _loadedConfiguration.LinklyConnectionMode);
+        foreach (var mode in normalized)
+        {
+            LinklyModePriorityItems.Add(new LinklyModePriorityItem(ToSettingsMode(mode)));
+        }
+
+        RefreshLinklyPriorityRanks();
+        OnPropertyChanged(nameof(PrimaryLinklyMode));
+        MoveLinklyPriorityUpCommand.NotifyCanExecuteChanged();
+        MoveLinklyPriorityDownCommand.NotifyCanExecuteChanged();
+    }
+
+    private void PromoteLinklyModeToPrimary(LinklySettingsMode mode)
+    {
+        var item = LinklyModePriorityItems.FirstOrDefault(candidate => candidate.Mode == mode);
+        if (item is null)
+        {
+            return;
+        }
+
+        var index = LinklyModePriorityItems.IndexOf(item);
+        if (index <= 0)
+        {
+            return;
+        }
+
+        // 兼容旧单选入口：直接设置模式时等同于把该模式提升为首选，但排序列表的配置按钮会显式抑制此行为。
+        LinklyModePriorityItems.Move(index, 0);
+        RefreshLinklyPriorityRanks();
+        OnPropertyChanged(nameof(PrimaryLinklyMode));
+    }
+
+    private IReadOnlyList<LinklyConnectionMode> GetLinklyConnectionModePriority()
+    {
+        return LinklyModePriorityItems
+            .Select(item => ToConnectionMode(item.Mode))
+            .ToArray();
+    }
+
+    private void RefreshLinklyPriorityRanks()
+    {
+        for (var index = 0; index < LinklyModePriorityItems.Count; index++)
+        {
+            LinklyModePriorityItems[index].Rank = index + 1;
+        }
+
+        MoveLinklyPriorityUpCommand.NotifyCanExecuteChanged();
+        MoveLinklyPriorityDownCommand.NotifyCanExecuteChanged();
     }
 
     private async Task LoadSquareDevicesForLocationAsync(string locationId, bool selectSavedDevice)
